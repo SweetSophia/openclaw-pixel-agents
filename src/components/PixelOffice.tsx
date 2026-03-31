@@ -68,10 +68,12 @@ export const PixelOffice: React.FC<Props> = ({ agents }) => {
     const engine = engineRef.current;
 
     // Remove characters for disabled/missing agents
+    // Only remove characters that are known API agents — leave demo agents alone
     const currentIds = engine.getCharacterIds();
+    const agentIds = agents.map(a => a.id);
     const activeIds = agents.filter(a => a.pixelEnabled).map(a => a.id);
     for (const id of currentIds) {
-      if (!activeIds.includes(id)) {
+      if (agentIds.includes(id) && !activeIds.includes(id)) {
         engine.removeCharacter(id);
       }
     }
