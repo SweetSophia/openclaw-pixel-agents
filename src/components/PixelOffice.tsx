@@ -37,6 +37,8 @@ export const PixelOffice: React.FC<Props> = ({ agents }) => {
   useEffect(() => {
     if (!canvasRef.current || engineRef.current) return;
 
+    const abortController = new AbortController();
+
     const engine = new GameEngine(canvasRef.current, {
       tileSize: 32,
       gridWidth: 24,
@@ -46,12 +48,14 @@ export const PixelOffice: React.FC<Props> = ({ agents }) => {
     engineRef.current = engine;
 
     // Load assets first, then start rendering
-    engine.init().then(() => {
+    engine.init(abortController.signal).then(() => {
+      if (abortController.signal.aborted) return;
       engine.start();
       setLoaded(true);
     });
 
     return () => {
+      abortController.abort();
       engine.stop();
       engineRef.current = null;
     };

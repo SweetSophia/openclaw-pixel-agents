@@ -17,6 +17,7 @@
 
 import {
   loadAllAssets,
+  loadCharacters,
   getSpriteFrame,
   getCachedCharacters,
   type LoadedCharacter,
@@ -102,8 +103,8 @@ export class GameEngine {
   }
 
   /** Call after construction. Loads assets and spawns demo agents. */
-  async init() {
-    await this.loadAssets();
+  async init(signal?: AbortSignal) {
+    await this.loadAssets(signal);
     this.spawnDemoAgents();
   }
 
@@ -128,10 +129,10 @@ export class GameEngine {
     }
   }
 
-  private async loadAssets() {
+  private async loadAssets(signal?: AbortSignal) {
     try {
       console.log('[GameEngine] Loading assets...');
-      const { characters, floors } = await loadAllAssets();
+      const { characters, floors } = await loadAllAssets(signal);
       this.characters_sprites = characters;
       this.floors = floors;
       this.assetsLoaded = true;
@@ -140,7 +141,7 @@ export class GameEngine {
       console.error('[GameEngine] Failed to load assets:', err);
       // Try to load just characters for a better fallback
       try {
-        const chars = await loadCharacters();
+        const chars = await loadCharacters(undefined, signal);
         this.characters_sprites = chars;
         this.assetsLoaded = true;
         console.log(`[GameEngine] Partial load: ${chars.length} characters (no floors)`);
@@ -317,39 +318,45 @@ export class GameEngine {
     const isWalking = Math.abs(char.targetX - char.x) > 0.1 || Math.abs(char.targetY - char.y) > 0.1;
     const animState: AnimState = this.activityToAnimState(char.state, isWalking);
 
-    // Try to render with sprites
+    // Try to render with sprites — log once per character
     const sprites = this.characters_sprites;
     const hasSprites = sprites != null && sprites.length > 0;
     
-    if (hasSprites) {
+    if (!hasSprites) {
+      // No sprites loaded yet — render placeholder
+      this.renderPlaceholderCharacter(char, px, py, tileSize);
+    } else {
       const paletteIdx = char.paletteIndex % sprites.length;
       const sprite = sprites[paletteIdx];
       
-      try {
-        const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
-
-        const frameW = 16;
-        const frameH = 32;
-        const scale = 2;
-        const spriteW = frameW * scale;
-        const spriteH = frameH * scale;
-
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(
-          frameCanvas,
-          px + (tileSize - spriteW) / 2,
-          py + tileSize - spriteH,
-          spriteW,
-          spriteH,
-        );
-      } catch (err) {
-        // Sprite rendering failed, fall through to placeholder
-        console.error('[GameEngine] Sprite render failed:', err);
+      if (!sprite) {
+        console.error(`[GameEngine] No sprite for palette index ${paletteIdx}`);
         this.renderPlaceholderCharacter(char, px, py, tileSize);
+        return;
       }
-    } else {
-      // Fallback: colored placeholder
-      this.renderPlaceholderCharacter(char, px, py, tileSize);
+      
+      const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
+      
+      if (!frameCanvas) {
+        console.error(`[GameEngine] No frame canvas returned`);
+        this.renderPlaceholderCharacter(char, px, py, tileSize);
+        return;
+      }
+
+      const frameW = 16;
+      const frameH = 32;
+      const scale = 2;
+      const spriteW = frameW * scale;
+      const spriteH = frameH * scale;
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        frameCanvas,
+        px + (tileSize - spriteW) / 2,
+        py + tileSize - spriteH,
+        spriteW,
+        spriteH,
+      );
     }
 
     // Name label below character

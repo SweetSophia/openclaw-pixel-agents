@@ -55,8 +55,10 @@ const cachedFurniture: Map<string, LoadedFurnitureItem> = new Map();
 
 // ── Helpers ────────────────────────────────────────────────
 
-async function loadPng(path: string): Promise<ImageBitmap> {
-  const response = await fetch(path);
+async function loadPng(path: string, signal?: AbortSignal): Promise<ImageBitmap> {
+  if (signal?.aborted) throw new DOMException('Aborted');
+
+  const response = await fetch(path, { signal });
   if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
   const blob = await response.blob();
   return createImageBitmap(blob);
@@ -100,12 +102,13 @@ function flipHorizontal(source: HTMLCanvasElement): HTMLCanvasElement {
  */
 export async function loadCharacters(
   basePath = '/assets/characters/',
+  signal?: AbortSignal,
 ): Promise<LoadedCharacter[]> {
   const characters: LoadedCharacter[] = [];
 
   for (let i = 0; i < 6; i++) {
     const path = `${basePath}char_${i}.png`;
-    const bitmap = await loadPng(path);
+    const bitmap = await loadPng(path, signal);
 
     const byDir: LoadedCharacter = { down: [], up: [], right: [] };
 
@@ -140,12 +143,13 @@ export async function loadCharacters(
  */
 export async function loadFloors(
   basePath = '/assets/floors/',
+  signal?: AbortSignal
 ): Promise<LoadedFloor[]> {
   const floors: LoadedFloor[] = [];
 
   for (let i = 0; i < 9; i++) {
     try {
-      const bitmap = await loadPng(`${basePath}floor_${i}.png`);
+      const bitmap = await loadPng(`${basePath}floor_${i}.png`, signal);
       const canvas = document.createElement('canvas');
       canvas.width = FLOOR_TILE_SIZE;
       canvas.height = FLOOR_TILE_SIZE;
@@ -168,6 +172,7 @@ export async function loadFloors(
  */
 export async function loadFurniture(
   basePath = '/assets/furniture/',
+  signal?: AbortSignal,
 ): Promise<Map<string, LoadedFurnitureItem>> {
   const furnitureTypes = [
     'BIN', 'BOOKSHELF', 'CACTUS', 'CLOCK', 'COFFEE', 'COFFEE_TABLE',
@@ -179,7 +184,7 @@ export async function loadFurniture(
 
   for (const type of furnitureTypes) {
     try {
-      const manifestRes = await fetch(`${basePath}${type}/manifest.json`);
+      const manifestRes = await fetch(`${basePath}${type}/manifest.json`, { signal });
       if (!manifestRes.ok) continue;
 
       const manifest = await manifestRes.json();
@@ -210,7 +215,7 @@ export async function loadFurniture(
 
       if (!primaryFile) continue;
 
-      const bitmap = await loadPng(`${basePath}${type}/${primaryFile}`);
+      const bitmap = await loadPng(`${basePath}${type}/${primaryFile}`, signal);
       cachedFurniture.set(type, {
         id: type,
         canvas: sliceFrame(bitmap, 0, 0, fw, fh),
@@ -230,23 +235,26 @@ export async function loadFurniture(
 /**
  * Load all assets in parallel
  */
-export async function loadAllAssets(): Promise<{
+export async function loadAllAssets(signal?: AbortSignal): Promise<{
   characters: LoadedCharacter[];
   floors: LoadedFloor[];
   furniture: Map<string, LoadedFurnitureItem>;
 }> {
   // Load each independently so one failure doesn't kill the others
-  const characters = await loadCharacters().catch(err => {
+  const characters = await loadCharacters(undefined, signal).catch(err => {
+    if (err.name === 'AbortError') throw err;
     console.error('[SpriteLoader] Character loading failed:', err);
-    return [];
+    return [] as LoadedCharacter[];
   });
-  const floors = await loadFloors().catch(err => {
+  const floors = await loadFloors(undefined, signal).catch(err => {
+    if (err.name === 'AbortError') throw err;
     console.error('[SpriteLoader] Floor loading failed:', err);
-    return [];
+    return [] as LoadedFloor[];
   });
-  const furniture = await loadFurniture().catch(err => {
+  const furniture = await loadFurniture(undefined, signal).catch(err => {
+    if (err.name === 'AbortError') throw err;
     console.error('[SpriteLoader] Furniture loading failed:', err);
-    return new Map();
+    return new Map<string, LoadedFurnitureItem>();
   });
 
   console.log(
