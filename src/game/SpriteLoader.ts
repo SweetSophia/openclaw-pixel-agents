@@ -235,14 +235,22 @@ export async function loadAllAssets(): Promise<{
   floors: LoadedFloor[];
   furniture: Map<string, LoadedFurnitureItem>;
 }> {
-  const [characters, floors, furniture] = await Promise.all([
-    loadCharacters(),
-    loadFloors(),
-    loadFurniture(),
-  ]);
+  // Load each independently so one failure doesn't kill the others
+  const characters = await loadCharacters().catch(err => {
+    console.error('[SpriteLoader] Character loading failed:', err);
+    return [];
+  });
+  const floors = await loadFloors().catch(err => {
+    console.error('[SpriteLoader] Floor loading failed:', err);
+    return [];
+  });
+  const furniture = await loadFurniture().catch(err => {
+    console.error('[SpriteLoader] Furniture loading failed:', err);
+    return new Map();
+  });
 
   console.log(
-    `Assets loaded: ${characters.length} characters, ${floors.length} floors, ${furniture.size} furniture types`,
+    `[SpriteLoader] Assets loaded: ${characters.length} characters, ${floors.length} floors, ${furniture.size} furniture types`,
   );
 
   return { characters, floors, furniture };

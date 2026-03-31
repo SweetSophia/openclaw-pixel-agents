@@ -44,8 +44,12 @@ export const PixelOffice: React.FC<Props> = ({ agents }) => {
     });
 
     engineRef.current = engine;
-    engine.start();
-    setLoaded(true);
+
+    // Load assets first, then start rendering
+    engine.init().then(() => {
+      engine.start();
+      setLoaded(true);
+    });
 
     return () => {
       engine.stop();

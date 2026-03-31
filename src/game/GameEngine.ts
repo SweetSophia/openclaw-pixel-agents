@@ -81,38 +81,72 @@ export class GameEngine {
   private characters_sprites: LoadedCharacter[] = [];
   private floors: LoadedFloor[] = [];
   private zoom: number;
+  private onAssetsLoaded?: () => void;
 
-  constructor(canvas: HTMLCanvasElement, config: GameConfig) {
+  constructor(canvas: HTMLCanvasElement, config: GameConfig, onAssetsLoaded?: () => void) {
     this.canvas = canvas;
     this.config = config;
     this.ctx = canvas.getContext('2d')!;
-    this.zoom = config.tileSize / 16; // base tile size is 16px (floor tiles)
+    this.zoom = config.tileSize / 16;
+    this.onAssetsLoaded = onAssetsLoaded;
 
     // Set canvas pixel dimensions
     canvas.width = config.gridWidth * config.tileSize;
     canvas.height = config.gridHeight * config.tileSize;
-
-    // CSS scaling for crisp pixels
     canvas.style.imageRendering = 'pixelated';
 
     // Initialize default seats
     for (const [agentId, pos] of Object.entries(DEFAULT_SEATS)) {
       this.seats.set(agentId, pos);
     }
+  }
 
-    // Start loading assets
-    this.loadAssets();
+  /** Call after construction. Loads assets and spawns demo agents. */
+  async init() {
+    await this.loadAssets();
+    this.spawnDemoAgents();
+  }
+
+  /** Spawn demo agents for testing without a live gateway */
+  private spawnDemoAgents() {
+    const demoAgents = [
+      { id: 'cybera', name: 'Cybera', state: 'typing' },
+      { id: 'shodan', name: 'Shodan', state: 'thinking' },
+      { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
+    ];
+
+    for (const agent of demoAgents) {
+      const seat = this.assignSeat(agent.id);
+      this.addCharacter({
+        id: agent.id,
+        name: agent.name,
+        x: seat.x,
+        y: seat.y + 1,
+        state: agent.state,
+        spriteId: undefined,
+      });
+    }
   }
 
   private async loadAssets() {
     try {
+      console.log('[GameEngine] Loading assets...');
       const { characters, floors } = await loadAllAssets();
       this.characters_sprites = characters;
       this.floors = floors;
       this.assetsLoaded = true;
-      console.log(`Game engine: ${characters.length} character sprites, ${floors.length} floors loaded`);
+      console.log(`[GameEngine] Assets loaded: ${characters.length} characters, ${floors.length} floors`);
     } catch (err) {
-      console.error('Failed to load assets:', err);
+      console.error('[GameEngine] Failed to load assets:', err);
+      // Try to load just characters for a better fallback
+      try {
+        const chars = await loadCharacters();
+        this.characters_sprites = chars;
+        this.assetsLoaded = true;
+        console.log(`[GameEngine] Partial load: ${chars.length} characters (no floors)`);
+      } catch (err2) {
+        console.error('[GameEngine] Even character loading failed:', err2);
+      }
     }
   }
 
@@ -275,7 +309,7 @@ export class GameEngine {
   }
 
   private renderCharacter(char: Character, tileSize: number, zoom: number) {
-    const { ctx, assetsLoaded, characters_sprites } = this;
+    const { ctx } = this;
     const px = char.x * tileSize;
     const py = char.y * tileSize;
 
@@ -283,25 +317,36 @@ export class GameEngine {
     const isWalking = Math.abs(char.targetX - char.x) > 0.1 || Math.abs(char.targetY - char.y) > 0.1;
     const animState: AnimState = this.activityToAnimState(char.state, isWalking);
 
-    if (assetsLoaded && characters_sprites.length > 0) {
-      // Render using actual sprite
-      const paletteIdx = char.paletteIndex % characters_sprites.length;
-      const sprite = characters_sprites[paletteIdx];
-      const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
+    // Try to render with sprites
+    const sprites = this.characters_sprites;
+    const hasSprites = sprites != null && sprites.length > 0;
+    
+    if (hasSprites) {
+      const paletteIdx = char.paletteIndex % sprites.length;
+      const sprite = sprites[paletteIdx];
+      
+      try {
+        const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
 
-      // Scale sprite to tile size (sprite is 16×32, tile is 32×32)
-      const scale = tileSize / 16; // 2x zoom
-      const spriteW = 16 * scale;
-      const spriteH = 32 * scale;
+        const frameW = 16;
+        const frameH = 32;
+        const scale = 2;
+        const spriteW = frameW * scale;
+        const spriteH = frameH * scale;
 
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(
-        frameCanvas,
-        px + (tileSize - spriteW) / 2,
-        py + tileSize - spriteH,
-        spriteW,
-        spriteH,
-      );
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(
+          frameCanvas,
+          px + (tileSize - spriteW) / 2,
+          py + tileSize - spriteH,
+          spriteW,
+          spriteH,
+        );
+      } catch (err) {
+        // Sprite rendering failed, fall through to placeholder
+        console.error('[GameEngine] Sprite render failed:', err);
+        this.renderPlaceholderCharacter(char, px, py, tileSize);
+      }
     } else {
       // Fallback: colored placeholder
       this.renderPlaceholderCharacter(char, px, py, tileSize);

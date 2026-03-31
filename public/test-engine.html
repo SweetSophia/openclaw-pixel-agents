@@ -1,0 +1,59 @@
+<html>
+<body>
+<h3>Engine Test</h3>
+<div id="log" style="font-family:monospace;font-size:12px;white-space:pre;"></div>
+<canvas id="office" width="768" height="512" style="image-rendering:pixelated;border:1px solid #333;"></canvas>
+<script type="module">
+const logEl = document.getElementById('log');
+function log(msg) { logEl.textContent += msg + '\n'; console.log(msg); }
+
+log('Step 1: Loading char_0.png...');
+const res = await fetch('/assets/characters/char_0.png');
+const blob = await res.blob();
+const bitmap = await createImageBitmap(blob);
+log(`Bitmap: ${bitmap.width}x${bitmap.height}`);
+
+const canvas = document.getElementById('office');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// Fill background
+ctx.fillStyle = '#1a1a2e';
+ctx.fillRect(0, 0, 768, 512);
+
+// Draw floor
+const floorRes = await fetch('/assets/floors/floor_0.png');
+const floorBlob = await floorRes.blob();
+const floorBitmap = await createImageBitmap(floorBlob);
+log(`Floor: ${floorBitmap.width}x${floorBitmap.height}`);
+
+for (let y = 0; y < 16; y++) {
+  for (let x = 0; x < 24; x++) {
+    ctx.drawImage(floorBitmap, x * 32, y * 32, 32, 32);
+  }
+}
+log('Floor drawn');
+
+// Draw character frames
+// Row 0 = down, Row 1 = up, Row 2 = right
+// Frames: 0-2 walk, 3-4 typing, 5-6 reading
+const TILE = 32;
+const positions = [
+  { x: 3, y: 5, row: 0, frame: 3, label: 'Cybera (typing/down)' },
+  { x: 8, y: 5, row: 0, frame: 5, label: 'Shodan (reading/down)' },
+  { x: 13, y: 5, row: 2, frame: 3, label: 'Cyberlogis (typing/right)' },
+];
+
+for (const p of positions) {
+  const srcX = p.frame * 16;
+  const srcY = p.row * 32;
+  
+  // Draw character sprite at 2x scale (16x32 -> 32x64)
+  ctx.drawImage(bitmap, srcX, srcY, 16, 32, p.x * TILE, p.y * TILE - 32, TILE, 64);
+  log(`Drew ${p.label} at (${p.x},${p.y}) src(${srcX},${srcY})`);
+}
+
+log('All done!');
+</script>
+</body>
+</html>

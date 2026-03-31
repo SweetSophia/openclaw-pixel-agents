@@ -1,0 +1,48 @@
+<html>
+<body>
+<h3>Sprite Test</h3>
+<div id="log"></div>
+<canvas id="test" width="200" height="200"></canvas>
+<script type="module">
+const log = document.getElementById('log');
+function addLog(msg) {
+  log.innerHTML += msg + '<br>';
+  console.log(msg);
+}
+
+addLog('Loading char_0.png...');
+try {
+  const res = await fetch('/assets/characters/char_0.png');
+  addLog(`Fetch status: ${res.status}`);
+  const blob = await res.blob();
+  addLog(`Blob size: ${blob.size}, type: ${blob.type}`);
+  const bitmap = await createImageBitmap(blob);
+  addLog(`Bitmap: ${bitmap.width}x${bitmap.height}`);
+
+  const canvas = document.getElementById('test');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  // Draw full spritesheet
+  ctx.drawImage(bitmap, 0, 0);
+  addLog('Full spritesheet drawn');
+
+  // Draw single frame (16x32)
+  const frameCanvas = document.createElement('canvas');
+  frameCanvas.width = 16;
+  frameCanvas.height = 32;
+  const fctx = frameCanvas.getContext('2d');
+  fctx.imageSmoothingEnabled = false;
+  fctx.drawImage(bitmap, 0, 0, 16, 32, 0, 0, 16, 32);
+  
+  // Draw scaled frame
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(frameCanvas, 100, 0, 32, 64);
+  addLog('Frame drawn at 32x64');
+} catch (err) {
+  addLog(`ERROR: ${err.message}`);
+  console.error(err);
+}
+</script>
+</body>
+</html>
