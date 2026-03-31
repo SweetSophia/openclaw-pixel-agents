@@ -1,0 +1,41 @@
+.app {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+}
+
+.app-header h1 {
+  font-size: 16px;
+  color: #e94560;
+}
+
+.connection-status {
+  font-size: 12px;
+}
+
+.connection-status.connected {
+  color: #4ecca3;
+}
+
+.connection-status.disconnected {
+  color: #e94560;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}

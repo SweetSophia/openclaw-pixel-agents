@@ -1,0 +1,120 @@
+.agent-sidebar {
+  width: 240px;
+  background: #16213e;
+  border-left: 1px solid #0f3460;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.agent-sidebar h2 {
+  font-size: 14px;
+  color: #e94560;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-card {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 10px;
+  transition: border-color 0.2s;
+}
+
+.agent-card.active {
+  border-color: #4ecca3;
+}
+
+.agent-card.inactive {
+  opacity: 0.5;
+}
+
+.agent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.agent-icon {
+  font-size: 16px;
+}
+
+.agent-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: bold;
+  color: #e0e0e0;
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px;
+}
+
+.toggle-btn.on {
+  opacity: 1;
+}
+
+.toggle-btn.off {
+  opacity: 0.4;
+}
+
+.agent-details {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #1a1a2e;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.agent-model {
+  font-size: 10px;
+  color: #6c757d;
+}
+
+.agent-tokens {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.token-bar {
+  flex: 1;
+  height: 4px;
+  background: #0f3460;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.token-fill {
+  height: 100%;
+  background: #4ecca3;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.token-text {
+  font-size: 10px;
+  color: #6c757d;
+  min-width: 28px;
+  text-align: right;
+}

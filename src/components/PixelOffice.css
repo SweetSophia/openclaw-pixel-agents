@@ -1,0 +1,17 @@
+.pixel-office {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.office-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  border: 2px solid #0f3460;
+  border-radius: 4px;
+  background: #0f0f23;
+  max-width: 100%;
+  max-height: 100%;
+}
