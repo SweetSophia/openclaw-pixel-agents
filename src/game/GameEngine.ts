@@ -1,9 +1,29 @@
 /**
  * PixelOffice Game Engine
- * 
- * Lightweight canvas-based rendering engine for the pixel office.
- * Handles: tile rendering, character sprites, pathfinding, animation loops.
+ *
+ * Canvas-based rendering engine for the pixel office.
+ * Handles tile rendering, character sprites, animation, pathfinding.
+ *
+ * Sprite layout per character (112×96 PNG):
+ *   Row 0: down direction (7 frames × 16px wide × 32px tall)
+ *   Row 1: up direction
+ *   Row 2: right direction (left = right flipped)
+ *
+ * Frame mapping (per direction):
+ *   0-2: walk (3 unique frames, ping-pong: 0→1→2→1)
+ *   3-4: typing (2 frames)
+ *   5-6: reading (2 frames)
  */
+
+import {
+  loadAllAssets,
+  getSpriteFrame,
+  getCachedCharacters,
+  type LoadedCharacter,
+  type LoadedFloor,
+  type AnimState,
+  type Direction,
+} from './SpriteLoader';
 
 export interface GameConfig {
   tileSize: number;
@@ -26,24 +46,27 @@ interface Character extends CharacterData {
   targetY: number;
   animFrame: number;
   animTimer: number;
-  direction: 'up' | 'down' | 'left' | 'right';
-  speechBubble?: string;
+  direction: Direction;
+  paletteIndex: number; // which character sprite to use (0-5)
 }
 
-// Default office layout: floor colors and furniture positions
+// Default seat positions for known agents
 const DEFAULT_SEATS: Record<string, { x: number; y: number }> = {
-  cybera: { x: 4, y: 4 },
-  shodan: { x: 10, y: 4 },
-  cyberlogis: { x: 16, y: 4 },
-  descartes: { x: 4, y: 10 },
-  sysauxilia: { x: 10, y: 10 },
+  cybera: { x: 4, y: 5 },
+  shodan: { x: 10, y: 5 },
+  cyberlogis: { x: 16, y: 5 },
+  descartes: { x: 4, y: 11 },
+  sysauxilia: { x: 10, y: 11 },
 };
 
-// Simple colors for different floor zones
-const FLOOR_COLOR = '#1a1a2e';
-const WALL_COLOR = '#0f3460';
-const DESK_COLOR = '#533483';
-const CHAIR_COLOR = '#4ecca3';
+// Assign distinct character palettes to known agents
+const AGENT_PALETTES: Record<string, number> = {
+  cybera: 0,
+  shodan: 1,
+  cyberlogis: 2,
+  descartes: 3,
+  sysauxilia: 4,
+};
 
 export class GameEngine {
   private canvas: HTMLCanvasElement;
@@ -52,21 +75,44 @@ export class GameEngine {
   private characters: Map<string, Character> = new Map();
   private seats: Map<string, { x: number; y: number }> = new Map();
   private running = false;
-  private animFrameId: number = 0;
+  private animFrameId = 0;
   private lastTime = 0;
+  private assetsLoaded = false;
+  private characters_sprites: LoadedCharacter[] = [];
+  private floors: LoadedFloor[] = [];
+  private zoom: number;
 
   constructor(canvas: HTMLCanvasElement, config: GameConfig) {
     this.canvas = canvas;
     this.config = config;
     this.ctx = canvas.getContext('2d')!;
+    this.zoom = config.tileSize / 16; // base tile size is 16px (floor tiles)
 
-    // Set canvas size
+    // Set canvas pixel dimensions
     canvas.width = config.gridWidth * config.tileSize;
     canvas.height = config.gridHeight * config.tileSize;
+
+    // CSS scaling for crisp pixels
+    canvas.style.imageRendering = 'pixelated';
 
     // Initialize default seats
     for (const [agentId, pos] of Object.entries(DEFAULT_SEATS)) {
       this.seats.set(agentId, pos);
+    }
+
+    // Start loading assets
+    this.loadAssets();
+  }
+
+  private async loadAssets() {
+    try {
+      const { characters, floors } = await loadAllAssets();
+      this.characters_sprites = characters;
+      this.floors = floors;
+      this.assetsLoaded = true;
+      console.log(`Game engine: ${characters.length} character sprites, ${floors.length} floors loaded`);
+    } catch (err) {
+      console.error('Failed to load assets:', err);
     }
   }
 
@@ -98,23 +144,27 @@ export class GameEngine {
 
   private update(dt: number) {
     for (const char of this.characters.values()) {
-      // Animate sprite frame
+      // Animation timer
       char.animTimer += dt;
-      if (char.animTimer > 0.2) {
+
+      // Update animation frame based on state
+      const isWalking = Math.abs(char.targetX - char.x) > 0.05 || Math.abs(char.targetY - char.y) > 0.05;
+      const frameDuration = isWalking ? 0.15 : 0.25;
+
+      if (char.animTimer >= frameDuration) {
         char.animTimer = 0;
-        char.animFrame = (char.animFrame + 1) % 4;
+        char.animFrame++;
       }
 
-      // Move toward target if not there
+      // Move toward target
       const dx = char.targetX - char.x;
       const dy = char.targetY - char.y;
-      const speed = 3; // tiles per second
+      const speed = 3;
 
       if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
         char.x += Math.sign(dx) * Math.min(speed * dt, Math.abs(dx));
         char.y += Math.sign(dy) * Math.min(speed * dt, Math.abs(dy));
 
-        // Update direction
         if (Math.abs(dx) > Math.abs(dy)) {
           char.direction = dx > 0 ? 'right' : 'left';
         } else {
@@ -127,94 +177,158 @@ export class GameEngine {
   private render() {
     const { ctx, config } = this;
     const { tileSize, gridWidth, gridHeight } = config;
+    const zoom = this.zoom;
 
-    // Clear
-    ctx.fillStyle = FLOOR_COLOR;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Clear canvas
+    ctx.fillStyle = '#0f0f23';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-    // Draw floor grid
-    for (let y = 0; y < gridHeight; y++) {
-      for (let x = 0; x < gridWidth; x++) {
-        const px = x * tileSize;
-        const py = y * tileSize;
+    // Draw floor
+    this.renderFloor(gridWidth, gridHeight, tileSize, zoom);
 
-        // Floor tile pattern
-        if ((x + y) % 2 === 0) {
-          ctx.fillStyle = '#1e1e3a';
-          ctx.fillRect(px, py, tileSize, tileSize);
-        }
+    // Draw walls
+    this.renderWalls(gridWidth, gridHeight, tileSize);
 
-        // Grid lines (subtle)
-        ctx.strokeStyle = '#0f0f23';
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(px, py, tileSize, tileSize);
-      }
-    }
-
-    // Draw walls (top and bottom rows)
-    ctx.fillStyle = WALL_COLOR;
-    for (let x = 0; x < gridWidth; x++) {
-      ctx.fillRect(x * tileSize, 0, tileSize, tileSize);
-      ctx.fillRect(x * tileSize, (gridHeight - 1) * tileSize, tileSize, tileSize);
-    }
-
-    // Draw desks at seat positions
-    for (const [agentId, seat] of this.seats.entries()) {
-      const char = this.characters.get(agentId);
-
-      // Desk
-      ctx.fillStyle = DESK_COLOR;
-      ctx.fillRect(
-        seat.x * tileSize + 2,
-        seat.y * tileSize - tileSize + 2,
-        tileSize * 2 - 4,
-        tileSize - 4
-      );
-
-      // Monitor on desk
-      ctx.fillStyle = '#0f3460';
-      ctx.fillRect(
-        seat.x * tileSize + 8,
-        seat.y * tileSize - tileSize + 6,
-        tileSize - 16,
-        tileSize - 16
-      );
-
-      // Screen glow if agent is active
-      if (char && char.state !== 'sleeping' && char.state !== 'idle') {
-        ctx.fillStyle = '#4ecca340';
-        ctx.fillRect(
-          seat.x * tileSize + 10,
-          seat.y * tileSize - tileSize + 8,
-          tileSize - 20,
-          tileSize - 20
-        );
-      }
-
-      // Chair
-      ctx.fillStyle = CHAIR_COLOR;
-      ctx.fillRect(
-        seat.x * tileSize + 8,
-        seat.y * tileSize + 4,
-        tileSize - 16,
-        tileSize - 8
-      );
-    }
+    // Draw desks and furniture
+    this.renderFurniture(tileSize, zoom);
 
     // Draw characters
     for (const char of this.characters.values()) {
-      this.renderCharacter(char);
+      this.renderCharacter(char, tileSize, zoom);
     }
   }
 
-  private renderCharacter(char: Character) {
-    const { ctx, config } = this;
-    const { tileSize } = config;
+  private renderFloor(gridW: number, gridH: number, tileSize: number, zoom: number) {
+    const { ctx, floors } = this;
+    const hasFloor = floors.length > 0 && this.assetsLoaded;
 
+    for (let row = 0; row < gridH; row++) {
+      for (let col = 0; col < gridW; col++) {
+        const px = col * tileSize;
+        const py = row * tileSize;
+
+        if (hasFloor) {
+          // Use actual floor tile sprites (checkerboard with floor_0 and floor_1)
+          const floorIdx = (col + row) % 2 === 0 ? 0 : 1;
+          const floor = floors[floorIdx % floors.length];
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
+        } else {
+          // Fallback: colored rectangles
+          ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+          ctx.fillRect(px, py, tileSize, tileSize);
+        }
+      }
+    }
+  }
+
+  private renderWalls(gridW: number, gridH: number, tileSize: number) {
+    const { ctx } = this;
+    ctx.fillStyle = '#0f3460';
+
+    // Top wall
+    for (let col = 0; col < gridW; col++) {
+      ctx.fillRect(col * tileSize, 0, tileSize, tileSize);
+    }
+    // Bottom wall
+    for (let col = 0; col < gridW; col++) {
+      ctx.fillRect(col * tileSize, (gridH - 1) * tileSize, tileSize, tileSize);
+    }
+    // Side walls
+    for (let row = 1; row < gridH - 1; row++) {
+      ctx.fillRect(0, row * tileSize, tileSize, tileSize);
+      ctx.fillRect((gridW - 1) * tileSize, row * tileSize, tileSize, tileSize);
+    }
+  }
+
+  private renderFurniture(tileSize: number, zoom: number) {
+    const { ctx, seats, assetsLoaded } = this;
+
+    for (const [agentId, seat] of this.seats.entries()) {
+      const px = seat.x * tileSize;
+      const py = seat.y * tileSize;
+
+      // Desk surface
+      ctx.fillStyle = '#533483';
+      ctx.fillRect(px + 2, py - tileSize * 0.4, tileSize * 1.8, tileSize * 0.5);
+
+      // PC monitor
+      ctx.fillStyle = '#0f3460';
+      ctx.fillRect(px + tileSize * 0.3, py - tileSize * 0.6, tileSize * 0.6, tileSize * 0.4);
+
+      // Monitor screen glow when agent is active
+      const char = this.characters.get(agentId);
+      if (char && char.state !== 'sleeping' && char.state !== 'idle') {
+        ctx.fillStyle = char.state === 'error' ? '#e9456040' : '#4ecca340';
+        ctx.fillRect(
+          px + tileSize * 0.35,
+          py - tileSize * 0.55,
+          tileSize * 0.5,
+          tileSize * 0.3,
+        );
+      }
+
+      // Chair below desk
+      ctx.fillStyle = '#2d6a4f';
+      ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
+    }
+  }
+
+  private renderCharacter(char: Character, tileSize: number, zoom: number) {
+    const { ctx, assetsLoaded, characters_sprites } = this;
     const px = char.x * tileSize;
     const py = char.y * tileSize;
 
-    // Character body (placeholder colored rectangle until sprites are loaded)
+    // Determine animation state
+    const isWalking = Math.abs(char.targetX - char.x) > 0.1 || Math.abs(char.targetY - char.y) > 0.1;
+    const animState: AnimState = this.activityToAnimState(char.state, isWalking);
+
+    if (assetsLoaded && characters_sprites.length > 0) {
+      // Render using actual sprite
+      const paletteIdx = char.paletteIndex % characters_sprites.length;
+      const sprite = characters_sprites[paletteIdx];
+      const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
+
+      // Scale sprite to tile size (sprite is 16×32, tile is 32×32)
+      const scale = tileSize / 16; // 2x zoom
+      const spriteW = 16 * scale;
+      const spriteH = 32 * scale;
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        frameCanvas,
+        px + (tileSize - spriteW) / 2,
+        py + tileSize - spriteH,
+        spriteW,
+        spriteH,
+      );
+    } else {
+      // Fallback: colored placeholder
+      this.renderPlaceholderCharacter(char, px, py, tileSize);
+    }
+
+    // Name label below character
+    ctx.font = `bold ${Math.max(8, tileSize * 0.28)}px monospace`;
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(char.name, px + tileSize / 2, py + tileSize + tileSize * 0.35);
+    ctx.textAlign = 'left';
+
+    // Activity icon above head
+    const icon = this.getActivityIcon(char.state);
+    if (icon) {
+      ctx.font = `${tileSize * 0.45}px sans-serif`;
+      ctx.fillText(icon, px + tileSize * 0.15, py - tileSize * 0.15);
+    }
+  }
+
+  private renderPlaceholderCharacter(
+    char: Character,
+    px: number,
+    py: number,
+    tileSize: number,
+  ) {
+    const { ctx } = this;
     const bodyColors: Record<string, string> = {
       cybera: '#e94560',
       shodan: '#4ecca3',
@@ -222,62 +336,55 @@ export class GameEngine {
       descartes: '#17a2b8',
       sysauxilia: '#6c757d',
     };
-
     const color = bodyColors[char.id] || '#e94560';
 
     // Body
-    ctx.fillStyle = color;
     const bodyW = tileSize * 0.5;
     const bodyH = tileSize * 0.7;
-    const bodyX = px + (tileSize - bodyW) / 2;
-    const bodyY = py + tileSize - bodyH;
-    ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
+    ctx.fillStyle = color;
+    ctx.fillRect(px + (tileSize - bodyW) / 2, py + tileSize - bodyH, bodyW, bodyH);
 
     // Head
     const headSize = tileSize * 0.4;
     ctx.fillStyle = '#f0d0a0';
     ctx.fillRect(
       px + (tileSize - headSize) / 2,
-      bodyY - headSize * 0.6,
+      py + tileSize - bodyH - headSize * 0.6,
       headSize,
-      headSize
+      headSize,
     );
+  }
 
-    // Activity indicator above head
-    const activityIcons: Record<string, string> = {
-      typing: '⌨',
-      reading: '📖',
-      thinking: '💭',
-      waiting: '💬',
-      running_command: '⚡',
-      error: '❌',
-    };
-
-    const icon = activityIcons[char.state];
-    if (icon) {
-      ctx.font = `${tileSize * 0.4}px sans-serif`;
-      ctx.fillText(icon, px + tileSize * 0.2, bodyY - headSize * 0.8);
-    }
-
-    // Name label
-    ctx.font = `bold ${tileSize * 0.3}px monospace`;
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.fillText(char.name, px + tileSize / 2, py + tileSize + tileSize * 0.3);
-    ctx.textAlign = 'left';
-
-    // Typing animation: small bouncing dots
-    if (char.state === 'typing' && char.animFrame % 2 === 0) {
-      ctx.fillStyle = '#4ecca3';
-      ctx.fillRect(px + 4, py - 4, 2, 2);
-      ctx.fillRect(px + 8, py - 6, 2, 2);
-      ctx.fillRect(px + 12, py - 3, 2, 2);
+  private activityToAnimState(state: string, isWalking: boolean): AnimState {
+    if (isWalking) return 'walk';
+    switch (state) {
+      case 'typing':
+      case 'running_command':
+        return 'typing';
+      case 'reading':
+      case 'thinking':
+        return 'reading';
+      default:
+        return 'typing'; // default seated pose
     }
   }
 
-  // Public API
+  private getActivityIcon(state: string): string {
+    const icons: Record<string, string> = {
+      typing: '⌨',
+      reading: '📖',
+      thinking: '💭',
+      waiting_input: '💬',
+      running_command: '⚡',
+      error: '❌',
+    };
+    return icons[state] || '';
+  }
+
+  // ── Public API ──────────────────────────────────────────
 
   addCharacter(data: CharacterData) {
+    const paletteIndex = AGENT_PALETTES[data.id] ?? Math.floor(Math.random() * 6);
     this.characters.set(data.id, {
       ...data,
       targetX: data.x,
@@ -285,6 +392,7 @@ export class GameEngine {
       animFrame: 0,
       animTimer: 0,
       direction: 'down',
+      paletteIndex,
     });
   }
 
@@ -297,20 +405,13 @@ export class GameEngine {
     if (!char) return;
     Object.assign(char, updates);
 
-    // If activity changed to typing/reading, move to seat
-    if (updates.state && (updates.state === 'typing' || updates.state === 'reading')) {
+    // Move to seat when working
+    if (updates.state && ['typing', 'reading', 'thinking', 'running_command'].includes(updates.state)) {
       const seat = this.seats.get(id);
       if (seat) {
         char.targetX = seat.x;
-        char.targetY = seat.y + 1; // Sit in chair (below desk)
+        char.targetY = seat.y;
       }
-    }
-
-    // Speech bubble for waiting state
-    if (updates.state === 'waiting_input') {
-      char.speechBubble = '...';
-    } else {
-      char.speechBubble = undefined;
     }
   }
 
@@ -319,14 +420,12 @@ export class GameEngine {
   }
 
   assignSeat(agentId: string): { x: number; y: number } {
-    // Use predefined seat if available, otherwise find an empty spot
     if (this.seats.has(agentId)) {
       return this.seats.get(agentId)!;
     }
 
-    // Find next available seat position
     const usedPositions = new Set(
-      Array.from(this.seats.values()).map(p => `${p.x},${p.y}`)
+      Array.from(this.seats.values()).map(p => `${p.x},${p.y}`),
     );
 
     for (let y = 3; y < this.config.gridHeight - 2; y += 3) {
@@ -338,7 +437,6 @@ export class GameEngine {
       }
     }
 
-    // Fallback
     const fallback = { x: Math.floor(this.config.gridWidth / 2), y: Math.floor(this.config.gridHeight / 2) };
     this.seats.set(agentId, fallback);
     return fallback;
