@@ -19,6 +19,7 @@ import {
   type Direction,
 } from './SpriteLoader';
 import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
+import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 
 export interface GameConfig {
@@ -54,6 +55,10 @@ interface Character extends CharacterData {
   spawnTime: number;
   fadeAlpha: number;
   dying: boolean;
+  // Audio state
+  lastFootstepTile: number; // tile index of last footstep sound
+  typingSoundTimer: number; // cooldown for typing sounds
+  stateJustChanged: boolean; // true for one frame after state change
 }
 
 export interface EditorCallbacks {
@@ -245,6 +250,7 @@ export class GameEngine {
         const age = now - char.spawnTime;
         if (age > SUBAGENT_LIFETIME && !char.dying) {
           char.dying = true;
+          sfx.despawn();
         }
         if (char.dying) {
           char.fadeAlpha = Math.max(0, char.fadeAlpha - dt / (SUBAGENT_FADE_DURATION / 1000));
@@ -255,6 +261,27 @@ export class GameEngine {
         }
       } else {
         char.fadeAlpha = 1;
+      }
+
+      // State-change sound triggers
+      if (char.stateJustChanged) {
+        char.stateJustChanged = false;
+        if (char.state === 'typing' || char.state === 'running_command') {
+          sfx.typingBatch(3);
+        } else if (char.state === 'waiting_input') {
+          sfx.notify();
+        } else if (char.state === 'error') {
+          sfx.error();
+        }
+      }
+
+      // Periodic typing sounds while typing
+      if (char.state === 'typing' || char.state === 'running_command') {
+        char.typingSoundTimer -= dt;
+        if (char.typingSoundTimer <= 0) {
+          sfx.typing();
+          char.typingSoundTimer = 0.3 + Math.random() * 0.8; // randomized interval
+        }
       }
 
       // Animation timing
@@ -280,6 +307,12 @@ export class GameEngine {
 
           if (wpDist < 0.1) {
             char.pathIndex++;
+            // Footstep sound at each waypoint
+            const tileIdx = wp.y * this.config.gridWidth + wp.x;
+            if (tileIdx !== char.lastFootstepTile) {
+              sfx.footstep();
+              char.lastFootstepTile = tileIdx;
+            }
           } else {
             char.x += (wpDx / wpDist) * Math.min(speed * dt, wpDist);
             char.y += (wpDy / wpDist) * Math.min(speed * dt, wpDist);
@@ -714,6 +747,7 @@ export class GameEngine {
     if (e.button === 0) {
       if (this.selectedFurnitureType) {
         this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
+        sfx.place();
         return;
       }
       const hit = this.findFurnitureAt(gridX, gridY);
@@ -721,6 +755,7 @@ export class GameEngine {
         this.selectedFurnitureId = hit.id;
         this.editorCallbacks?.onSelectFurniture(hit.id);
         this.dragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
+        sfx.pickup();
       } else {
         this.selectedFurnitureId = null;
         this.editorCallbacks?.onSelectFurniture(null);
@@ -737,6 +772,7 @@ export class GameEngine {
         Math.max(1, Math.min(this.config.gridWidth - 3, gridX)),
         Math.max(1, Math.min(this.config.gridHeight - 3, gridY)),
       );
+      sfx.place();
       this.dragging = null;
     }
   };
@@ -791,6 +827,7 @@ export class GameEngine {
       animFrame: 0, animTimer: 0, direction: 'down', paletteIndex,
       path: [], pathIndex: 0,
       spawnTime: performance.now(), fadeAlpha: 1, dying: false,
+      lastFootstepTile: -1, typingSoundTimer: 0, stateJustChanged: false,
     });
   }
 
@@ -800,9 +837,14 @@ export class GameEngine {
     const char = this.characters.get(id);
     if (!char) return;
 
-    // If position changed (agent moving to different area), compute new path
+    // Detect state change
+    const oldState = char.state;
     const hadTarget = { x: char.targetX, y: char.targetY };
     Object.assign(char, updates);
+
+    if (updates.state && updates.state !== oldState) {
+      char.stateJustChanged = true;
+    }
 
     // When activity changes to a desk activity, route to seat
     if (updates.state && ['typing', 'reading', 'thinking', 'running_command'].includes(updates.state)) {
@@ -856,9 +898,13 @@ export class GameEngine {
       dying: false,
       isSubAgent: true,
       parentAgentId: parentId,
+      lastFootstepTile: -1,
+      typingSoundTimer: 0,
+      stateJustChanged: false,
     };
 
     this.characters.set(subId, sub);
+    sfx.spawn();
   }
 
   /** Mark a sub-agent as dying (will fade out) */

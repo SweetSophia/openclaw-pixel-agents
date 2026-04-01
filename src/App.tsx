@@ -3,6 +3,7 @@ import { PixelOffice } from './components/PixelOffice';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { LayoutEditor } from './components/LayoutEditor';
+import { SoundControls } from './components/SoundControls';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
 import type { PlacedFurniture } from '../shared/types';
@@ -87,6 +88,7 @@ export const App: React.FC = () => {
           <span className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
             {connected ? '● Connected' : '○ Disconnected'}
           </span>
+          <SoundControls />
         </div>
       </header>
       <main className="app-main">

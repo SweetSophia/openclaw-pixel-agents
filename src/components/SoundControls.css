@@ -1,0 +1,85 @@
+.sound-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.sound-toggle,
+.sound-expand {
+  background: none;
+  border: 1px solid #3d3d5c;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.sound-toggle:hover,
+.sound-expand:hover {
+  background: rgba(78, 204, 163, 0.1);
+  border-color: #4ecca3;
+  color: #4ecca3;
+}
+
+.sound-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d4a;
+  border-radius: 6px;
+  padding: 10px;
+  width: 200px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: fadeIn 0.15s ease-out;
+}
+
+.sound-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #aaa;
+  margin-bottom: 8px;
+}
+
+.sound-slider-row input[type="range"] {
+  flex: 1;
+  accent-color: #4ecca3;
+  height: 4px;
+}
+
+.sound-pct {
+  font-family: monospace;
+  min-width: 32px;
+  text-align: right;
+  font-size: 11px;
+}
+
+.sound-ambience {
+  width: 100%;
+  background: #2d2d4a;
+  border: 1px solid #3d3d5c;
+  color: #aaa;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.sound-ambience.on {
+  background: rgba(78, 204, 163, 0.15);
+  border-color: #4ecca3;
+  color: #4ecca3;
+}
+
+.sound-ambience:hover {
+  background: rgba(78, 204, 163, 0.1);
+}
