@@ -225,10 +225,11 @@ export class GameEngine {
 
   // Touch state
   private touchStartPos: { x: number; y: number } | null = null;
-  private touchStartTime = 0;
+  private touchCurrentPos: { x: number; y: number } | null = null;
   private lastTapTime = 0;
   private pinchStartDist = 0;
   private pinchStartZoom = 1;
+  private cameraZoom = 1; // view-only zoom applied via CSS transform (independent of render zoom)
   private touchDragging: { id: string; offsetX: number; offsetY: number } | null = null;
   private touchMoved = false; // true once finger moves > threshold
 
@@ -334,7 +335,6 @@ export class GameEngine {
     this.canvas.removeEventListener('touchmove', this.handleTouchMove);
     this.canvas.removeEventListener('touchend', this.handleTouchEnd);
     this.canvas.removeEventListener('touchcancel', this.handleTouchCancel);
-    this.canvas.removeEventListener('keydown', this.handleKeyDown);
   }
 
   private loop = () => {
@@ -1414,7 +1414,6 @@ export class GameEngine {
 
   private static readonly TAP_THRESHOLD = 12; // px movement before it's a drag, not a tap
   private static readonly DOUBLE_TAP_MS = 300; // max interval between double-tap
-  private static readonly LONG_PRESS_MS = 500; // ms before long-press triggers
 
   private handleTouchStart = (e: TouchEvent) => {
     e.preventDefault(); // prevent mouse event synthesis & scroll
@@ -1422,14 +1421,14 @@ export class GameEngine {
     if (e.touches.length === 2) {
       // Pinch-to-zoom start
       this.pinchStartDist = this.touchDistance(e.touches[0], e.touches[1]);
-      this.pinchStartZoom = this.zoom;
+      this.pinchStartZoom = this.cameraZoom;
       this.touchMoved = true; // cancel any pending tap
       return;
     }
 
     const t = e.touches[0];
     this.touchStartPos = { x: t.clientX, y: t.clientY };
-    this.touchStartTime = Date.now();
+    this.touchCurrentPos = { x: t.clientX, y: t.clientY };
     this.touchMoved = false;
 
     const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
@@ -1457,10 +1456,19 @@ export class GameEngine {
     // Pinch-to-zoom
     if (e.touches.length === 2) {
       const dist = this.touchDistance(e.touches[0], e.touches[1]);
+
+      // Guard against zero/invalid starting distance (e.g., both fingers started at the
+      // same pixel): reinitialize from the first valid distance seen during move.
+      if (!this.pinchStartDist || this.pinchStartDist <= 0) {
+        if (dist <= 0) return;
+        this.pinchStartDist = dist;
+        this.pinchStartZoom = this.cameraZoom;
+      }
+
       const scale = dist / this.pinchStartDist;
       const newZoom = Math.max(1, Math.min(4, this.pinchStartZoom * scale));
-      this.zoom = newZoom;
-      this.canvas.style.transform = `scale(${this.zoom})`;
+      this.cameraZoom = newZoom;
+      this.canvas.style.transform = `scale(${this.cameraZoom})`;
       this.canvas.style.transformOrigin = 'center center';
       return;
     }
@@ -1473,6 +1481,9 @@ export class GameEngine {
     if (Math.abs(dx) > GameEngine.TAP_THRESHOLD || Math.abs(dy) > GameEngine.TAP_THRESHOLD) {
       this.touchMoved = true;
     }
+
+    // Track the latest finger position so handleTouchEnd can use the drop location
+    this.touchCurrentPos = { x: t.clientX, y: t.clientY };
 
     const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
     this.mouseGridX = gridX;
@@ -1497,9 +1508,9 @@ export class GameEngine {
     // Editor mode: finish furniture drag or place
     if (this.editorMode) {
       if (this.touchDragging) {
-        const { gridX, gridY } = this.screenToGrid(
-          this.touchStartPos!.x, this.touchStartPos!.y,
-        );
+        // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
+        // up-to-date in handleTouchMove, so it reliably reflects the finger's final position.
+        const { gridX, gridY } = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
         this.editorCallbacks?.onMoveFurniture(
           this.touchDragging.id,
           Math.max(1, Math.min(this.config.gridWidth - 3, gridX)),
@@ -1514,6 +1525,7 @@ export class GameEngine {
         sfx.place();
       }
       this.touchStartPos = null;
+      this.touchCurrentPos = null;
       return;
     }
 
@@ -1534,6 +1546,7 @@ export class GameEngine {
         sfx.place();
         this.lastTapTime = 0; // reset to prevent triple-tap
         this.touchStartPos = null;
+        this.touchCurrentPos = null;
         return;
       }
     }
@@ -1569,10 +1582,12 @@ export class GameEngine {
     }
 
     this.touchStartPos = null;
+    this.touchCurrentPos = null;
   };
 
   private handleTouchCancel = () => {
     this.touchStartPos = null;
+    this.touchCurrentPos = null;
     this.touchDragging = null;
     this.touchMoved = false;
     this.mouseGridX = -1;
