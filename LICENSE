@@ -1,0 +1,37 @@
+MIT License
+
+Copyright (c) 2026 Sherina
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Third-Party Assets
+
+### MetroCity Character Pack
+- **Author**: [JIK-A-4](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack)
+- **Source**: itch.io (free topdown character pack)
+- **License**: Free for personal and commercial use (as stated on itch.io page)
+- **Files**: `public/assets/characters/`, `public/assets/furniture/`, `public/assets/source/MetroCity/`, `public/assets/floors/`
+
+### MetroCity 2.0 / MetroCity2
+- **Author**: JIK-A-4
+- **Source**: itch.io
+- **License**: Free for personal and commercial use
+- **Files**: `public/assets/source/MetroCity2/`, `public/assets/source/MetroCity_2.0/`

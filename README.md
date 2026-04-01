@@ -1,33 +1,30 @@
-# OpenClaw Pixel Agents
+# 🖥️ OpenClaw Pixel Agents
 
-A pixel art office dashboard for OpenClaw — where your AI agents walk around, sit at desks, and visually reflect what they're doing.
+A pixel art office dashboard for [OpenClaw](https://github.com/openclaw/openclaw) — where your AI agents walk around, sit at desks, and visually reflect what they're doing in real time.
 
-![Pixel Agents](docs/screenshot.png)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![React 19](https://img.shields.io/badge/React-19-61dafb.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)
+![Vite](https://img.shields.io/badge/Vite-6-646cff.svg)
 
 ## What It Does
 
-Turns your OpenClaw multi-agent system into something you can actually see. Each agent becomes a character in a pixel art office. They walk around, sit at their desk, and visually reflect what they are doing — typing when writing code, reading when searching files, waiting when they need your attention.
+Turns your OpenClaw multi-agent system into a live pixel art office. Each agent becomes a character that walks to their desk, sits down, and animates based on real agent state — typing when writing code, reading when analyzing, thinking when reasoning, waiting when they need your attention.
+
+![Pixel Office](docs/screenshot.png)
 
 ## Features
 
-- **One agent, one character** — every active OpenClaw agent gets its own animated pixel character
-- **Live activity tracking** — characters animate based on real agent state (typing, reading, thinking, waiting)
-- **Office layout editor** — design your office with floors, walls, and furniture
-- **Agent enable/disable** — choose which agents get pixel characters
-- **Pixel model selector** — choose how each agent is represented
-- **Speech bubbles** — visual indicators when an agent is waiting for input
-- **Sound notifications** — optional chime when an agent finishes its turn
-- **Sub-agent visualization** — spawned sub-agents appear as separate characters
-- **Persistent layouts** — your office design is saved and restored
+- **Live agent visualization** — characters animate based on real OpenClaw Gateway state (typing, reading, thinking, waiting, error)
+- **Drag-and-drop layout editor** — place, move, rotate, and delete furniture on a grid
+- **Persistent layouts** — save and load office designs; create multiple layouts
+- **25 furniture types** — desks, PCs, chairs, plants, bookshelves, whiteboards, coffee machines, paintings, and more
+- **Agent toggle** — choose which agents appear in the pixel office
+- **Character sprites** — animated pixel characters with walk, typing, and reading states
+- **Fallback rendering** — works even without sprite assets (colored rectangles)
+- **Real-time sync** — polls OpenClaw Gateway for agent state every 3 seconds
 
-## Architecture
-
-- **Data source**: OpenClaw Gateway API (WebSocket/SSE) for real-time agent state
-- **Rendering**: React 19 + Canvas 2D (pixel art game engine)
-- **Backend**: Node.js/Express gateway proxy
-- **Platform**: Web-based dashboard (not VS Code)
-
-## Getting Started
+## Quick Start
 
 ```bash
 git clone https://github.com/SweetSophia/openclaw-pixel-agents.git
@@ -36,20 +33,151 @@ npm install
 npm run dev
 ```
 
-## Development
+The app runs at `http://localhost:5173` with the backend API on port 3001.
 
-Built with:
-- React 19 + TypeScript + Vite
-- Canvas 2D rendering engine
-- BFS pathfinding
-- Character state machines (idle → walk → type/read → wait)
+### Requirements
 
-## Assets
+- **Node.js** 20+
+- **OpenClaw** running locally (for live agent data; works in demo mode without it)
+- **OpenClaw CLI** available in PATH (for `openclaw sessions` polling)
 
-Default pixel art characters based on the amazing work by [JIK-A-4, Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack).
+### Demo Mode
 
-Custom pixel models can be added via the pixel model selector.
+Without a running OpenClaw Gateway, the app starts with 8 demo agents (Cybera, Shodan, Cyberlogis, Descartes, Chi, Cylena, Sysauxilia, Miku) in various activity states. This is enough to test the layout editor and rendering.
+
+## Usage
+
+### Agent Sidebar
+
+The right sidebar shows all configured agents with:
+- Activity state badge (color-coded)
+- Model name
+- Token usage bar
+- Toggle button to show/hide in the pixel office
+- Bulk Show All / Hide All controls
+
+### Layout Editor
+
+Click **✏️ Edit** in the header to enter editor mode:
+
+| Action | How |
+|--------|-----|
+| Place furniture | Click a type in the 📦 palette, then click on the grid |
+| Select furniture | Click on placed furniture (green dashed border) |
+| Move furniture | Click and drag |
+| Rotate furniture | Right-click, or use 🔄 button in the info bar |
+| Delete furniture | Use 🗑️ button in the info bar, or press Delete |
+| Save layout | Click 💾 Save |
+
+Layouts auto-save 1 second after any change.
+
+### Layout Manager
+
+Click **📐 Layouts** to manage saved layouts:
+- Create new layouts with custom names
+- Switch between layouts
+- Delete layouts (default layout is protected)
+
+## Architecture
+
+```
+Browser                          Server                     OpenClaw
+┌──────────────┐   HTTP/WS   ┌──────────────┐   CLI poll   ┌──────────────┐
+│ React 19     │◄───────────►│ Express      │◄────────────►│ Gateway      │
+│ Canvas 2D    │             │ Socket.IO    │   (3s)       │ Sessions API │
+│ GameEngine   │             │ Layout API   │              └──────────────┘
+│ SpriteLoader │             │ Agent Prefs  │
+└──────────────┘             └──────────────┘
+       │                            │
+   assets/                      data/
+   characters/                  layouts/*.json
+   furniture/                   agent-prefs.json
+   floors/
+```
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `GameEngine` | Canvas 2D rendering loop, sprite animation, editor mode, mouse handling |
+| `SpriteLoader` | Loads and slices sprite sheets into individual frame canvases |
+| `LayoutEditor` | Toolbar, furniture palette, layout manager UI |
+| `PixelOffice` | Canvas wrapper, wires agent/layout data to GameEngine |
+| `AgentSidebar` | Agent list with toggles and activity badges |
+| `useAgentStore` | Fetches agent state from backend API |
+| `useLayoutStore` | CRUD operations for layouts with auto-save |
+
+### Sprite Format
+
+Character sprite sheets are 112×96px PNGs:
+- **7 frames per row** (16×32px each)
+- **3 rows**: down (row 0), up (row 1), right (row 2)
+- **Frame mapping**: 0-2 walk, 3-4 typing, 5-6 reading
+- Left direction is auto-generated by flipping the right row
+
+Furniture uses per-type directories with `manifest.json` for dimensions and rotation schemes.
+
+## Adding Custom Assets
+
+### New Furniture Type
+
+1. Add sprites to `public/assets/furniture/<TYPE>/`
+2. Create `manifest.json`:
+   ```json
+   {
+     "id": "MY_FURNITURE",
+     "name": "My Furniture",
+     "category": "decor",
+     "type": "single",
+     "members": [{
+       "type": "asset",
+       "id": "MY_FURNITURE",
+       "file": "MY_FURNITURE.png",
+       "width": 32,
+       "height": 32,
+       "footprintW": 2,
+       "footprintH": 2
+     }]
+   }
+   ```
+3. Add the type name to the furniture catalog in `server/index.ts`
+4. It appears in the editor palette automatically
+
+### New Character Sprite
+
+1. Create a 112×96px sprite sheet following the format above
+2. Place in `public/assets/characters/`
+3. The `SpriteLoader` picks it up automatically
+
+## Tech Stack
+
+- **Frontend**: React 19, TypeScript, Vite, Canvas 2D
+- **Backend**: Node.js, Express, Socket.IO
+- **Assets**: [MetroCity](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack) character pack by JIK-A-4
+- **Agent Data**: [OpenClaw](https://github.com/openclaw/openclaw) Gateway
+
+## Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `PORT` | `3001` | Backend server port |
+| `OPENCLAW_CLI` | `openclaw` | Path to OpenClaw CLI binary |
+| `POLL_INTERVAL` | `3000` | Agent state poll interval (ms) |
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start dev server (Vite + backend) |
+| `npm run build` | Production build to `dist/` |
+| `npm start` | Run production build |
 
 ## License
 
-MIT
+[MIT](LICENSE) — free for personal and commercial use.
+
+Pixel art assets by [JIK-A-4](https://jik-a-4.itch.io/) (MetroCity pack) — free for personal and commercial use per itch.io terms.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and how to add custom assets.
