@@ -266,14 +266,15 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
 
 // ── Frame access helpers ───────────────────────────────────
 
-export type AnimState = 'walk' | 'typing' | 'reading';
+export type AnimState = 'walk' | 'typing' | 'reading' | 'idle';
 export type Direction = 'down' | 'up' | 'left' | 'right';
 
 /** Frame index ranges within each direction's 7-frame row */
 const FRAME_RANGES: Record<AnimState, [number, number]> = {
-  walk: [0, 3],    // frames 0-2 (3 unique, used as 0,1,2,1)
-  typing: [3, 2],  // frames 3-4
-  reading: [5, 2], // frames 5-6
+  idle:    [0, 1],    // frame 0 only (single standing frame)
+  walk:    [0, 3],    // frames 0-2 (3 unique, used as 0,1,2,1)
+  typing:  [3, 2],    // frames 3-4
+  reading: [5, 2],    // frames 5-6
 };
 
 /**

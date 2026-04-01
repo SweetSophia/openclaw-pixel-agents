@@ -79,6 +79,42 @@ const AGENT_PALETTES: Record<string, number> = {
 const SUBAGENT_LIFETIME = 15000; // ms before sub-agents fade out
 const SUBAGENT_FADE_DURATION = 2000; // fade animation length
 
+// ── State Transition Visual Effects ────────────────────
+
+interface Particle {
+  x: number; y: number;
+  vx: number; vy: number;
+  life: number; maxLife: number;
+  color: string;
+  size: number;
+}
+
+interface StateEffect {
+  agentId: string;
+  state: string;
+  startTime: number;
+  particles: Particle[];
+  duration: number; // ms
+}
+
+// Per-state visual config
+const STATE_VFX: Record<string, {
+  color: string;
+  icon?: string;
+  particleCount: number;
+  particleSpeed: number;
+  glowColor: string;
+  glowDuration: number; // ms
+}> = {
+  idle:            { color: '#6688aa', particleCount: 0,  particleSpeed: 0,   glowColor: 'transparent',   glowDuration: 0 },
+  thinking:        { color: '#a78bfa', icon: '💭', particleCount: 6,  particleSpeed: 25,  glowColor: 'rgba(167,139,250,0.15)', glowDuration: 800 },
+  typing:          { color: '#4ecca3', icon: '⌨',  particleCount: 4,  particleSpeed: 15,  glowColor: 'rgba(78,204,163,0.12)',  glowDuration: 500 },
+  running_command: { color: '#fbbf24', icon: '⚡', particleCount: 5,  particleSpeed: 30,  glowColor: 'rgba(251,191,36,0.15)',  glowDuration: 600 },
+  waiting_input:   { color: '#60a5fa', icon: '💬', particleCount: 8,  particleSpeed: 20,  glowColor: 'rgba(96,165,250,0.15)',  glowDuration: 1000 },
+  error:           { color: '#ef4444', icon: '❌', particleCount: 10, particleSpeed: 40,  glowColor: 'rgba(239,68,68,0.2)',    glowDuration: 800 },
+  reading:         { color: '#34d399', icon: '📖', particleCount: 3,  particleSpeed: 10,  glowColor: 'rgba(52,211,153,0.1)',   glowDuration: 400 },
+};
+
 export class GameEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -115,6 +151,7 @@ export class GameEngine {
 
   // Speech bubbles
   private speechBubbles: Map<string, { text: string; timer: number; alpha: number }> = new Map();
+  private stateEffects: StateEffect[] = [];
 
   constructor(canvas: HTMLCanvasElement, config: GameConfig, onAssetsLoaded?: () => void) {
     this.canvas = canvas;
@@ -263,7 +300,7 @@ export class GameEngine {
         char.fadeAlpha = 1;
       }
 
-      // State-change sound triggers
+      // State-change triggers (sound + visual effects)
       if (char.stateJustChanged) {
         char.stateJustChanged = false;
         if (char.state === 'typing' || char.state === 'running_command') {
@@ -273,6 +310,8 @@ export class GameEngine {
         } else if (char.state === 'error') {
           sfx.error();
         }
+        // Spawn visual transition effect
+        this.spawnStateEffect(char);
       }
 
       // Periodic typing sounds while typing
@@ -345,6 +384,22 @@ export class GameEngine {
         this.speechBubbles.delete(id);
       }
     }
+
+    // Update state transition effects
+    const nowMs = performance.now();
+    for (const fx of this.stateEffects) {
+      const elapsed = nowMs - fx.startTime;
+      for (const p of fx.particles) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy -= 15 * dt; // slight upward drift
+        p.life -= dt;
+      }
+      fx.particles = fx.particles.filter(p => p.life > 0);
+    }
+    this.stateEffects = this.stateEffects.filter(fx =>
+      performance.now() - fx.startTime < fx.duration || fx.particles.length > 0
+    );
   }
 
   // ── Render ───────────────────────────────────────────
@@ -366,6 +421,7 @@ export class GameEngine {
     this.renderWalls(gridWidth, gridHeight, tileSize);
     this.renderFurniture(tileSize, zoom);
     this.renderCharacters(tileSize, zoom);
+    this.renderStateEffects(tileSize);
     this.renderSpeechBubbles(tileSize);
 
     if (this.editorMode) this.renderEditorOverlay(tileSize);
@@ -519,6 +575,10 @@ export class GameEngine {
     const isWalking = Math.abs(char.targetX - char.x) > 0.1 || Math.abs(char.targetY - char.y) > 0.1;
     const animState: AnimState = this.activityToAnimState(char.state, isWalking);
 
+    // Idle breathing: subtle Y bob when stationary and idle
+    const isIdle = !isWalking && (char.state === 'idle' || char.state === 'waiting_input' || char.state === 'error');
+    const breathOffset = isIdle ? Math.sin(performance.now() / 800) * tileSize * 0.04 : 0;
+
     ctx.save();
 
     // Sub-agent transparency
@@ -548,7 +608,7 @@ export class GameEngine {
           const scale = char.isSubAgent ? 1.5 : 2;
           const spriteW = 16 * scale, spriteH = 32 * scale;
           ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(frameCanvas, px + (tileSize - spriteW) / 2, py + tileSize - spriteH, spriteW, spriteH);
+          ctx.drawImage(frameCanvas, px + (tileSize - spriteW) / 2, py + tileSize - spriteH + breathOffset, spriteW, spriteH);
         }
       }
     }
@@ -563,13 +623,83 @@ export class GameEngine {
     ctx.fillText(char.name, px + tileSize / 2, py + tileSize + tileSize * 0.35);
     ctx.textAlign = 'left';
 
-    // Activity icon
+    // Activity icon (animated)
     if (!char.isSubAgent) {
-      const icon = this.getActivityIcon(char.state);
-      if (icon) { ctx.font = `${tileSize * 0.45}px sans-serif`; ctx.fillText(icon, px + tileSize * 0.15, py - tileSize * 0.15); }
+      this.renderActivityIcon(char, px, py, tileSize);
     }
 
     ctx.restore();
+  }
+
+  /** Render animated activity icon above character */
+  private renderActivityIcon(char: Character, px: number, py: number, tileSize: number) {
+    const { ctx } = this;
+    const vfx = STATE_VFX[char.state];
+    if (!vfx) return;
+
+    const now = performance.now();
+    const iconSize = tileSize * 0.45;
+
+    // Thinking: 3 bouncing dots
+    if (char.state === 'thinking') {
+      const dotR = tileSize * 0.06;
+      const baseY = py - tileSize * 0.3;
+      for (let i = 0; i < 3; i++) {
+        const phase = (now / 400 + i * 0.7) % (Math.PI * 2);
+        const bounceY = Math.sin(phase) * tileSize * 0.08;
+        ctx.fillStyle = vfx.color;
+        ctx.globalAlpha = 0.6 + Math.sin(phase) * 0.3;
+        ctx.beginPath();
+        ctx.arc(
+          px + tileSize / 2 + (i - 1) * tileSize * 0.15,
+          baseY - bounceY,
+          dotR, 0, Math.PI * 2
+        );
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    // Waiting_input: pulsing speech icon
+    if (char.state === 'waiting_input') {
+      const pulse = 1 + Math.sin(now / 300) * 0.15;
+      ctx.save();
+      ctx.translate(px + tileSize * 0.15, py - tileSize * 0.15);
+      ctx.scale(pulse, pulse);
+      ctx.font = `${iconSize}px sans-serif`;
+      ctx.fillText('💬', 0, 0);
+      ctx.restore();
+      return;
+    }
+
+    // Error: shake
+    if (char.state === 'error') {
+      const shake = Math.sin(now / 50) * tileSize * 0.04;
+      ctx.font = `${iconSize}px sans-serif`;
+      ctx.fillText('❌', px + tileSize * 0.15 + shake, py - tileSize * 0.15);
+      return;
+    }
+
+    // Running_command: spinning bolt
+    if (char.state === 'running_command') {
+      const rotation = (now / 200) % (Math.PI * 2);
+      ctx.save();
+      ctx.translate(px + tileSize * 0.4, py - tileSize * 0.15);
+      ctx.rotate(rotation);
+      ctx.font = `${iconSize * 0.8}px sans-serif`;
+      ctx.fillText('⚡', -iconSize * 0.4, iconSize * 0.3);
+      ctx.restore();
+      return;
+    }
+
+    // Default: static icon with subtle bob
+    const bob = Math.sin(now / 600) * tileSize * 0.03;
+    const icon = vfx.icon || this.getActivityIcon(char.state);
+    if (icon) {
+      ctx.font = `${iconSize}px sans-serif`;
+      ctx.fillText(icon, px + tileSize * 0.15, py - tileSize * 0.15 + bob);
+    }
   }
 
   // ── Speech Bubbles ───────────────────────────────────
@@ -806,7 +936,90 @@ export class GameEngine {
     switch (state) {
       case 'typing': case 'running_command': return 'typing';
       case 'reading': case 'thinking': return 'reading';
-      default: return 'typing';
+      case 'waiting_input': return 'idle';
+      case 'error': return 'idle';
+      default: return 'idle';
+    }
+  }
+
+  // ── State Transition Effects ─────────────────────────
+
+  private spawnStateEffect(char: Character) {
+    const vfx = STATE_VFX[char.state];
+    if (!vfx || vfx.particleCount === 0) return;
+
+    const particles: Particle[] = [];
+    for (let i = 0; i < vfx.particleCount; i++) {
+      const angle = (Math.PI * 2 * i) / vfx.particleCount + Math.random() * 0.5;
+      const speed = vfx.particleSpeed * (0.5 + Math.random() * 0.5);
+      particles.push({
+        x: char.x,
+        y: char.y - 0.3, // slightly above character center
+        vx: Math.cos(angle) * speed * 0.01,
+        vy: Math.sin(angle) * speed * 0.01 - 0.02, // upward bias
+        life: 0.6 + Math.random() * 0.4,
+        maxLife: 1.0,
+        color: vfx.color,
+        size: 2 + Math.random() * 3,
+      });
+    }
+
+    this.stateEffects.push({
+      agentId: char.id,
+      state: char.state,
+      startTime: performance.now(),
+      particles,
+      duration: vfx.glowDuration,
+    });
+  }
+
+  private renderStateEffects(tileSize: number) {
+    const { ctx } = this;
+    const nowMs = performance.now();
+
+    for (const fx of this.stateEffects) {
+      const char = this.characters.get(fx.agentId);
+      if (!char) continue;
+
+      const vfx = STATE_VFX[fx.state];
+      if (!vfx) continue;
+
+      const elapsed = nowMs - fx.startTime;
+      const progress = Math.min(1, elapsed / fx.duration);
+
+      // Render glow behind character
+      if (progress < 1 && vfx.glowColor !== 'transparent') {
+        const px = char.x * tileSize + tileSize / 2;
+        const py = char.y * tileSize + tileSize / 2;
+        const glowAlpha = (1 - progress) * parseFloat(vfx.glowColor.match(/[\d.]+(?=\))/)?.[0] ?? '0.15');
+        const radius = tileSize * (1.2 + progress * 0.5);
+
+        ctx.save();
+        ctx.globalAlpha = glowAlpha;
+        const gradient = ctx.createRadialGradient(px, py, 0, px, py, radius);
+        gradient.addColorStop(0, vfx.color);
+        gradient.addColorStop(1, 'transparent');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Render particles
+      for (const p of fx.particles) {
+        const px = p.x * tileSize + tileSize / 2;
+        const py = p.y * tileSize + tileSize / 2;
+        const alpha = Math.max(0, p.life / p.maxLife);
+
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(px, py, p.size * (1 - (1 - alpha) * 0.5), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
   }
 
