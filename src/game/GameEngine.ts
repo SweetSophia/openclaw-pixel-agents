@@ -223,6 +223,16 @@ export class GameEngine {
   private selectedAgentId: string | null = null;
   private selectionPulse = 0; // for animated ring
 
+  // Touch state
+  private touchStartPos: { x: number; y: number } | null = null;
+  private touchCurrentPos: { x: number; y: number } | null = null;
+  private lastTapTime = 0;
+  private pinchStartDist = 0;
+  private pinchStartZoom = 1;
+  private cameraZoom = 1; // view-only zoom applied via CSS transform (independent of render zoom)
+  private touchDragging: { id: string; offsetX: number; offsetY: number } | null = null;
+  private touchMoved = false; // true once finger moves > threshold
+
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
@@ -253,6 +263,11 @@ export class GameEngine {
     // Character click (non-editor mode)
     this.canvas.addEventListener('click', this.handleClick);
     this.canvas.addEventListener('keydown', this.handleKeyDown);
+    // Touch support
+    this.canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
+    this.canvas.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+    this.canvas.addEventListener('touchend', this.handleTouchEnd, { passive: false });
+    this.canvas.addEventListener('touchcancel', this.handleTouchCancel, { passive: false });
   }
 
   async init(signal?: AbortSignal) {
@@ -316,6 +331,10 @@ export class GameEngine {
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
     this.canvas.removeEventListener('click', this.handleClick);
     this.canvas.removeEventListener('keydown', this.handleKeyDown);
+    this.canvas.removeEventListener('touchstart', this.handleTouchStart);
+    this.canvas.removeEventListener('touchmove', this.handleTouchMove);
+    this.canvas.removeEventListener('touchend', this.handleTouchEnd);
+    this.canvas.removeEventListener('touchcancel', this.handleTouchCancel);
   }
 
   private loop = () => {
@@ -1238,13 +1257,17 @@ export class GameEngine {
 
   // ── Mouse handlers ───────────────────────────────────
 
-  private screenToGrid(e: MouseEvent): { gridX: number; gridY: number } {
+  private screenToGrid(e: MouseEvent): { gridX: number; gridY: number };
+  private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number };
+  private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } {
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = this.canvas.width / rect.width;
     const scaleY = this.canvas.height / rect.height;
+    const clientX = typeof eOrX === 'number' ? eOrX : eOrX.clientX;
+    const clientY = typeof eOrX === 'number' ? maybeY! : eOrX.clientY;
     return {
-      gridX: Math.floor((e.clientX - rect.left) * scaleX / this.config.tileSize),
-      gridY: Math.floor((e.clientY - rect.top) * scaleY / this.config.tileSize),
+      gridX: Math.floor((clientX - rect.left) * scaleX / this.config.tileSize),
+      gridY: Math.floor((clientY - rect.top) * scaleY / this.config.tileSize),
     };
   }
 
@@ -1386,6 +1409,206 @@ export class GameEngine {
       this.canvas.style.cursor = 'default';
     }
   };
+
+  // ── Touch Event Handlers ─────────────────────────────
+
+  private static readonly TAP_THRESHOLD = 12; // px movement before it's a drag, not a tap
+  private static readonly DOUBLE_TAP_MS = 300; // max interval between double-tap
+
+  private handleTouchStart = (e: TouchEvent) => {
+    e.preventDefault(); // prevent mouse event synthesis & scroll
+
+    if (e.touches.length === 2) {
+      // Pinch-to-zoom start: cancel any active one-finger drag/tap state so that
+      // lifting all fingers after a pinch cannot accidentally finalize a furniture drag.
+      this.touchDragging = null;
+      this.touchStartPos = null;
+      this.touchCurrentPos = null;
+      this.touchMoved = true;
+      this.pinchStartDist = this.touchDistance(e.touches[0], e.touches[1]);
+      this.pinchStartZoom = this.cameraZoom;
+      return;
+    }
+
+    const t = e.touches[0];
+    this.touchStartPos = { x: t.clientX, y: t.clientY };
+    this.touchCurrentPos = { x: t.clientX, y: t.clientY };
+    this.touchMoved = false;
+
+    const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
+    this.mouseGridX = gridX;
+    this.mouseGridY = gridY;
+
+    // Editor mode: start dragging furniture immediately on touch
+    if (this.editorMode && e.touches.length === 1) {
+      if (this.selectedFurnitureType) {
+        // Will place on touchend if not moved
+      } else {
+        const hit = this.findFurnitureAt(gridX, gridY);
+        if (hit) {
+          this.touchDragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
+          this.selectedFurnitureId = hit.id;
+          this.editorCallbacks?.onSelectFurniture(hit.id);
+        }
+      }
+    }
+  };
+
+  private handleTouchMove = (e: TouchEvent) => {
+    e.preventDefault();
+
+    // Pinch-to-zoom
+    if (e.touches.length === 2) {
+      const dist = this.touchDistance(e.touches[0], e.touches[1]);
+
+      // Guard against zero/invalid starting distance (e.g., both fingers started at the
+      // same pixel): reinitialize from the first valid distance seen during move.
+      if (!this.pinchStartDist || this.pinchStartDist <= 0) {
+        if (dist <= 0) return;
+        this.pinchStartDist = dist;
+        this.pinchStartZoom = this.cameraZoom;
+      }
+
+      const scale = dist / this.pinchStartDist;
+      const newZoom = Math.max(1, Math.min(4, this.pinchStartZoom * scale));
+      this.cameraZoom = newZoom;
+      this.canvas.style.transform = `scale(${this.cameraZoom})`;
+      this.canvas.style.transformOrigin = 'center center';
+      return;
+    }
+
+    if (!this.touchStartPos) return;
+    const t = e.touches[0];
+    const dx = t.clientX - this.touchStartPos.x;
+    const dy = t.clientY - this.touchStartPos.y;
+
+    if (Math.abs(dx) > GameEngine.TAP_THRESHOLD || Math.abs(dy) > GameEngine.TAP_THRESHOLD) {
+      this.touchMoved = true;
+    }
+
+    // Track the latest finger position so handleTouchEnd can use the drop location
+    this.touchCurrentPos = { x: t.clientX, y: t.clientY };
+
+    const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
+    this.mouseGridX = gridX;
+    this.mouseGridY = gridY;
+
+    // Editor mode: drag furniture (subtract grab offset to keep furniture under finger)
+    if (this.editorMode && this.touchDragging) {
+      const item = this.placedFurniture.find(f => f.id === this.touchDragging!.id);
+      if (item) {
+        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX));
+        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY));
+      }
+    }
+  };
+
+  private handleTouchEnd = (e: TouchEvent) => {
+    e.preventDefault();
+
+    // Pinch-to-zoom end — nothing extra to do
+    if (e.touches.length > 0) return;
+
+    // Editor mode: finish furniture drag, place, or double-tap rotate
+    if (this.editorMode) {
+      if (this.touchDragging) {
+        // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
+        // up-to-date in handleTouchMove, so it reliably reflects the finger's final position.
+        // Subtract the grab offset so the drop position matches what was shown during the drag.
+        const { gridX, gridY } = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
+        this.editorCallbacks?.onMoveFurniture(
+          this.touchDragging.id,
+          Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX)),
+          Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY)),
+        );
+        sfx.place();
+        this.touchDragging = null;
+      } else if (!this.touchMoved && this.touchStartPos) {
+        const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+        const now = Date.now();
+
+        // Double-tap furniture → rotate (mirrors desktop right-click in editor mode)
+        if (now - this.lastTapTime < GameEngine.DOUBLE_TAP_MS) {
+          const hit = this.findFurnitureAt(gridX, gridY);
+          if (hit) {
+            hit.rotation = ((hit.rotation || 0) + 90) % 360;
+            sfx.place();
+            this.lastTapTime = 0;
+            this.touchStartPos = null;
+            this.touchCurrentPos = null;
+            return;
+          }
+        }
+        this.lastTapTime = now;
+
+        // Single tap to place furniture
+        if (this.selectedFurnitureType) {
+          this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
+          sfx.place();
+        }
+      }
+      this.touchStartPos = null;
+      this.touchCurrentPos = null;
+      return;
+    }
+
+    // ── Non-editor: tap interactions ──
+    if (this.touchMoved || !this.touchStartPos) {
+      this.touchStartPos = null;
+      this.touchCurrentPos = null;
+      return; // was a drag or pinch, not a tap
+    }
+
+    const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+
+    const charId = this.findCharacterAt(gridX, gridY);
+
+    if (charId && !charId.startsWith('sub-')) {
+      // Tap agent → select
+      this.selectedAgentId = charId;
+      this.selectionPulse = 0;
+      sfx.click();
+      this.gameCallbacks?.onCharacterClick(charId);
+    } else if (this.selectedAgentId) {
+      // Tap empty tile → move selected agent
+      const char = this.characters.get(this.selectedAgentId);
+      if (char) {
+        this.ensureObstacles();
+        if (this.obstacleGrid && gridY >= 0 && gridY < this.config.gridHeight
+            && gridX >= 0 && gridX < this.config.gridWidth
+            && !this.obstacleGrid[gridY][gridX]) {
+          char.targetX = gridX;
+          char.targetY = gridY;
+          char.path = this.computePath(char);
+          char.pathIndex = 0;
+          sfx.footstep();
+        }
+      }
+      this.selectedAgentId = null;
+    } else {
+      // Tap empty tile, no agent selected → deselect
+      this.selectedAgentId = null;
+    }
+
+    this.touchStartPos = null;
+    this.touchCurrentPos = null;
+  };
+
+  private handleTouchCancel = () => {
+    this.touchStartPos = null;
+    this.touchCurrentPos = null;
+    this.touchDragging = null;
+    this.touchMoved = false;
+    this.mouseGridX = -1;
+    this.mouseGridY = -1;
+  };
+
+  /** Euclidean distance between two touch points */
+  private touchDistance(a: Touch, b: Touch): number {
+    const dx = a.clientX - b.clientX;
+    const dy = a.clientY - b.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 
   // ── Helpers ──────────────────────────────────────────
 

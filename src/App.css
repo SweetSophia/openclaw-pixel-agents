@@ -39,3 +39,94 @@
   display: flex;
   overflow: hidden;
 }
+
+/* ── Mobile Responsive ─────────────────────────────── */
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.editor-toggle {
+  background: #0f3460;
+  color: #e0e0e0;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  /* Touch-friendly minimum size */
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.editor-toggle:hover {
+  background: #1a4a7a;
+}
+
+.editor-toggle.active {
+  background: #e94560;
+  color: white;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    padding: 6px 10px;
+  }
+
+  .app-header h1 {
+    font-size: 13px;
+  }
+
+  .header-controls {
+    gap: 6px;
+  }
+
+  .app-main {
+    flex-direction: column;
+  }
+
+  /* Sidebar becomes a collapsible bottom drawer */
+  .app-main > .agent-sidebar {
+    width: 100%;
+    max-height: 40vh;
+    border-left: none;
+    border-top: 1px solid #0f3460;
+    order: 2;
+    padding: 8px;
+  }
+
+  /* Canvas wrapper takes remaining space */
+  .app-main > .office-wrapper {
+    flex: 1;
+    min-height: 0;
+    order: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header h1 {
+    font-size: 11px;
+  }
+
+  .app-header h1 span {
+    display: none;
+  }
+
+  .header-controls {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* Sidebar collapses to a peek bar, expandable on tap */
+  .app-main > .agent-sidebar {
+    max-height: 35vh;
+    padding: 6px;
+  }
+
+  .agent-card {
+    padding: 8px;
+  }
+}
