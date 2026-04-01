@@ -208,8 +208,8 @@ export class GameEngine {
   private rebuildObstacles() {
     const furnitureRects = this.placedFurniture.map(f => {
       const sprite = this.furniture.get(f.type);
-      const fw = sprite ? Math.ceil(sprite.width / 16) : 2;
-      const fh = sprite ? Math.ceil(sprite.height / 16) : 1;
+      const fw = sprite ? sprite.footprintW : 2;
+      const fh = sprite ? sprite.footprintH : 1;
       return { x: f.x, y: f.y, w: fw, h: fh };
     });
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
@@ -546,7 +546,7 @@ export class GameEngine {
 
     for (const [agentId, bubble] of this.speechBubbles) {
       const char = this.characters.get(agentId);
-      if (!char || char.state !== 'waiting_input') continue;
+      if (!char || char.state !== 'waiting') continue;
 
       const px = char.x * tileSize + tileSize / 2;
       const py = char.y * tileSize - tileSize * 0.8;
@@ -667,8 +667,8 @@ export class GameEngine {
     for (let i = this.placedFurniture.length - 1; i >= 0; i--) {
       const f = this.placedFurniture[i];
       const sprite = this.furniture.get(f.type);
-      const fw = sprite ? Math.ceil(sprite.width / 16) : 2;
-      const fh = sprite ? Math.ceil(sprite.height / 16) : 1;
+      const fw = sprite ? sprite.footprintW : 2;
+      const fh = sprite ? sprite.footprintH : 1;
       if (gridX >= f.x && gridX < f.x + fw && gridY >= f.y && gridY < f.y + fh) return f;
     }
     return null;
@@ -792,6 +792,15 @@ export class GameEngine {
       path: [], pathIndex: 0,
       spawnTime: performance.now(), fadeAlpha: 1, dying: false,
     });
+
+    // Create speech bubble if agent starts in waiting state with a message
+    if (data.state === 'waiting' && data.lastMessage) {
+      this.speechBubbles.set(data.id, {
+        text: data.lastMessage,
+        timer: 30,
+        alpha: 1,
+      });
+    }
   }
 
   removeCharacter(id: string) { this.characters.delete(id); }
@@ -819,8 +828,8 @@ export class GameEngine {
       char.pathIndex = 0;
     }
 
-    // Update speech bubble for waiting_input state
-    if (updates.state === 'waiting_input' && updates.lastMessage) {
+    // Update speech bubble for waiting state
+    if (updates.state === 'waiting' && updates.lastMessage) {
       this.speechBubbles.set(id, {
         text: updates.lastMessage,
         timer: 30, // 30 seconds visible
@@ -836,8 +845,10 @@ export class GameEngine {
 
     const offsetAngle = Math.random() * Math.PI * 2;
     const offsetDist = 2;
-    const sx = Math.round(parent.x + Math.cos(offsetAngle) * offsetDist);
-    const sy = Math.round(parent.y + Math.sin(offsetAngle) * offsetDist);
+    const sx = Math.max(1, Math.min(this.config.gridWidth - 2,
+      Math.round(parent.x + Math.cos(offsetAngle) * offsetDist)));
+    const sy = Math.max(1, Math.min(this.config.gridHeight - 2,
+      Math.round(parent.y + Math.sin(offsetAngle) * offsetDist)));
 
     const sub: Character = {
       id: subId,

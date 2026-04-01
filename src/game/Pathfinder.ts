@@ -89,6 +89,7 @@ export function bfsPathfind(
   const visited = new Set<string>();
   const parent = new Map<string, string>();
   const queue: Point[] = [];
+  const targetSet = new Set(targets.map(t => `${t.x},${t.y}`));
 
   for (const s of starts) {
     const key = `${s.x},${s.y}`;
@@ -105,19 +106,17 @@ export function bfsPathfind(
   ];
 
   let found: string | null = null;
+  let head = 0;
 
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
+  while (head < queue.length) {
+    const cur = queue[head++];
     const curKey = `${cur.x},${cur.y}`;
 
     // Check if we reached any target
-    for (const t of targets) {
-      if (cur.x === t.x && cur.y === t.y) {
-        found = curKey;
-        break;
-      }
+    if (targetSet.has(curKey)) {
+      found = curKey;
+      break;
     }
-    if (found) break;
 
     for (const d of dirs) {
       const nx = cur.x + d.x;
