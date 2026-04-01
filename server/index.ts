@@ -362,7 +362,17 @@ async function tailTranscript(
     });
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
+    // Track how many bytes we've consumed through complete newlines.
+    // `readline` only emits a "line" event after encountering a newline
+    // delimiter, so bytesConsumed always ends at a clean boundary — any
+    // trailing partial line (no terminating newline) is NOT counted and
+    // will be re-read on the next poll cycle.
+    let bytesConsumed = 0;
+
     rl.on("line", (line) => {
+      // +1 for the newline character that readline strips
+      bytesConsumed += Buffer.byteLength(line, "utf-8") + 1;
+
       if (!line.trim()) return;
       try {
         const msg = JSON.parse(line);
@@ -390,7 +400,12 @@ async function tailTranscript(
     });
 
     rl.on("close", () => {
-      lastReadOffset.set(key, fileSize);
+      // Only advance the cursor by bytes we know ended at a newline.
+      // If the file was appended mid-line during our read, the partial
+      // fragment (fileSize - bytesConsumed) will be re-read next cycle.
+      if (bytesConsumed > 0) {
+        lastReadOffset.set(key, offset + bytesConsumed);
+      }
       resolve(newMessages);
     });
 
