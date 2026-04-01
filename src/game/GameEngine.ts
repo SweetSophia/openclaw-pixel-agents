@@ -153,6 +153,10 @@ export class GameEngine {
   private speechBubbles: Map<string, { text: string; timer: number; alpha: number }> = new Map();
   private stateEffects: StateEffect[] = [];
 
+  // Click-to-move selection
+  private selectedAgentId: string | null = null;
+  private selectionPulse = 0; // for animated ring
+
   constructor(canvas: HTMLCanvasElement, config: GameConfig, onAssetsLoaded?: () => void) {
     this.canvas = canvas;
     this.config = config;
@@ -163,6 +167,7 @@ export class GameEngine {
     canvas.width = config.gridWidth * config.tileSize;
     canvas.height = config.gridHeight * config.tileSize;
     canvas.style.imageRendering = 'pixelated';
+    canvas.tabIndex = 0; // enable keyboard focus for Escape key
 
     this.canvas.addEventListener('mousemove', this.handleMouseMove);
     this.canvas.addEventListener('mousedown', this.handleMouseDown);
@@ -171,6 +176,7 @@ export class GameEngine {
     this.canvas.addEventListener('contextmenu', this.handleContextMenu);
     // Character click (non-editor mode)
     this.canvas.addEventListener('click', this.handleClick);
+    this.canvas.addEventListener('keydown', this.handleKeyDown);
   }
 
   async init(signal?: AbortSignal) {
@@ -233,6 +239,7 @@ export class GameEngine {
     this.canvas.removeEventListener('mouseleave', this.handleMouseLeave);
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
     this.canvas.removeEventListener('click', this.handleClick);
+    this.canvas.removeEventListener('keydown', this.handleKeyDown);
   }
 
   private loop = () => {
@@ -421,6 +428,8 @@ export class GameEngine {
     this.renderWalls(gridWidth, gridHeight, tileSize);
     this.renderFurniture(tileSize, zoom);
     this.renderCharacters(tileSize, zoom);
+    this.renderSelectionRing(tileSize);
+    this.renderMoveTargets(tileSize);
     this.renderStateEffects(tileSize);
     this.renderSpeechBubbles(tileSize);
 
@@ -866,8 +875,12 @@ export class GameEngine {
           ? (this.dragging ? 'grabbing' : 'grab')
           : 'default';
     } else {
-      // Non-editor: pointer on character hover
-      this.canvas.style.cursor = this.findCharacterAt(gridX, gridY) ? 'pointer' : 'default';
+      // Non-editor: pointer on character hover, crosshair if agent is selected
+      if (this.selectedAgentId) {
+        this.canvas.style.cursor = 'crosshair';
+      } else {
+        this.canvas.style.cursor = this.findCharacterAt(gridX, gridY) ? 'pointer' : 'default';
+      }
     }
   };
 
@@ -924,8 +937,40 @@ export class GameEngine {
     if (this.editorMode) return;
     const { gridX, gridY } = this.screenToGrid(e);
     const charId = this.findCharacterAt(gridX, gridY);
+
     if (charId && !charId.startsWith('sub-')) {
+      // Click on agent → select them
+      this.selectedAgentId = charId;
+      this.selectionPulse = 0;
+      sfx.click(); // satisfying selection click
       this.gameCallbacks?.onCharacterClick(charId);
+      this.canvas.style.cursor = 'pointer';
+    } else if (this.selectedAgentId) {
+      // Click on empty tile → move selected agent there
+      const char = this.characters.get(this.selectedAgentId);
+      if (char) {
+        // Check if tile is walkable
+        this.ensureObstacles();
+        if (this.obstacleGrid && gridY >= 0 && gridY < this.config.gridHeight && gridX >= 0 && gridX < this.config.gridWidth) {
+          if (!this.obstacleGrid[gridY][gridX]) {
+            char.targetX = gridX;
+            char.targetY = gridY;
+            char.path = this.computePath(char);
+            char.pathIndex = 0;
+            sfx.footstep(); // move-command sound
+          }
+        }
+      }
+      // Deselect after move command (or click invalid tile)
+      this.selectedAgentId = null;
+      this.canvas.style.cursor = 'default';
+    }
+  };
+
+  private handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && this.selectedAgentId) {
+      this.selectedAgentId = null;
+      this.canvas.style.cursor = 'default';
     }
   };
 
@@ -943,6 +988,58 @@ export class GameEngine {
   }
 
   // ── State Transition Effects ─────────────────────────
+
+  /** Render animated selection ring around selected agent */
+  private renderSelectionRing(tileSize: number) {
+    if (!this.selectedAgentId) return;
+    const char = this.characters.get(this.selectedAgentId);
+    if (!char) { this.selectedAgentId = null; return; }
+
+    const { ctx } = this;
+    this.selectionPulse += 0.04;
+
+    const px = char.x * tileSize + tileSize / 2;
+    const py = char.y * tileSize + tileSize / 2;
+    const baseRadius = tileSize * 0.9;
+    const pulse = Math.sin(this.selectionPulse) * tileSize * 0.08;
+    const radius = baseRadius + pulse;
+
+    ctx.save();
+
+    // Outer glow
+    ctx.strokeStyle = '#4ecca3';
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = 0.4 + Math.sin(this.selectionPulse * 1.5) * 0.15;
+    ctx.shadowColor = '#4ecca3';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(px, py, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner dashed ring
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.lineDashOffset = -this.selectionPulse * 8; // rotating dash
+    ctx.beginPath();
+    ctx.arc(px, py, radius - 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Name label
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#0f0f23';
+    ctx.font = `bold ${tileSize * 0.35}px monospace`;
+    const labelWidth = ctx.measureText(char.name).width;
+    const labelX = px - labelWidth / 2 - 4;
+    const labelY = py - radius - 14;
+    ctx.fillRect(labelX, labelY, labelWidth + 8, tileSize * 0.4);
+    ctx.fillStyle = '#4ecca3';
+    ctx.fillText(char.name, px - labelWidth / 2, labelY + tileSize * 0.32);
+
+    ctx.restore();
+  }
 
   private spawnStateEffect(char: Character) {
     const vfx = STATE_VFX[char.state];
@@ -971,6 +1068,43 @@ export class GameEngine {
       particles,
       duration: vfx.glowDuration,
     });
+  }
+
+  /** Show a small fading target marker on walking agents' destinations */
+  private renderMoveTargets(tileSize: number) {
+    const { ctx } = this;
+    const now = performance.now();
+
+    for (const char of this.characters.values()) {
+      const isWalking = Math.abs(char.targetX - char.x) > 0.05 || Math.abs(char.targetY - char.y) > 0.05;
+      if (!isWalking) continue;
+
+      const tx = char.targetX * tileSize + tileSize / 2;
+      const ty = char.targetY * tileSize + tileSize / 2;
+      const size = tileSize * 0.2;
+
+      // Pulsing crosshair
+      const pulse = Math.sin(now / 200) * 0.15 + 0.85;
+      ctx.save();
+      ctx.globalAlpha = 0.5 * pulse;
+      ctx.strokeStyle = '#4ecca3';
+      ctx.lineWidth = 1.5;
+
+      // X marker
+      ctx.beginPath();
+      ctx.moveTo(tx - size, ty - size);
+      ctx.lineTo(tx + size, ty + size);
+      ctx.moveTo(tx + size, ty - size);
+      ctx.lineTo(tx - size, ty + size);
+      ctx.stroke();
+
+      // Small circle around target
+      ctx.beginPath();
+      ctx.arc(tx, ty, size * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.restore();
+    }
   }
 
   private renderStateEffects(tileSize: number) {
