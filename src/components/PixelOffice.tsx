@@ -12,6 +12,7 @@ interface Props {
   onPlaceFurniture: (type: string, gridX: number, gridY: number) => void;
   onSelectFurniture: (id: string | null) => void;
   onMoveFurniture: (id: string, gridX: number, gridY: number) => void;
+  onCharacterClick?: (agentId: string) => void;
 }
 
 function activityToAnimState(activity: AgentActivity): string {
@@ -29,6 +30,7 @@ export const PixelOffice: React.FC<Props> = ({
   agents, editorMode, activeLayout,
   selectedFurnitureType,
   onPlaceFurniture, onSelectFurniture, onMoveFurniture,
+  onCharacterClick,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
@@ -58,6 +60,13 @@ export const PixelOffice: React.FC<Props> = ({
     if (!engine) return;
     engine.setEditorCallbacks({ onPlaceFurniture, onSelectFurniture, onMoveFurniture });
   }, [onPlaceFurniture, onSelectFurniture, onMoveFurniture]);
+
+  // Wire game callbacks (character click)
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !onCharacterClick) return;
+    engine.setGameCallbacks({ onCharacterClick });
+  }, [onCharacterClick]);
 
   // Sync editor mode
   useEffect(() => {
@@ -97,9 +106,32 @@ export const PixelOffice: React.FC<Props> = ({
           id: agent.id, name: agent.name,
           x: seat.x, y: seat.y,
           state: animState, model: agent.model, spriteId: agent.characterSpriteId,
+          lastMessage: agent.lastMessage,
         });
       } else {
-        engine.updateCharacter(agent.id, { state: animState, model: agent.model, name: agent.name });
+        engine.updateCharacter(agent.id, {
+          state: animState, model: agent.model, name: agent.name,
+          lastMessage: agent.lastMessage,
+        });
+      }
+
+      // Sync sub-agents
+      if (agent.subAgents) {
+        const activeSubIds = new Set(agent.subAgents.map(s => s.id));
+        // Spawn new sub-agents
+        for (const sub of agent.subAgents) {
+          if (sub.status === 'running' && !engine.getCharacterIds().includes(sub.id)) {
+            engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
+          } else if (sub.status !== 'running') {
+            engine.killSubAgent(sub.id);
+          }
+        }
+        // Kill sub-agents no longer in the list
+        for (const cid of engine.getCharacterIds()) {
+          if (cid.startsWith('sub-') && !activeSubIds.has(cid)) {
+            engine.killSubAgent(cid);
+          }
+        }
       }
     }
   }, [agents, loaded]);

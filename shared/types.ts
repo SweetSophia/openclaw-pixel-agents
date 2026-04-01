@@ -10,6 +10,13 @@ export type AgentActivity =
   | 'sleeping'
   | 'error';
 
+export interface AgentTokens {
+  used: number;
+  limit: number;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface AgentState {
   /** Agent ID (e.g. "cybera", "shodan") */
   id: string;
@@ -26,16 +33,25 @@ export interface AgentState {
   /** Timestamp of last activity */
   lastActivity: number;
   /** Token usage if available */
-  tokens?: {
-    used: number;
-    limit: number;
-  };
+  tokens?: AgentTokens;
   /** Custom character sprite ID */
   characterSpriteId?: string;
   /** Whether pixel visualization is enabled for this agent */
   pixelEnabled: boolean;
   /** Sub-agents spawned by this agent */
-  subAgents?: string[];
+  subAgents?: SubAgentInfo[];
+  /** Last message sent by this agent (truncated) */
+  lastMessage?: string;
+  /** Uptime in seconds for this session */
+  sessionUptime?: number;
+}
+
+export interface SubAgentInfo {
+  id: string;
+  name: string;
+  task?: string;
+  spawnedAt: number;
+  status: 'running' | 'completed' | 'failed';
 }
 
 export interface OfficeLayout {

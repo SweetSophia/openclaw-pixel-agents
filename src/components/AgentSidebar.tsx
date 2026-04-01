@@ -6,6 +6,7 @@ interface Props {
   agents: AgentState[];
   onToggle: (agentId: string, enabled: boolean) => void;
   onToggleAll: (enabled: boolean) => void;
+  onSelectAgent?: (agentId: string) => void;
 }
 
 const activityIcons: Record<AgentActivity, string> = {
@@ -30,7 +31,7 @@ const activityColors: Record<AgentActivity, string> = {
   error: '#dc3545',
 };
 
-export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll }) => {
+export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, onSelectAgent }) => {
   const enabledCount = agents.filter(a => a.pixelEnabled).length;
   const activeCount = agents.filter(a => a.active).length;
 
@@ -46,7 +47,7 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll })
               : 'agent-card inactive';
 
           return (
-            <div key={agent.id} className={cardClass}>
+            <div key={agent.id} className={cardClass} onClick={() => onSelectAgent?.(agent.id)} style={{ cursor: onSelectAgent ? 'pointer' : 'default' }}>
               <div className="agent-header">
                 <span className="agent-icon">
                   {agent.pixelEnabled ? activityIcons[agent.activity] : '🚫'}

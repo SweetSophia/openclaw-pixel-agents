@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { PixelOffice } from './components/PixelOffice';
 import { AgentSidebar } from './components/AgentSidebar';
+import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { LayoutEditor } from './components/LayoutEditor';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
@@ -17,6 +18,7 @@ export const App: React.FC = () => {
   const [editorMode, setEditorMode] = useState(false);
   const [selectedFurnitureType, setSelectedFurnitureType] = useState<string | null>(null);
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   // Place new furniture
   const handlePlaceFurniture = useCallback((type: string, gridX: number, gridY: number) => {
@@ -66,6 +68,11 @@ export const App: React.FC = () => {
     setSelectedFurnitureId(null);
   }, [activeLayout, updateFurniture]);
 
+  // Character click handler
+  const handleCharacterClick = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+  }, []);
+
   return (
     <div className="app">
       <header className="app-header">
@@ -113,10 +120,20 @@ export const App: React.FC = () => {
             onPlaceFurniture={handlePlaceFurniture}
             onSelectFurniture={handleSelectFurniture}
             onMoveFurniture={handleMoveFurniture}
+            onCharacterClick={handleCharacterClick}
           />
         </div>
-        <AgentSidebar agents={agents} onToggle={toggleAgent} onToggleAll={toggleAll} />
+        <AgentSidebar
+          agents={agents}
+          onToggle={toggleAgent}
+          onToggleAll={toggleAll}
+          onSelectAgent={setSelectedAgentId}
+        />
       </main>
+      <AgentDetailPanel
+        agent={selectedAgentId ? agents.find(a => a.id === selectedAgentId) ?? null : null}
+        onClose={() => setSelectedAgentId(null)}
+      />
     </div>
   );
 };

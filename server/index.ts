@@ -12,7 +12,7 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import type { AgentState, AgentActivity } from "../shared/types";
+import type { AgentState, AgentActivity, SubAgentInfo } from "../shared/types";
 
 const app = express();
 const server = createServer(app);
@@ -232,13 +232,22 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
           ? {
               used: latestSession.totalTokens,
               limit: latestSession.contextTokens ?? 100000,
+              inputTokens: latestSession.inputTokens,
+              outputTokens: latestSession.outputTokens,
             }
           : undefined,
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
         subAgents: sessions
           ?.filter((s) => s.kind === "subagent")
-          .map((s) => s.key),
+          .map((s) => ({
+            id: s.key,
+            name: s.key.split("/").pop() || s.key,
+            task: undefined,
+            spawnedAt: s.updatedAt ?? Date.now(),
+            status: s.status === "completed" ? "completed" as const : s.abortedLastRun ? "failed" as const : "running" as const,
+          })),
+        sessionUptime: latestSession.updatedAt ? (Date.now() - latestSession.updatedAt) / 1000 : undefined,
       };
       agentStates.set(agentId, state);
       results.push(state);
