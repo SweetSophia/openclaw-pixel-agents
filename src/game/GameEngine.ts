@@ -143,7 +143,7 @@ export class GameEngine {
       { id: 'shodan', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
       { id: 'descartes', name: 'Descartes', state: 'idle' },
-      { id: 'chi', name: 'Chi', state: 'waiting_input', lastMessage: 'Need input on the deploy config...' },
+      { id: 'chi', name: 'Chi', state: 'waiting', lastMessage: 'Need input on the deploy config...' },
       { id: 'cylena', name: 'Cylena', state: 'sleeping' },
       { id: 'sysauxilia', name: 'Sysauxilia', state: 'idle' },
       { id: 'miku', name: 'Miku', state: 'reading' },
@@ -777,7 +777,7 @@ export class GameEngine {
   private getActivityIcon(state: string): string {
     const icons: Record<string, string> = {
       typing: '⌨', reading: '📖', thinking: '💭',
-      waiting_input: '💬', running_command: '⚡', error: '❌',
+      waiting: '💬', error: '❌',
     };
     return icons[state] || '';
   }
@@ -814,7 +814,7 @@ export class GameEngine {
     Object.assign(char, updates);
 
     // When activity changes to a desk activity, route to seat
-    if (updates.state && ['typing', 'reading', 'thinking', 'running_command'].includes(updates.state)) {
+    if (updates.state && ['typing', 'reading'].includes(updates.state)) {
       const seat = this.seats.get(id);
       if (seat) {
         char.targetX = seat.x;
