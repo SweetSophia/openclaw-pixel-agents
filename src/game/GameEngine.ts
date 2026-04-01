@@ -115,6 +115,72 @@ const STATE_VFX: Record<string, {
   reading:         { color: '#34d399', icon: '📖', particleCount: 3,  particleSpeed: 10,  glowColor: 'rgba(52,211,153,0.1)',   glowDuration: 400 },
 };
 
+// ── Day/Night Cycle ────────────────────────────────────
+
+interface DayPhase {
+  /** RGBA overlay color */
+  overlay: string;
+  /** Ambient light intensity 0-1 */
+  light: number;
+  /** Label */
+  label: string;
+}
+
+const DAY_PHASES: DayPhase[] = [
+  // 0.00-0.15: Morning (warm amber)
+  { overlay: 'rgba(255, 200, 100, 0.06)', light: 0.95, label: 'Morning' },
+  // 0.15-0.35: Midday (bright, neutral)
+  { overlay: 'rgba(255, 255, 240, 0.02)', light: 1.0, label: 'Midday' },
+  // 0.35-0.50: Afternoon (warm orange)
+  { overlay: 'rgba(255, 160, 60, 0.08)', light: 0.9, label: 'Afternoon' },
+  // 0.50-0.60: Sunset (deep orange/red)
+  { overlay: 'rgba(255, 100, 30, 0.12)', light: 0.75, label: 'Sunset' },
+  // 0.60-0.75: Dusk (blue-purple)
+  { overlay: 'rgba(60, 40, 120, 0.15)', light: 0.55, label: 'Dusk' },
+  // 0.75-0.90: Night (deep blue)
+  { overlay: 'rgba(10, 10, 50, 0.25)', light: 0.35, label: 'Night' },
+  // 0.90-1.00: Late night (dark, slight warm)
+  { overlay: 'rgba(15, 10, 40, 0.3)', light: 0.25, label: 'Late Night' },
+];
+
+// ── Ambient Particles ──────────────────────────────────
+
+interface AmbientParticle {
+  x: number; y: number;
+  vx: number; vy: number;
+  size: number;
+  alpha: number;
+  maxAlpha: number;
+  life: number;
+  maxLife: number;
+  type: 'dust' | 'steam' | 'sparkle';
+  drift: number; // sinusoidal drift amplitude
+  driftSpeed: number;
+  driftPhase: number;
+}
+
+const AMBIENT_DUST_COUNT = 15;
+
+// ── Idle Behaviors ─────────────────────────────────────
+
+type IdleAction = 'stretch' | 'lookAround' | 'fidget' | 'sip' | 'none';
+
+interface IdleBehavior {
+  current: IdleAction;
+  timer: number; // seconds remaining in current action
+  phase: number; // animation phase 0-1
+}
+
+const IDLE_ACTIONS: IdleAction[] = ['stretch', 'lookAround', 'fidget', 'sip'];
+const IDLE_ACTION_DURATION: Record<IdleAction, number> = {
+  stretch: 1.2,
+  lookAround: 1.5,
+  fidget: 0.8,
+  sip: 1.0,
+  none: 2.0, // pause between actions
+};
+const IDLE_CHANCE = 0.15; // chance per second of starting an idle action
+
 export class GameEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -156,6 +222,16 @@ export class GameEngine {
   // Click-to-move selection
   private selectedAgentId: string | null = null;
   private selectionPulse = 0; // for animated ring
+
+  // Day/night cycle
+  private dayPhase = 0; // 0-1, loops continuously
+  private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
+
+  // Ambient particles (dust motes, steam)
+  private ambientParticles: AmbientParticle[] = [];
+
+  // Idle behaviors
+  private idleBehaviors: Map<string, IdleBehavior> = new Map();
 
   constructor(canvas: HTMLCanvasElement, config: GameConfig, onAssetsLoaded?: () => void) {
     this.canvas = canvas;
@@ -407,6 +483,311 @@ export class GameEngine {
     this.stateEffects = this.stateEffects.filter(fx =>
       performance.now() - fx.startTime < fx.duration || fx.particles.length > 0
     );
+
+    // ── Day/night cycle update ──
+    this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
+
+    // ── Ambient particles update ──
+    this.updateAmbientParticles(dt);
+
+    // ── Idle behaviors update ──
+    this.updateIdleBehaviors(dt);
+  }
+
+  // ── Day/Night Cycle ──────────────────────────────────
+
+  /** Parse 'rgba(R, G, B, A)' into [r, g, b, a] */
+  private parseRgba(s: string): [number, number, number, number] {
+    const m = s.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
+    if (!m) return [0, 0, 0, 0];
+    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
+  }
+
+  /** Linearly interpolate two rgba overlay strings */
+  private lerpOverlay(colorA: string, colorB: string, t: number): string {
+    const [r1, g1, b1, a1] = this.parseRgba(colorA);
+    const [r2, g2, b2, a2] = this.parseRgba(colorB);
+    const r = Math.round(r1 + (r2 - r1) * t);
+    const g = Math.round(g1 + (g2 - g1) * t);
+    const b = Math.round(b1 + (b2 - b1) * t);
+    const a = +(a1 + (a2 - a1) * t).toFixed(3);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
+  /** Get interpolated day phase data */
+  private getDayPhase(): DayPhase {
+    const idx = this.dayPhase * DAY_PHASES.length;
+    const i = Math.floor(idx) % DAY_PHASES.length;
+    const j = (i + 1) % DAY_PHASES.length;
+    const t = idx - Math.floor(idx);
+
+    const a = DAY_PHASES[i];
+    const b = DAY_PHASES[j];
+
+    return {
+      overlay: this.lerpOverlay(a.overlay, b.overlay, t),
+      light: a.light + (b.light - a.light) * t,
+      label: t < 0.5 ? a.label : b.label,
+    };
+  }
+
+  /** Render day/night color overlay and monitor glow */
+  private renderDayNight(tileSize: number) {
+    const { ctx, config } = this;
+    const phase = this.getDayPhase();
+
+    // Color overlay
+    ctx.fillStyle = phase.overlay;
+    ctx.fillRect(0, 0, config.gridWidth * tileSize, config.gridHeight * tileSize);
+
+    // During night phases, add monitor glow around typing agents
+    if (phase.light < 0.5) {
+      const glowIntensity = (0.5 - phase.light) * 2; // 0-1 stronger at night
+      for (const char of this.characters.values()) {
+        if (char.state === 'typing' || char.state === 'running_command') {
+          const px = char.x * tileSize + tileSize / 2;
+          const py = char.y * tileSize + tileSize / 2;
+          const radius = tileSize * 2.5;
+
+          ctx.save();
+          ctx.globalAlpha = glowIntensity * 0.2;
+          const gradient = ctx.createRadialGradient(px, py - tileSize * 0.3, 0, px, py - tileSize * 0.3, radius);
+          gradient.addColorStop(0, 'rgba(100, 180, 255, 0.4)');
+          gradient.addColorStop(0.4, 'rgba(100, 180, 255, 0.1)');
+          gradient.addColorStop(1, 'transparent');
+          ctx.fillStyle = gradient;
+          ctx.fillRect(px - radius, py - tileSize * 0.3 - radius, radius * 2, radius * 2);
+          ctx.restore();
+        }
+      }
+    }
+
+    // Dim the whole scene based on light level
+    if (phase.light < 0.8) {
+      ctx.save();
+      ctx.globalAlpha = (1 - phase.light) * 0.3;
+      ctx.fillStyle = '#000008';
+      ctx.fillRect(0, 0, config.gridWidth * tileSize, config.gridHeight * tileSize);
+      ctx.restore();
+    }
+  }
+
+  // ── Ambient Particles ────────────────────────────────
+
+  private updateAmbientParticles(dt: number) {
+    const { config } = this;
+    const w = config.gridWidth;
+    const h = config.gridHeight;
+
+    // Spawn new dust motes
+    const dustCount = this.ambientParticles.filter(p => p.type === 'dust').length;
+    let dustToAdd = AMBIENT_DUST_COUNT - dustCount;
+    while (dustToAdd-- > 0) {
+      const life = 8 + Math.random() * 12;
+      this.ambientParticles.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: -0.05 - Math.random() * 0.1, // slow upward drift
+        size: 1 + Math.random() * 2,
+        alpha: 0,
+        maxAlpha: 0.15 + Math.random() * 0.25,
+        life,
+        maxLife: life,
+        type: 'dust',
+        drift: 0.3 + Math.random() * 0.5,
+        driftSpeed: 1 + Math.random() * 2,
+        driftPhase: Math.random() * Math.PI * 2,
+      });
+    }
+
+    // Spawn steam near coffee cup furniture items
+    for (const item of this.placedFurniture) {
+      if (item.type.toLowerCase().includes('coffee') || item.type.toLowerCase().includes('cup')) {
+        const steamCount = this.ambientParticles.filter(
+          p => p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1
+        ).length;
+        if (steamCount < 3 && Math.random() < dt * 0.5) {
+          this.ambientParticles.push({
+            x: item.x + 0.3 + Math.random() * 0.4,
+            y: item.y,
+            vx: (Math.random() - 0.5) * 0.05,
+            vy: -0.2 - Math.random() * 0.3,
+            size: 2 + Math.random() * 3,
+            alpha: 0,
+            maxAlpha: 0.2 + Math.random() * 0.15,
+            life: 1.5 + Math.random() * 2,
+            maxLife: 3.5,
+            type: 'steam',
+            drift: 0.2,
+            driftSpeed: 2,
+            driftPhase: Math.random() * Math.PI * 2,
+          });
+        }
+      }
+    }
+
+    // Spawn sparkles near monitors (at night)
+    const phase = this.getDayPhase();
+    if (phase.light < 0.5 && Math.random() < dt * 2) {
+      const typingAgents = Array.from(this.characters.values()).filter(
+        c => c.state === 'typing' || c.state === 'running_command'
+      );
+      if (typingAgents.length > 0) {
+        const agent = typingAgents[Math.floor(Math.random() * typingAgents.length)];
+        this.ambientParticles.push({
+          x: agent.x + (Math.random() - 0.5) * 1.5,
+          y: agent.y - 0.5 + Math.random() * 0.3,
+          vx: (Math.random() - 0.5) * 0.1,
+          vy: -0.1 - Math.random() * 0.2,
+          size: 1 + Math.random(),
+          alpha: 0,
+          maxAlpha: 0.3 + Math.random() * 0.3,
+          life: 0.5 + Math.random() * 1,
+          maxLife: 1.5,
+          type: 'sparkle',
+          drift: 0.1,
+          driftSpeed: 3,
+          driftPhase: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+
+    // Update all particles
+    for (const p of this.ambientParticles) {
+      p.life -= dt;
+      p.driftPhase += p.driftSpeed * dt;
+
+      // Sinusoidal horizontal drift
+      p.x += (p.vx + Math.sin(p.driftPhase) * p.drift) * dt * 2;
+      p.y += p.vy * dt;
+
+      // Fade in/out
+      const lifeRatio = p.life / p.maxLife;
+      if (lifeRatio > 0.8) {
+        p.alpha = p.maxAlpha * ((1 - lifeRatio) / 0.2); // fade in
+      } else if (lifeRatio < 0.3) {
+        p.alpha = p.maxAlpha * (lifeRatio / 0.3); // fade out
+      } else {
+        p.alpha = p.maxAlpha;
+      }
+
+      // Wrap around horizontally
+      if (p.x < 0) p.x = config.gridWidth;
+      if (p.x > config.gridWidth) p.x = 0;
+    }
+
+    // Remove dead particles
+    this.ambientParticles = this.ambientParticles.filter(p => p.life > 0);
+  }
+
+  private renderAmbientParticles(tileSize: number) {
+    const { ctx } = this;
+    const now = performance.now() / 1000;
+
+    for (const p of this.ambientParticles) {
+      const px = p.x * tileSize;
+      const py = p.y * tileSize;
+
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+
+      switch (p.type) {
+        case 'dust': {
+          // Soft warm dot
+          const flicker = 0.7 + Math.sin(now * 3 + p.driftPhase) * 0.3;
+          ctx.globalAlpha = p.alpha * flicker;
+          ctx.fillStyle = '#ffeedd';
+          ctx.beginPath();
+          ctx.arc(px, py, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'steam': {
+          // Soft white-blue wisps
+          ctx.globalAlpha = p.alpha * 0.6;
+          ctx.fillStyle = 'rgba(200, 220, 255, 0.4)';
+          ctx.beginPath();
+          ctx.arc(px, py, p.size * (1 + (1 - p.life / p.maxLife) * 2), 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'sparkle': {
+          // Bright brief flash
+          const twinkle = Math.sin(now * 10 + p.driftPhase * 5);
+          if (twinkle > 0.3) {
+            ctx.globalAlpha = p.alpha * twinkle;
+            ctx.fillStyle = '#88ccff';
+            ctx.beginPath();
+            ctx.arc(px, py, p.size * 0.8, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // ── Idle Behaviors ───────────────────────────────────
+
+  private updateIdleBehaviors(dt: number) {
+    for (const char of this.characters.values()) {
+      if (char.isSubAgent) continue;
+      const isWalking = Math.abs(char.targetX - char.x) > 0.05 || Math.abs(char.targetY - char.y) > 0.05;
+      const isIdle = !isWalking && (char.state === 'idle' || char.state === 'waiting_input');
+
+      let behavior = this.idleBehaviors.get(char.id);
+      if (!behavior) {
+        behavior = { current: 'none', timer: 1, phase: 0 };
+        this.idleBehaviors.set(char.id, behavior);
+      }
+
+      behavior.timer -= dt;
+      behavior.phase = 1 - Math.max(0, behavior.timer) / IDLE_ACTION_DURATION[behavior.current];
+
+      if (behavior.timer <= 0) {
+        if (isIdle && behavior.current === 'none' && Math.random() < IDLE_CHANCE * dt) {
+          // Start a random idle action
+          behavior.current = IDLE_ACTIONS[Math.floor(Math.random() * IDLE_ACTIONS.length)];
+          behavior.timer = IDLE_ACTION_DURATION[behavior.current];
+          behavior.phase = 0;
+        } else {
+          behavior.current = 'none';
+          behavior.timer = IDLE_ACTION_DURATION.none;
+          behavior.phase = 0;
+        }
+      }
+
+      // Cancel idle behavior if agent is no longer idle
+      if (!isIdle && behavior.current !== 'none') {
+        behavior.current = 'none';
+        behavior.timer = 0.5;
+      }
+    }
+  }
+
+  /** Get idle behavior animation offset for a character */
+  private getIdleOffset(charId: string): { dx: number; dy: number; scaleX: number } {
+    const behavior = this.idleBehaviors.get(charId);
+    if (!behavior || behavior.current === 'none') return { dx: 0, dy: 0, scaleX: 1 };
+
+    const t = behavior.phase; // 0-1 progress
+    const ease = Math.sin(t * Math.PI); // smooth bell curve
+
+    switch (behavior.current) {
+      case 'stretch':
+        return { dx: 0, dy: -ease * 0.15, scaleX: 1 + ease * 0.05 }; // stretch up + slight widen
+      case 'lookAround':
+        return { dx: Math.sin(t * Math.PI * 4) * 0.1, dy: 0, scaleX: 1 }; // sway left/right
+      case 'fidget':
+        return { dx: Math.sin(t * Math.PI * 6) * 0.05, dy: -Math.abs(Math.sin(t * Math.PI * 4)) * 0.08, scaleX: 1 }; // rapid jitter
+      case 'sip':
+        return { dx: 0.15, dy: -ease * 0.1, scaleX: 1 }; // lean right + up (sipping motion)
+      default:
+        return { dx: 0, dy: 0, scaleX: 1 };
+    }
   }
 
   // ── Render ───────────────────────────────────────────
@@ -431,7 +812,9 @@ export class GameEngine {
     this.renderSelectionRing(tileSize);
     this.renderMoveTargets(tileSize);
     this.renderStateEffects(tileSize);
+    this.renderAmbientParticles(tileSize);
     this.renderSpeechBubbles(tileSize);
+    this.renderDayNight(tileSize);
 
     if (this.editorMode) this.renderEditorOverlay(tileSize);
   }
@@ -588,7 +971,19 @@ export class GameEngine {
     const isIdle = !isWalking && (char.state === 'idle' || char.state === 'waiting_input' || char.state === 'error');
     const breathOffset = isIdle ? Math.sin(performance.now() / 800) * tileSize * 0.04 : 0;
 
+    // Idle behavior animation offset
+    const idleOff = this.getIdleOffset(char.id);
+    const totalDx = idleOff.dx * tileSize;
+    const totalDy = (breathOffset + idleOff.dy * tileSize);
+
     ctx.save();
+
+    // Apply idle scaleX for stretch (inside save/restore so it can't leak)
+    if (idleOff.scaleX !== 1) {
+      ctx.translate(px + tileSize / 2, 0);
+      ctx.scale(idleOff.scaleX, 1);
+      ctx.translate(-(px + tileSize / 2), 0);
+    }
 
     // Sub-agent transparency
     if (char.isSubAgent && char.fadeAlpha < 1) {
@@ -617,7 +1012,7 @@ export class GameEngine {
           const scale = char.isSubAgent ? 1.5 : 2;
           const spriteW = 16 * scale, spriteH = 32 * scale;
           ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(frameCanvas, px + (tileSize - spriteW) / 2, py + tileSize - spriteH + breathOffset, spriteW, spriteH);
+          ctx.drawImage(frameCanvas, px + (tileSize - spriteW) / 2 + totalDx, py + tileSize - spriteH + totalDy, spriteW, spriteH);
         }
       }
     }
@@ -634,7 +1029,25 @@ export class GameEngine {
 
     // Activity icon (animated)
     if (!char.isSubAgent) {
-      this.renderActivityIcon(char, px, py, tileSize);
+      this.renderActivityIcon(char, px + totalDx, py + totalDy, tileSize);
+    }
+
+    // Idle behavior indicator
+    if (!char.isSubAgent) {
+      const behavior = this.idleBehaviors.get(char.id);
+      if (behavior && behavior.current !== 'none') {
+        const icons: Record<IdleAction, string> = {
+          stretch: '🫸', lookAround: '👀', fidget: '💫', sip: '☕', none: '',
+        };
+        const icon = icons[behavior.current];
+        if (icon) {
+          ctx.save();
+          ctx.globalAlpha = 0.7 * (1 - Math.abs(behavior.phase - 0.5) * 0.4); // fade in/out
+          ctx.font = `${tileSize * 0.3}px sans-serif`;
+          ctx.fillText(icon, px + totalDx + tileSize * 0.7, py + totalDy - tileSize * 0.3);
+          ctx.restore();
+        }
+      }
     }
 
     ctx.restore();
@@ -1178,7 +1591,10 @@ export class GameEngine {
     });
   }
 
-  removeCharacter(id: string) { this.characters.delete(id); }
+  removeCharacter(id: string) {
+    this.characters.delete(id);
+    this.idleBehaviors.delete(id);
+  }
 
   updateCharacter(id: string, updates: Partial<CharacterData>) {
     const char = this.characters.get(id);
