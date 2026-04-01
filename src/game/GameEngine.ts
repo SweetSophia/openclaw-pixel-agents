@@ -160,7 +160,6 @@ interface AmbientParticle {
 }
 
 const AMBIENT_DUST_COUNT = 15;
-const AMBIENT_STEAM_SOURCES: { x: number; y: number }[] = []; // filled dynamically from furniture
 
 // ── Idle Behaviors ─────────────────────────────────────
 
@@ -497,6 +496,24 @@ export class GameEngine {
 
   // ── Day/Night Cycle ──────────────────────────────────
 
+  /** Parse 'rgba(R, G, B, A)' into [r, g, b, a] */
+  private parseRgba(s: string): [number, number, number, number] {
+    const m = s.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
+    if (!m) return [0, 0, 0, 0];
+    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
+  }
+
+  /** Linearly interpolate two rgba overlay strings */
+  private lerpOverlay(colorA: string, colorB: string, t: number): string {
+    const [r1, g1, b1, a1] = this.parseRgba(colorA);
+    const [r2, g2, b2, a2] = this.parseRgba(colorB);
+    const r = Math.round(r1 + (r2 - r1) * t);
+    const g = Math.round(g1 + (g2 - g1) * t);
+    const b = Math.round(b1 + (b2 - b1) * t);
+    const a = +(a1 + (a2 - a1) * t).toFixed(3);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
   /** Get interpolated day phase data */
   private getDayPhase(): DayPhase {
     const idx = this.dayPhase * DAY_PHASES.length;
@@ -508,7 +525,7 @@ export class GameEngine {
     const b = DAY_PHASES[j];
 
     return {
-      overlay: a.overlay, // simplified: just use nearest phase overlay
+      overlay: this.lerpOverlay(a.overlay, b.overlay, t),
       light: a.light + (b.light - a.light) * t,
       label: t < 0.5 ? a.label : b.label,
     };
@@ -563,7 +580,10 @@ export class GameEngine {
     const h = config.gridHeight;
 
     // Spawn new dust motes
-    while (this.ambientParticles.filter(p => p.type === 'dust').length < AMBIENT_DUST_COUNT) {
+    const dustCount = this.ambientParticles.filter(p => p.type === 'dust').length;
+    let dustToAdd = AMBIENT_DUST_COUNT - dustCount;
+    while (dustToAdd-- > 0) {
+      const life = 8 + Math.random() * 12;
       this.ambientParticles.push({
         x: Math.random() * w,
         y: Math.random() * h,
@@ -572,8 +592,8 @@ export class GameEngine {
         size: 1 + Math.random() * 2,
         alpha: 0,
         maxAlpha: 0.15 + Math.random() * 0.25,
-        life: 8 + Math.random() * 12,
-        maxLife: 20,
+        life,
+        maxLife: life,
         type: 'dust',
         drift: 0.3 + Math.random() * 0.5,
         driftSpeed: 1 + Math.random() * 2,
@@ -639,7 +659,7 @@ export class GameEngine {
       p.driftPhase += p.driftSpeed * dt;
 
       // Sinusoidal horizontal drift
-      p.x += (p.vx + Math.sin(p.driftPhase) * p.drift * dt) * dt * 2;
+      p.x += (p.vx + Math.sin(p.driftPhase) * p.drift) * dt * 2;
       p.y += p.vy * dt;
 
       // Fade in/out
@@ -728,7 +748,7 @@ export class GameEngine {
       behavior.phase = 1 - Math.max(0, behavior.timer) / IDLE_ACTION_DURATION[behavior.current];
 
       if (behavior.timer <= 0) {
-        if (isIdle && behavior.current === 'none' && Math.random() < IDLE_CHANCE * dt * 60) {
+        if (isIdle && behavior.current === 'none' && Math.random() < IDLE_CHANCE * dt) {
           // Start a random idle action
           behavior.current = IDLE_ACTIONS[Math.floor(Math.random() * IDLE_ACTIONS.length)];
           behavior.timer = IDLE_ACTION_DURATION[behavior.current];
@@ -1571,7 +1591,10 @@ export class GameEngine {
     });
   }
 
-  removeCharacter(id: string) { this.characters.delete(id); }
+  removeCharacter(id: string) {
+    this.characters.delete(id);
+    this.idleBehaviors.delete(id);
+  }
 
   updateCharacter(id: string, updates: Partial<CharacterData>) {
     const char = this.characters.get(id);
