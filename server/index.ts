@@ -368,6 +368,7 @@ async function tailTranscript(
     // trailing partial line (no terminating newline) is NOT counted and
     // will be re-read on the next poll cycle.
     let bytesConsumed = 0;
+    let errored = false;
 
     rl.on("line", (line) => {
       // +1 for the newline character that readline strips
@@ -400,6 +401,11 @@ async function tailTranscript(
     });
 
     rl.on("close", () => {
+      // On stream error, rl.close() is called which fires this handler.
+      // Guard against advancing the offset or resolving with partial data
+      // when the read was interrupted by an I/O error.
+      if (errored) return;
+
       // Only advance the cursor by bytes we know ended at a newline.
       // If the file was appended mid-line during our read, the partial
       // fragment (fileSize - bytesConsumed) will be re-read next cycle.
@@ -411,6 +417,7 @@ async function tailTranscript(
 
     // readline.Interface does not emit "error"; handle errors on the underlying stream.
     stream.on("error", () => {
+      errored = true;
       rl.close();
       stream.destroy();
       resolve([]);
