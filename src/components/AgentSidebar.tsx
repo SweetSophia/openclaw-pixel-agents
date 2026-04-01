@@ -55,7 +55,7 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                 <span className="agent-name">{agent.name}</span>
                 <button
                   className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
-                  onClick={() => onToggle(agent.id, !agent.pixelEnabled)}
+                  onClick={(e) => { e.stopPropagation(); onToggle(agent.id, !agent.pixelEnabled); }}
                   title={agent.pixelEnabled ? 'Hide from office' : 'Show in office'}
                 >
                   {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}

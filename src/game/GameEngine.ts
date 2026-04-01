@@ -267,7 +267,7 @@ export class GameEngine {
       { id: 'shodan', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
       { id: 'descartes', name: 'Descartes', state: 'idle' },
-      { id: 'chi', name: 'Chi', state: 'waiting_input', lastMessage: 'Need input on the deploy config...' },
+      { id: 'chi', name: 'Chi', state: 'waiting', lastMessage: 'Need input on the deploy config...' },
       { id: 'cylena', name: 'Cylena', state: 'sleeping' },
       { id: 'sysauxilia', name: 'Sysauxilia', state: 'idle' },
       { id: 'miku', name: 'Miku', state: 'reading' },
@@ -333,8 +333,8 @@ export class GameEngine {
   private rebuildObstacles() {
     const furnitureRects = this.placedFurniture.map(f => {
       const sprite = this.furniture.get(f.type);
-      const fw = sprite ? Math.ceil(sprite.width / 16) : 2;
-      const fh = sprite ? Math.ceil(sprite.height / 16) : 1;
+      const fw = sprite ? sprite.footprintW : 2;
+      const fh = sprite ? sprite.footprintH : 1;
       return { x: f.x, y: f.y, w: fw, h: fh };
     });
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
@@ -1131,7 +1131,7 @@ export class GameEngine {
 
     for (const [agentId, bubble] of this.speechBubbles) {
       const char = this.characters.get(agentId);
-      if (!char || char.state !== 'waiting_input') continue;
+      if (!char || char.state !== 'waiting') continue;
 
       const px = char.x * tileSize + tileSize / 2;
       const py = char.y * tileSize - tileSize * 0.8;
@@ -1252,8 +1252,8 @@ export class GameEngine {
     for (let i = this.placedFurniture.length - 1; i >= 0; i--) {
       const f = this.placedFurniture[i];
       const sprite = this.furniture.get(f.type);
-      const fw = sprite ? Math.ceil(sprite.width / 16) : 2;
-      const fh = sprite ? Math.ceil(sprite.height / 16) : 1;
+      const fw = sprite ? sprite.footprintW : 2;
+      const fh = sprite ? sprite.footprintH : 1;
       if (gridX >= f.x && gridX < f.x + fw && gridY >= f.y && gridY < f.y + fh) return f;
     }
     return null;
@@ -1573,7 +1573,7 @@ export class GameEngine {
   private getActivityIcon(state: string): string {
     const icons: Record<string, string> = {
       typing: '⌨', reading: '📖', thinking: '💭',
-      waiting_input: '💬', running_command: '⚡', error: '❌',
+      waiting: '💬', error: '❌',
     };
     return icons[state] || '';
   }
@@ -1589,6 +1589,15 @@ export class GameEngine {
       spawnTime: performance.now(), fadeAlpha: 1, dying: false,
       lastFootstepTile: -1, typingSoundTimer: 0, stateJustChanged: false,
     });
+
+    // Create speech bubble if agent starts in waiting state with a message
+    if (data.state === 'waiting' && data.lastMessage) {
+      this.speechBubbles.set(data.id, {
+        text: data.lastMessage,
+        timer: 30,
+        alpha: 1,
+      });
+    }
   }
 
   removeCharacter(id: string) {
@@ -1610,7 +1619,7 @@ export class GameEngine {
     }
 
     // When activity changes to a desk activity, route to seat
-    if (updates.state && ['typing', 'reading', 'thinking', 'running_command'].includes(updates.state)) {
+    if (updates.state && ['typing', 'reading'].includes(updates.state)) {
       const seat = this.seats.get(id);
       if (seat) {
         char.targetX = seat.x;
@@ -1624,8 +1633,8 @@ export class GameEngine {
       char.pathIndex = 0;
     }
 
-    // Update speech bubble for waiting_input state
-    if (updates.state === 'waiting_input' && updates.lastMessage) {
+    // Update speech bubble for waiting state
+    if (updates.state === 'waiting' && updates.lastMessage) {
       this.speechBubbles.set(id, {
         text: updates.lastMessage,
         timer: 30, // 30 seconds visible
@@ -1641,8 +1650,10 @@ export class GameEngine {
 
     const offsetAngle = Math.random() * Math.PI * 2;
     const offsetDist = 2;
-    const sx = Math.round(parent.x + Math.cos(offsetAngle) * offsetDist);
-    const sy = Math.round(parent.y + Math.sin(offsetAngle) * offsetDist);
+    const sx = Math.max(1, Math.min(this.config.gridWidth - 2,
+      Math.round(parent.x + Math.cos(offsetAngle) * offsetDist)));
+    const sy = Math.max(1, Math.min(this.config.gridHeight - 2,
+      Math.round(parent.y + Math.sin(offsetAngle) * offsetDist)));
 
     const sub: Character = {
       id: subId,
