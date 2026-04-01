@@ -4,6 +4,7 @@ import { AgentSidebar } from './components/AgentSidebar';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SoundControls } from './components/SoundControls';
+import MessageTicker from './components/MessageTicker';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
 import type { PlacedFurniture } from '../shared/types';
@@ -136,6 +137,7 @@ export const App: React.FC = () => {
         agent={selectedAgentId ? agents.find(a => a.id === selectedAgentId) ?? null : null}
         onClose={() => setSelectedAgentId(null)}
       />
+      <MessageTicker />
     </div>
   );
 };

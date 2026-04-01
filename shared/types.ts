@@ -95,3 +95,20 @@ export interface GatewayStatus {
   uptime: number;
   version: string;
 }
+
+// ── Message Ticker ─────────────────────────────────────
+
+export interface TickerMessage {
+  /** Unique message ID (from __openclaw.id or synthetic) */
+  id: string;
+  /** Agent ID that sent/received this message */
+  agentId: string;
+  /** Agent display name */
+  agentName: string;
+  /** 'user' or 'assistant' */
+  role: 'user' | 'assistant';
+  /** Truncated text content (max ~150 chars) */
+  text: string;
+  /** Timestamp (ms epoch) */
+  timestamp: number;
+}

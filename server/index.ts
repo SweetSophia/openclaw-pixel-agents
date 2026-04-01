@@ -11,8 +11,11 @@ import express from "express";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { stat as statAsync } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import type { AgentState, AgentActivity, SubAgentInfo } from "../shared/types";
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+import type { AgentState, AgentActivity, SubAgentInfo, TickerMessage } from "../shared/types";
 
 const app = express();
 const server = createServer(app);
@@ -29,6 +32,8 @@ const ACTIVE_THRESHOLD_MIN = parseInt(process.env.ACTIVE_MINUTES || "30", 10);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
 const DATA_DIR = process.env.DATA_DIR || join(dirname(import.meta.dirname || __dirname), "data");
 const PERSIST_PATH = join(DATA_DIR, "agent-prefs.json");
+/** Base directory for OpenClaw agent session transcripts */
+const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "/root", ".openclaw", "agents");
 
 // ---- Known agents from config ----
 
@@ -97,6 +102,8 @@ for (const [id, prefs] of savedPrefs) {
 // ---- State ----
 
 const agentStates = new Map<string, AgentState>();
+/** Transcript paths discovered from CLI session data, keyed by agentId */
+const agentTranscriptPaths = new Map<string, string>();
 
 // ---- CLI data source ----
 
@@ -220,6 +227,12 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         ? `${latestSession.modelProvider}/${latestSession.model}`
         : "unknown";
 
+      // Capture transcript path for message ticker polling
+      if (latestSession.sessionId) {
+        const transcriptPath = join(AGENTS_DIR, agentId, "sessions", `${latestSession.sessionId}.jsonl`);
+        agentTranscriptPaths.set(agentId, transcriptPath);
+      }
+
       const state: AgentState = {
         id: agentId,
         name: known.name,
@@ -272,14 +285,215 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
   return results;
 }
 
+// ---- Message Ticker ----
+
+/** Maximum messages to keep in the rolling buffer */
+const TICKER_BUFFER_SIZE = 30;
+/** Maximum characters per ticker message */
+const TICKER_MAX_CHARS = 150;
+/** How far back to look for messages (ms) */
+const TICKER_MAX_AGE = 5 * 60 * 1000; // 5 minutes
+
+const tickerMessages: TickerMessage[] = [];
+/**
+ * Track the byte offset of the last read position per transcript so we only
+ * read newly-appended lines on each poll cycle instead of the whole file.
+ */
+const lastReadOffset = new Map<string, number>();
+
+/**
+ * Extract displayable text from a message content block.
+ * Returns the first text content found, truncated.
+ */
+function extractText(content: unknown): string {
+  if (typeof content === "string") {
+    return content.slice(0, TICKER_MAX_CHARS);
+  }
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      const b = block as Record<string, unknown>;
+      // Skip non-text content blocks (thinking, tool calls, tool results)
+      if (b.type === "thinking" || b.type === "tool_use" || b.type === "tool_result") continue;
+      if (b.type === "text" && typeof b.text === "string") {
+        return b.text.slice(0, TICKER_MAX_CHARS);
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * Tail the transcript JSONL for a given session and extract new messages.
+ * Uses a byte-offset to seek directly to the end of what was already read,
+ * so each poll cycle reads only the newly-appended lines.
+ */
+async function tailTranscript(
+  agentId: string,
+  agentName: string,
+  transcriptPath: string | undefined,
+): Promise<TickerMessage[]> {
+  if (!transcriptPath) return [];
+
+  const key = `${agentId}:${transcriptPath}`;
+  const offset = lastReadOffset.get(key) ?? 0;
+
+  // Snapshot the file size before reading so we have a stable upper bound even
+  // if the file is still being written to during the read.
+  let fileSize: number;
+  try {
+    fileSize = (await statAsync(transcriptPath)).size;
+  } catch {
+    // File doesn't exist or is unreadable — skip silently
+    return [];
+  }
+
+  // Nothing new since we last read (also ensures fileSize > offset, so
+  // end = fileSize - 1 is always a valid range below)
+  if (fileSize <= offset) return [];
+
+  const newMessages: TickerMessage[] = [];
+
+  return new Promise((resolve) => {
+    const stream = createReadStream(transcriptPath, {
+      encoding: "utf-8",
+      start: offset,
+      end: fileSize - 1,
+    });
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+
+    // Track how many bytes we've consumed through complete newlines.
+    // `readline` only emits a "line" event after encountering a newline
+    // delimiter, so bytesConsumed always ends at a clean boundary — any
+    // trailing partial line (no terminating newline) is NOT counted and
+    // will be re-read on the next poll cycle.
+    let bytesConsumed = 0;
+    let errored = false;
+
+    rl.on("line", (line) => {
+      // +1 for the newline character that readline strips
+      bytesConsumed += Buffer.byteLength(line, "utf-8") + 1;
+
+      if (!line.trim()) return;
+      try {
+        const msg = JSON.parse(line);
+
+        // Only extract assistant and user messages with text
+        const role = msg.role;
+        if (role !== "assistant" && role !== "user") return;
+
+        const text = extractText(msg.content);
+        if (!text || text.length < 5) return;
+
+        // Skip heartbeat messages
+        if (text.startsWith("HEARTBEAT_OK") || text.includes("HEARTBEAT.md")) return;
+
+        const id = msg.__openclaw?.id || `${agentId}-${msg.__openclaw?.seq ?? Date.now()}`;
+        const timestamp = msg.timestamp || msg.__openclaw?.ts || Date.now();
+
+        // Age check
+        if (Date.now() - timestamp > TICKER_MAX_AGE) return;
+
+        newMessages.push({ id, agentId, agentName, role, text, timestamp });
+      } catch {
+        // Skip malformed lines
+      }
+    });
+
+    rl.on("close", () => {
+      // On stream error, rl.close() is called which fires this handler.
+      // Guard against advancing the offset or resolving with partial data
+      // when the read was interrupted by an I/O error.
+      if (errored) return;
+
+      // Only advance the cursor by bytes we know ended at a newline.
+      // If the file was appended mid-line during our read, the partial
+      // fragment (fileSize - bytesConsumed) will be re-read next cycle.
+      if (bytesConsumed > 0) {
+        lastReadOffset.set(key, offset + bytesConsumed);
+      }
+      resolve(newMessages);
+    });
+
+    // readline.Interface does not emit "error"; handle errors on the underlying stream.
+    stream.on("error", () => {
+      errored = true;
+      rl.close();
+      stream.destroy();
+      resolve([]);
+    });
+  });
+}
+
+/**
+ * Poll messages from all active agent transcripts.
+ */
+async function pollMessages(): Promise<void> {
+  const promises: Promise<TickerMessage[]>[] = [];
+
+  for (const [agentId, state] of agentStates) {
+    if (!state.active) continue;
+
+    const known = AGENT_REGISTRY.get(agentId);
+    if (!known) continue;
+
+    const transcriptPath = agentTranscriptPaths.get(agentId);
+    if (transcriptPath) {
+      promises.push(tailTranscript(agentId, known.name, transcriptPath));
+    }
+  }
+
+  const results = await Promise.all(promises);
+  const newMsgs = results.flat();
+
+  // Prune messages older than TICKER_MAX_AGE from the rolling buffer
+  const cutoff = Date.now() - TICKER_MAX_AGE;
+  let i = 0;
+  while (i < tickerMessages.length && tickerMessages[i].timestamp < cutoff) i++;
+  const pruned = i > 0;
+  if (pruned) tickerMessages.splice(0, i);
+
+  if (newMsgs.length > 0) {
+    // Add new messages and sort by timestamp
+    tickerMessages.push(...newMsgs);
+    tickerMessages.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Trim to buffer size
+    while (tickerMessages.length > TICKER_BUFFER_SIZE) {
+      tickerMessages.shift();
+    }
+  }
+
+  // Broadcast whenever the snapshot changed (new messages OR pruning)
+  if (newMsgs.length > 0 || pruned) {
+    io.emit("ticker:messages", tickerMessages);
+  }
+}
+
 // ---- Polling loop ----
 
-async function pollAndBroadcast(): Promise<void> {
-  const { sessions } = await pollSessions();
-  const agentList = mapToAgentStates(sessions);
+/**
+ * Guard against overlapping poll cycles: if a previous invocation is still
+ * awaiting the CLI or transcript reads, skip the next tick rather than
+ * running concurrently and racing on shared state.
+ */
+let isPolling = false;
 
-  // Broadcast to all connected WebSocket clients
-  io.emit("agents:update", agentList);
+async function pollAndBroadcast(): Promise<void> {
+  if (isPolling) return;
+  isPolling = true;
+  try {
+    const { sessions } = await pollSessions();
+    const agentList = mapToAgentStates(sessions);
+
+    // Broadcast to all connected WebSocket clients
+    io.emit("agents:update", agentList);
+
+    // Poll messages from transcripts
+    await pollMessages();
+  } finally {
+    isPolling = false;
+  }
 }
 
 // ---- REST API ----
@@ -296,6 +510,10 @@ app.get("/api/status", (_req, res) => {
     activeCount: agents.filter((a) => a.active).length,
     uptime: process.uptime(),
   });
+});
+
+app.get("/api/messages", (_req, res) => {
+  res.json({ messages: tickerMessages });
 });
 
 app.post("/api/agents/:id/toggle", (req, res) => {
@@ -509,6 +727,7 @@ io.on("connection", (socket) => {
 
   // Send current state on connect
   socket.emit("agents:update", Array.from(agentStates.values()));
+  socket.emit("ticker:messages", tickerMessages);
 
   socket.on("disconnect", () => {
     console.log("[ws] Client disconnected:", socket.id);
