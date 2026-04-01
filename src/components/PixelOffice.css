@@ -4,6 +4,7 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
+  position: relative;
 }
 
 .office-canvas {
@@ -14,4 +15,25 @@
   background: #0f0f23;
   max-width: 100%;
   max-height: 100%;
+}
+
+.editor-badge {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #e94560;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  animation: pulse-badge 2s infinite;
+  pointer-events: none;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }

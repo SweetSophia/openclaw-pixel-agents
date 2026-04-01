@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import express from "express";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { AgentState, AgentActivity } from "../shared/types";
 
@@ -321,6 +321,176 @@ app.post("/api/agents/:id/sprite", (req, res) => {
   } else {
     res.status(404).json({ error: "Agent not found" });
   }
+});
+
+// ---- Layout persistence ----
+
+import type { PlacedFurniture } from "../shared/types";
+
+interface OfficeLayoutDoc {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  furniture: PlacedFurniture[];
+  seats: Record<string, { x: number; y: number }>;
+  updatedAt: number;
+}
+
+const LAYOUTS_DIR = join(DATA_DIR, "layouts");
+
+function ensureLayoutsDir() {
+  mkdirSync(LAYOUTS_DIR, { recursive: true });
+}
+
+function listLayouts(): OfficeLayoutDoc[] {
+  ensureLayoutsDir();
+  try {
+    const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
+    return files.map(f => {
+      const raw = readFileSync(join(LAYOUTS_DIR, f), "utf-8");
+      return JSON.parse(raw) as OfficeLayoutDoc;
+    }).sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
+function loadLayout(id: string): OfficeLayoutDoc | null {
+  try {
+    const raw = readFileSync(join(LAYOUTS_DIR, `${id}.json`), "utf-8");
+    return JSON.parse(raw) as OfficeLayoutDoc;
+  } catch {
+    return null;
+  }
+}
+
+function saveLayout(layout: OfficeLayoutDoc): void {
+  ensureLayoutsDir();
+  layout.updatedAt = Date.now();
+  writeFileSync(join(LAYOUTS_DIR, `${layout.id}.json`), JSON.stringify(layout, null, 2));
+}
+
+function deleteLayout(id: string): boolean {
+  try {
+    unlinkSync(join(LAYOUTS_DIR, `${id}.json`));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Default layout matching the hardcoded office
+function getDefaultLayout(): OfficeLayoutDoc {
+  return {
+    id: "default",
+    name: "Default Office",
+    width: 24,
+    height: 16,
+    furniture: [
+      { id: "plant-1", type: "LARGE_PLANT", x: 1, y: 1, rotation: 0 },
+      { id: "coffee-1", type: "COFFEE", x: 22, y: 1, rotation: 0 },
+      { id: "whiteboard-1", type: "WHITEBOARD", x: 11, y: 0, rotation: 0 },
+      { id: "bookshelf-1", type: "BOOKSHELF", x: 1, y: 8, rotation: 0 },
+      { id: "painting-1", type: "LARGE_PAINTING", x: 22, y: 8, rotation: 0 },
+      // Per-agent desks
+      { id: "desk-cybera", type: "DESK", x: 3, y: 4, rotation: 0 },
+      { id: "desk-shodan", type: "DESK", x: 9, y: 4, rotation: 0 },
+      { id: "desk-cyberlogis", type: "DESK", x: 15, y: 4, rotation: 0 },
+      { id: "desk-descartes", type: "DESK", x: 20, y: 4, rotation: 0 },
+      { id: "desk-chi", type: "DESK", x: 3, y: 10, rotation: 0 },
+      { id: "desk-cylena", type: "DESK", x: 9, y: 10, rotation: 0 },
+      { id: "desk-sysauxilia", type: "DESK", x: 15, y: 10, rotation: 0 },
+      { id: "desk-miku", type: "DESK", x: 20, y: 10, rotation: 0 },
+    ],
+    seats: {
+      cybera: { x: 3, y: 4 },
+      shodan: { x: 9, y: 4 },
+      cyberlogis: { x: 15, y: 4 },
+      descartes: { x: 20, y: 4 },
+      chi: { x: 3, y: 10 },
+      cylena: { x: 9, y: 10 },
+      sysauxilia: { x: 15, y: 10 },
+      miku: { x: 20, y: 10 },
+    },
+    updatedAt: Date.now(),
+  };
+}
+
+// Layout REST API
+
+app.get("/api/layouts", (_req, res) => {
+  const layouts = listLayouts();
+  // Always include default if empty
+  if (layouts.length === 0) {
+    const def = getDefaultLayout();
+    saveLayout(def);
+    layouts.push(def);
+  }
+  res.json({ layouts });
+});
+
+app.get("/api/layouts/:id", (req, res) => {
+  const layout = loadLayout(req.params.id);
+  if (!layout) {
+    // Auto-create default
+    if (req.params.id === "default") {
+      const def = getDefaultLayout();
+      saveLayout(def);
+      return res.json(def);
+    }
+    return res.status(404).json({ error: "Layout not found" });
+  }
+  res.json(layout);
+});
+
+app.put("/api/layouts/:id", (req, res) => {
+  const existing = loadLayout(req.params.id);
+  const layout: OfficeLayoutDoc = {
+    ...(existing || { id: req.params.id, name: req.params.id, width: 24, height: 16 }),
+    ...req.body,
+    id: req.params.id, // prevent id overwrite
+  };
+  saveLayout(layout);
+  io.emit("layout:update", layout);
+  res.json({ success: true, layout });
+});
+
+app.post("/api/layouts", (req, res) => {
+  const { name, width, height, furniture, seats } = req.body;
+  const id = `layout-${Date.now()}`;
+  const layout: OfficeLayoutDoc = {
+    id,
+    name: name || "Untitled Layout",
+    width: width || 24,
+    height: height || 16,
+    furniture: furniture || [],
+    seats: seats || {},
+    updatedAt: Date.now(),
+  };
+  saveLayout(layout);
+  io.emit("layout:update", layout);
+  res.json({ success: true, layout });
+});
+
+app.delete("/api/layouts/:id", (req, res) => {
+  if (req.params.id === "default") {
+    return res.status(403).json({ error: "Cannot delete default layout" });
+  }
+  const ok = deleteLayout(req.params.id);
+  res.json({ success: ok });
+});
+
+// Furniture catalog (what types are available)
+app.get("/api/furniture-catalog", (_req, res) => {
+  const types = [
+    "BIN", "BOOKSHELF", "CACTUS", "CLOCK", "COFFEE", "COFFEE_TABLE",
+    "CUSHIONED_BENCH", "CUSHIONED_CHAIR", "DESK", "DOUBLE_BOOKSHELF",
+    "HANGING_PLANT", "LARGE_PAINTING", "LARGE_PLANT", "PC", "PLANT",
+    "PLANT_2", "POT", "SMALL_PAINTING", "SMALL_PAINTING_2", "SMALL_TABLE",
+    "SOFA", "TABLE_FRONT", "WHITEBOARD", "WOODEN_BENCH", "WOODEN_CHAIR",
+  ];
+  res.json({ types });
 });
 
 // ---- WebSocket ----

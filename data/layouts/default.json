@@ -1,0 +1,134 @@
+{
+  "id": "default",
+  "name": "Default Office",
+  "width": 24,
+  "height": 16,
+  "furniture": [
+    {
+      "id": "plant-1",
+      "type": "LARGE_PLANT",
+      "x": 1,
+      "y": 1,
+      "rotation": 0
+    },
+    {
+      "id": "coffee-1",
+      "type": "COFFEE",
+      "x": 22,
+      "y": 1,
+      "rotation": 0
+    },
+    {
+      "id": "whiteboard-1",
+      "type": "WHITEBOARD",
+      "x": 11,
+      "y": 0,
+      "rotation": 0
+    },
+    {
+      "id": "bookshelf-1",
+      "type": "BOOKSHELF",
+      "x": 1,
+      "y": 8,
+      "rotation": 0
+    },
+    {
+      "id": "painting-1",
+      "type": "LARGE_PAINTING",
+      "x": 22,
+      "y": 8,
+      "rotation": 0
+    },
+    {
+      "id": "desk-cybera",
+      "type": "DESK",
+      "x": 3,
+      "y": 4,
+      "rotation": 0
+    },
+    {
+      "id": "desk-shodan",
+      "type": "DESK",
+      "x": 9,
+      "y": 4,
+      "rotation": 0
+    },
+    {
+      "id": "desk-cyberlogis",
+      "type": "DESK",
+      "x": 15,
+      "y": 4,
+      "rotation": 0
+    },
+    {
+      "id": "desk-descartes",
+      "type": "DESK",
+      "x": 20,
+      "y": 4,
+      "rotation": 0
+    },
+    {
+      "id": "desk-chi",
+      "type": "DESK",
+      "x": 3,
+      "y": 10,
+      "rotation": 0
+    },
+    {
+      "id": "desk-cylena",
+      "type": "DESK",
+      "x": 9,
+      "y": 10,
+      "rotation": 0
+    },
+    {
+      "id": "desk-sysauxilia",
+      "type": "DESK",
+      "x": 15,
+      "y": 10,
+      "rotation": 0
+    },
+    {
+      "id": "desk-miku",
+      "type": "DESK",
+      "x": 20,
+      "y": 10,
+      "rotation": 0
+    }
+  ],
+  "seats": {
+    "cybera": {
+      "x": 3,
+      "y": 4
+    },
+    "shodan": {
+      "x": 9,
+      "y": 4
+    },
+    "cyberlogis": {
+      "x": 15,
+      "y": 4
+    },
+    "descartes": {
+      "x": 20,
+      "y": 4
+    },
+    "chi": {
+      "x": 3,
+      "y": 10
+    },
+    "cylena": {
+      "x": 9,
+      "y": 10
+    },
+    "sysauxilia": {
+      "x": 15,
+      "y": 10
+    },
+    "miku": {
+      "x": 20,
+      "y": 10
+    }
+  },
+  "updatedAt": 1775040880061
+}
