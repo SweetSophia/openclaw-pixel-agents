@@ -58,7 +58,7 @@
   cursor: pointer;
   transition: background 0.2s;
   /* Touch-friendly minimum size */
-  min-height: 36px;
+  min-height: 44px;
   min-width: 44px;
 }
 

@@ -1505,7 +1505,7 @@ export class GameEngine {
     // Pinch-to-zoom end — nothing extra to do
     if (e.touches.length > 0) return;
 
-    // Editor mode: finish furniture drag or place
+    // Editor mode: finish furniture drag, place, or double-tap rotate
     if (this.editorMode) {
       if (this.touchDragging) {
         // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
@@ -1518,11 +1518,29 @@ export class GameEngine {
         );
         sfx.place();
         this.touchDragging = null;
-      } else if (!this.touchMoved && this.selectedFurnitureType && this.touchStartPos) {
-        // Tap to place furniture
+      } else if (!this.touchMoved && this.touchStartPos) {
         const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
-        this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
-        sfx.place();
+        const now = Date.now();
+
+        // Double-tap furniture → rotate (mirrors desktop right-click in editor mode)
+        if (now - this.lastTapTime < GameEngine.DOUBLE_TAP_MS) {
+          const hit = this.findFurnitureAt(gridX, gridY);
+          if (hit) {
+            hit.rotation = ((hit.rotation || 0) + 90) % 360;
+            sfx.place();
+            this.lastTapTime = 0;
+            this.touchStartPos = null;
+            this.touchCurrentPos = null;
+            return;
+          }
+        }
+        this.lastTapTime = now;
+
+        // Single tap to place furniture
+        if (this.selectedFurnitureType) {
+          this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
+          sfx.place();
+        }
       }
       this.touchStartPos = null;
       this.touchCurrentPos = null;
@@ -1532,25 +1550,11 @@ export class GameEngine {
     // ── Non-editor: tap interactions ──
     if (this.touchMoved || !this.touchStartPos) {
       this.touchStartPos = null;
+      this.touchCurrentPos = null;
       return; // was a drag or pinch, not a tap
     }
 
     const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
-    const now = Date.now();
-
-    // Double-tap on furniture → rotate (equivalent to right-click)
-    if (now - this.lastTapTime < GameEngine.DOUBLE_TAP_MS) {
-      const hit = this.findFurnitureAt(gridX, gridY);
-      if (hit) {
-        hit.rotation = ((hit.rotation || 0) + 90) % 360;
-        sfx.place();
-        this.lastTapTime = 0; // reset to prevent triple-tap
-        this.touchStartPos = null;
-        this.touchCurrentPos = null;
-        return;
-      }
-    }
-    this.lastTapTime = now;
 
     const charId = this.findCharacterAt(gridX, gridY);
 

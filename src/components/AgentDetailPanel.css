@@ -283,18 +283,18 @@
     border-top: 1px solid #2d2d4a;
     border-radius: 12px 12px 0 0;
     padding: 16px;
-    animation: slideUp 0.25s ease-out;
+    animation: slide-up 0.25s ease-out;
   }
 
-  @keyframes slideUp {
+  @keyframes slide-up {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
   }
 
   .detail-close {
-    width: 32px;
-    height: 32px;
-    font-size: 18px;
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
   }
 
   .detail-header {

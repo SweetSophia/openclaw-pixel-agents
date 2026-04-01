@@ -211,6 +211,8 @@
 
   .sidebar-footer button {
     font-size: 10px;
-    padding: 6px 6px;
+    padding: 8px 6px;
+    min-height: 44px;
+    min-width: 44px;
   }
 }
