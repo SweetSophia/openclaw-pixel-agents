@@ -10,8 +10,6 @@ import { io as socketIO } from 'socket.io-client';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
-
 /** Format timestamp to HH:MM */
 function fmtTime(ts: number): string {
   const d = new Date(ts);
@@ -40,7 +38,7 @@ export default function MessageTicker() {
   // Connect to WebSocket
   useEffect(() => {
     let isCancelled = false;
-    const socket = socketIO(API_BASE, { transports: ['websocket', 'polling'] });
+    const socket = socketIO({ transports: ['websocket', 'polling'] });
 
     const handleConnect = () => { if (!isCancelled) setConnected(true); };
     const handleDisconnect = () => { if (!isCancelled) setConnected(false); };
@@ -52,7 +50,7 @@ export default function MessageTicker() {
 
     // Fetch initial state; abort if this effect is cleaned up before it resolves
     const controller = new AbortController();
-    fetch(`${API_BASE}/api/messages`, { signal: controller.signal })
+    fetch("/api/messages", { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
         if (!isCancelled && data.messages) setMessages(data.messages);

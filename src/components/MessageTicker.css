@@ -113,3 +113,12 @@
   right: 0;
   z-index: 10;
 }
+
+/* ── Accessibility: reduced motion ───────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-messages {
+    animation: none;
+    padding-left: 0;
+  }
+}
