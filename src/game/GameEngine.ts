@@ -956,14 +956,14 @@ export class GameEngine {
     const totalDx = idleOff.dx * tileSize;
     const totalDy = (breathOffset + idleOff.dy * tileSize);
 
-    // Apply idle scaleX for stretch
+    ctx.save();
+
+    // Apply idle scaleX for stretch (inside save/restore so it can't leak)
     if (idleOff.scaleX !== 1) {
       ctx.translate(px + tileSize / 2, 0);
       ctx.scale(idleOff.scaleX, 1);
       ctx.translate(-(px + tileSize / 2), 0);
     }
-
-    ctx.save();
 
     // Sub-agent transparency
     if (char.isSubAgent && char.fadeAlpha < 1) {
