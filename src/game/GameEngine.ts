@@ -1419,10 +1419,14 @@ export class GameEngine {
     e.preventDefault(); // prevent mouse event synthesis & scroll
 
     if (e.touches.length === 2) {
-      // Pinch-to-zoom start
+      // Pinch-to-zoom start: cancel any active one-finger drag/tap state so that
+      // lifting all fingers after a pinch cannot accidentally finalize a furniture drag.
+      this.touchDragging = null;
+      this.touchStartPos = null;
+      this.touchCurrentPos = null;
+      this.touchMoved = true;
       this.pinchStartDist = this.touchDistance(e.touches[0], e.touches[1]);
       this.pinchStartZoom = this.cameraZoom;
-      this.touchMoved = true; // cancel any pending tap
       return;
     }
 
@@ -1489,12 +1493,12 @@ export class GameEngine {
     this.mouseGridX = gridX;
     this.mouseGridY = gridY;
 
-    // Editor mode: drag furniture
+    // Editor mode: drag furniture (subtract grab offset to keep furniture under finger)
     if (this.editorMode && this.touchDragging) {
       const item = this.placedFurniture.find(f => f.id === this.touchDragging!.id);
       if (item) {
-        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX));
-        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY));
+        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX));
+        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY));
       }
     }
   };
@@ -1510,11 +1514,12 @@ export class GameEngine {
       if (this.touchDragging) {
         // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
         // up-to-date in handleTouchMove, so it reliably reflects the finger's final position.
+        // Subtract the grab offset so the drop position matches what was shown during the drag.
         const { gridX, gridY } = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
         this.editorCallbacks?.onMoveFurniture(
           this.touchDragging.id,
-          Math.max(1, Math.min(this.config.gridWidth - 3, gridX)),
-          Math.max(1, Math.min(this.config.gridHeight - 3, gridY)),
+          Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX)),
+          Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY)),
         );
         sfx.place();
         this.touchDragging = null;
