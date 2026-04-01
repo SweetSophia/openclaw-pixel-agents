@@ -11,6 +11,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { stat as statAsync } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -101,6 +102,8 @@ for (const [id, prefs] of savedPrefs) {
 // ---- State ----
 
 const agentStates = new Map<string, AgentState>();
+/** Transcript paths discovered from CLI session data, keyed by agentId */
+const agentTranscriptPaths = new Map<string, string>();
 
 // ---- CLI data source ----
 
@@ -292,8 +295,11 @@ const TICKER_MAX_CHARS = 150;
 const TICKER_MAX_AGE = 5 * 60 * 1000; // 5 minutes
 
 const tickerMessages: TickerMessage[] = [];
-/** Track the last seen sequence per transcript to avoid re-reading entire files */
-const lastSeenSeq = new Map<string, number>();
+/**
+ * Track the byte offset of the last read position per transcript so we only
+ * read newly-appended lines on each poll cycle instead of the whole file.
+ */
+const lastReadOffset = new Map<string, number>();
 
 /**
  * Extract displayable text from a message content block.
@@ -305,10 +311,12 @@ function extractText(content: unknown): string {
   }
   if (Array.isArray(content)) {
     for (const block of content) {
-      if (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
-        // Skip tool calls and thinking blocks
-        if (block.type === 'thinking' || block.type === 'toolCall') continue;
-        return block.text.slice(0, TICKER_MAX_CHARS);
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      // Skip non-text content blocks (thinking, tool calls, tool results)
+      if (b.type === 'thinking' || b.type === 'tool_use' || b.type === 'tool_result') continue;
+      if (b.type === 'text' && typeof b.text === 'string') {
+        return b.text.slice(0, TICKER_MAX_CHARS);
       }
     }
   }
@@ -317,7 +325,8 @@ function extractText(content: unknown): string {
 
 /**
  * Tail the transcript JSONL for a given session and extract new messages.
- * Uses the `__openclaw.seq` field to track what we've already seen.
+ * Uses a byte-offset to seek directly to the end of what was already read,
+ * so each poll cycle reads only the newly-appended lines.
  */
 async function tailTranscript(
   agentId: string,
@@ -327,62 +336,60 @@ async function tailTranscript(
   if (!transcriptPath || !existsSync(transcriptPath)) return [];
 
   const key = `${agentId}:${transcriptPath}`;
-  const lastSeq = lastSeenSeq.get(key) ?? 0;
+  const offset = lastReadOffset.get(key) ?? 0;
+
+  // Snapshot the file size before reading so we have a stable upper bound even
+  // if the file is still being written to during the read.
+  let fileSize: number;
+  try {
+    fileSize = (await statAsync(transcriptPath)).size;
+  } catch {
+    return [];
+  }
+
+  // Nothing new since we last read (also ensures fileSize > offset, so
+  // end = fileSize - 1 is always a valid range below)
+  if (fileSize <= offset) return [];
+
   const newMessages: TickerMessage[] = [];
-  let maxSeq = lastSeq;
 
   return new Promise((resolve) => {
-    const rl = createInterface({
-      input: createReadStream(transcriptPath, { encoding: 'utf-8' }),
-      crlfDelay: Infinity,
+    const stream = createReadStream(transcriptPath, {
+      encoding: 'utf-8',
+      start: offset,
+      end: fileSize - 1,
     });
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
-    let lineCount = 0;
     rl.on('line', (line) => {
-      lineCount++;
       if (!line.trim()) return;
       try {
         const msg = JSON.parse(line);
-
-        // Track sequence number
-        const seq = msg?.__openclaw?.seq ?? 0;
-        if (seq <= lastSeq) return;
-        if (seq > maxSeq) maxSeq = seq;
 
         // Only extract assistant and user messages with text
         const role = msg.role;
         if (role !== 'assistant' && role !== 'user') return;
 
         const text = extractText(msg.content);
-        if (!text) return;
-
-        // Skip very short/empty messages
-        if (text.length < 5) return;
+        if (!text || text.length < 5) return;
 
         // Skip heartbeat messages
         if (text.startsWith('HEARTBEAT_OK') || text.includes('HEARTBEAT.md')) return;
 
-        const id = msg.__openclaw?.id || `${agentId}-${seq}`;
+        const id = msg.__openclaw?.id || `${agentId}-${msg.__openclaw?.seq ?? Date.now()}`;
         const timestamp = msg.timestamp || msg.__openclaw?.ts || Date.now();
 
         // Age check
         if (Date.now() - timestamp > TICKER_MAX_AGE) return;
 
-        newMessages.push({
-          id,
-          agentId,
-          agentName,
-          role,
-          text,
-          timestamp,
-        });
+        newMessages.push({ id, agentId, agentName, role, text, timestamp });
       } catch {
         // Skip malformed lines
       }
     });
 
     rl.on('close', () => {
-      lastSeenSeq.set(key, maxSeq);
+      lastReadOffset.set(key, fileSize);
       resolve(newMessages);
     });
 
@@ -399,12 +406,9 @@ async function pollMessages(): Promise<void> {
   for (const [agentId, state] of agentStates) {
     if (!state.active) continue;
 
-    // Find the transcript path from CLI session data
     const known = AGENT_REGISTRY.get(agentId);
     if (!known) continue;
 
-    // We need to look up the transcript path from the CLI data
-    // Store it during pollSessions
     const transcriptPath = agentTranscriptPaths.get(agentId);
     if (transcriptPath) {
       promises.push(tailTranscript(agentId, known.name, transcriptPath));
@@ -413,6 +417,12 @@ async function pollMessages(): Promise<void> {
 
   const results = await Promise.all(promises);
   const newMsgs = results.flat();
+
+  // Prune messages older than TICKER_MAX_AGE from the rolling buffer
+  const cutoff = Date.now() - TICKER_MAX_AGE;
+  let i = 0;
+  while (i < tickerMessages.length && tickerMessages[i].timestamp < cutoff) i++;
+  if (i > 0) tickerMessages.splice(0, i);
 
   if (newMsgs.length > 0) {
     // Add new messages and sort by timestamp
@@ -428,9 +438,6 @@ async function pollMessages(): Promise<void> {
     io.emit('ticker:messages', tickerMessages);
   }
 }
-
-/** Store transcript paths from CLI session data */
-const agentTranscriptPaths = new Map<string, string>();
 
 // ---- Polling loop ----
 

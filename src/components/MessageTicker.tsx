@@ -42,8 +42,9 @@ export default function MessageTicker() {
       setMessages(msgs);
     });
 
-    // Fetch initial state
-    fetch(`${SOCKET_URL}/api/messages`)
+    // Fetch initial state; abort if this effect is cleaned up before it resolves
+    const controller = new AbortController();
+    fetch(`${SOCKET_URL}/api/messages`, { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
         if (data.messages) setMessages(data.messages);
@@ -51,6 +52,7 @@ export default function MessageTicker() {
       .catch(() => {});
 
     return () => {
+      controller.abort();
       socket.disconnect();
     };
   }, []);
@@ -60,12 +62,9 @@ export default function MessageTicker() {
     if (!trackRef.current) return;
     const track = trackRef.current;
 
-    // Measure total content width
-    const contentWidth = track.scrollWidth;
-    const containerWidth = track.parentElement?.clientWidth || 800;
-
-    // Total distance = content width (starts off-screen right) + container width
-    const totalDistance = contentWidth;
+    // Total distance the track must travel (content width + viewport width so
+    // items fully exit on the left before looping)
+    const totalDistance = track.scrollWidth + (track.parentElement?.clientWidth ?? 0);
     const duration = Math.max(20, totalDistance / 40); // ~40px per second
 
     track.style.setProperty('--ticker-width', `-${totalDistance}px`);
@@ -81,8 +80,7 @@ export default function MessageTicker() {
   // Age-based opacity class
   const getAgeClass = (msg: TickerMessage) => {
     const age = Date.now() - msg.timestamp;
-    if (age < 60000) return 'visible'; // < 1 min: full
-    if (age < 180000) return 'visible'; // < 3 min: full
+    if (age < 180000) return 'visible'; // < 3 min: full opacity
     return 'fading'; // > 3 min: fading
   };
 
