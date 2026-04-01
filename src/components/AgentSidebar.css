@@ -172,3 +172,45 @@
 .sidebar-footer button.danger:hover {
   background: #8c3030;
 }
+
+/* ── Mobile: horizontal scrollable agent strip ── */
+
+@media (max-width: 768px) {
+  .agent-sidebar {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid #0f3460;
+    padding: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .agent-sidebar h2 {
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+
+  .agent-list {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .agent-card {
+    min-width: 140px;
+    flex-shrink: 0;
+    padding: 8px;
+  }
+
+  .sidebar-footer {
+    flex-direction: row;
+    padding-top: 6px;
+  }
+
+  .sidebar-footer button {
+    font-size: 10px;
+    padding: 6px 6px;
+  }
+}

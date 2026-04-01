@@ -5,6 +5,9 @@
   justify-content: center;
   padding: 16px;
   position: relative;
+  overflow: hidden;
+  /* Allow touch scrolling to be captured by canvas */
+  touch-action: none;
 }
 
 .office-canvas {
@@ -15,6 +18,11 @@
   background: #0f0f23;
   max-width: 100%;
   max-height: 100%;
+  /* Prevent browser touch gestures on canvas (we handle our own) */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .editor-badge {
@@ -36,4 +44,35 @@
 @keyframes pulse-badge {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
+}
+
+/* ── Mobile ─────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .pixel-office {
+    padding: 8px;
+  }
+
+  .office-canvas {
+    /* Scale canvas to fit viewport width */
+    max-width: calc(100vw - 16px);
+    max-height: calc(60vh - 16px);
+  }
+
+  .editor-badge {
+    bottom: 10px;
+    font-size: 10px;
+    padding: 3px 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .pixel-office {
+    padding: 4px;
+  }
+
+  .office-canvas {
+    max-width: calc(100vw - 8px);
+    max-height: calc(55vh - 8px);
+  }
 }
