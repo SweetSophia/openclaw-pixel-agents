@@ -12,7 +12,9 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import type { AgentState, AgentActivity, SubAgentInfo } from "../shared/types";
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+import type { AgentState, AgentActivity, SubAgentInfo, TickerMessage } from "../shared/types";
 
 const app = express();
 const server = createServer(app);
@@ -29,6 +31,8 @@ const ACTIVE_THRESHOLD_MIN = parseInt(process.env.ACTIVE_MINUTES || "30", 10);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
 const DATA_DIR = process.env.DATA_DIR || join(dirname(import.meta.dirname || __dirname), "data");
 const PERSIST_PATH = join(DATA_DIR, "agent-prefs.json");
+/** Base directory for OpenClaw agent session transcripts */
+const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "/root", ".openclaw", "agents");
 
 // ---- Known agents from config ----
 
@@ -220,6 +224,12 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         ? `${latestSession.modelProvider}/${latestSession.model}`
         : "unknown";
 
+      // Capture transcript path for message ticker polling
+      if (latestSession.sessionId) {
+        const transcriptPath = join(AGENTS_DIR, agentId, "sessions", `${latestSession.sessionId}.jsonl`);
+        agentTranscriptPaths.set(agentId, transcriptPath);
+      }
+
       const state: AgentState = {
         id: agentId,
         name: known.name,
@@ -272,6 +282,156 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
   return results;
 }
 
+// ---- Message Ticker ----
+
+/** Maximum messages to keep in the rolling buffer */
+const TICKER_BUFFER_SIZE = 30;
+/** Maximum characters per ticker message */
+const TICKER_MAX_CHARS = 150;
+/** How far back to look for messages (ms) */
+const TICKER_MAX_AGE = 5 * 60 * 1000; // 5 minutes
+
+const tickerMessages: TickerMessage[] = [];
+/** Track the last seen sequence per transcript to avoid re-reading entire files */
+const lastSeenSeq = new Map<string, number>();
+
+/**
+ * Extract displayable text from a message content block.
+ * Returns the first text content found, truncated.
+ */
+function extractText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content.slice(0, TICKER_MAX_CHARS);
+  }
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
+        // Skip tool calls and thinking blocks
+        if (block.type === 'thinking' || block.type === 'toolCall') continue;
+        return block.text.slice(0, TICKER_MAX_CHARS);
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * Tail the transcript JSONL for a given session and extract new messages.
+ * Uses the `__openclaw.seq` field to track what we've already seen.
+ */
+async function tailTranscript(
+  agentId: string,
+  agentName: string,
+  transcriptPath: string | undefined,
+): Promise<TickerMessage[]> {
+  if (!transcriptPath || !existsSync(transcriptPath)) return [];
+
+  const key = `${agentId}:${transcriptPath}`;
+  const lastSeq = lastSeenSeq.get(key) ?? 0;
+  const newMessages: TickerMessage[] = [];
+  let maxSeq = lastSeq;
+
+  return new Promise((resolve) => {
+    const rl = createInterface({
+      input: createReadStream(transcriptPath, { encoding: 'utf-8' }),
+      crlfDelay: Infinity,
+    });
+
+    let lineCount = 0;
+    rl.on('line', (line) => {
+      lineCount++;
+      if (!line.trim()) return;
+      try {
+        const msg = JSON.parse(line);
+
+        // Track sequence number
+        const seq = msg?.__openclaw?.seq ?? 0;
+        if (seq <= lastSeq) return;
+        if (seq > maxSeq) maxSeq = seq;
+
+        // Only extract assistant and user messages with text
+        const role = msg.role;
+        if (role !== 'assistant' && role !== 'user') return;
+
+        const text = extractText(msg.content);
+        if (!text) return;
+
+        // Skip very short/empty messages
+        if (text.length < 5) return;
+
+        // Skip heartbeat messages
+        if (text.startsWith('HEARTBEAT_OK') || text.includes('HEARTBEAT.md')) return;
+
+        const id = msg.__openclaw?.id || `${agentId}-${seq}`;
+        const timestamp = msg.timestamp || msg.__openclaw?.ts || Date.now();
+
+        // Age check
+        if (Date.now() - timestamp > TICKER_MAX_AGE) return;
+
+        newMessages.push({
+          id,
+          agentId,
+          agentName,
+          role,
+          text,
+          timestamp,
+        });
+      } catch {
+        // Skip malformed lines
+      }
+    });
+
+    rl.on('close', () => {
+      lastSeenSeq.set(key, maxSeq);
+      resolve(newMessages);
+    });
+
+    rl.on('error', () => resolve([]));
+  });
+}
+
+/**
+ * Poll messages from all active agent transcripts.
+ */
+async function pollMessages(): Promise<void> {
+  const promises: Promise<TickerMessage[]>[] = [];
+
+  for (const [agentId, state] of agentStates) {
+    if (!state.active) continue;
+
+    // Find the transcript path from CLI session data
+    const known = AGENT_REGISTRY.get(agentId);
+    if (!known) continue;
+
+    // We need to look up the transcript path from the CLI data
+    // Store it during pollSessions
+    const transcriptPath = agentTranscriptPaths.get(agentId);
+    if (transcriptPath) {
+      promises.push(tailTranscript(agentId, known.name, transcriptPath));
+    }
+  }
+
+  const results = await Promise.all(promises);
+  const newMsgs = results.flat();
+
+  if (newMsgs.length > 0) {
+    // Add new messages and sort by timestamp
+    tickerMessages.push(...newMsgs);
+    tickerMessages.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Trim to buffer size
+    while (tickerMessages.length > TICKER_BUFFER_SIZE) {
+      tickerMessages.shift();
+    }
+
+    // Broadcast
+    io.emit('ticker:messages', tickerMessages);
+  }
+}
+
+/** Store transcript paths from CLI session data */
+const agentTranscriptPaths = new Map<string, string>();
+
 // ---- Polling loop ----
 
 async function pollAndBroadcast(): Promise<void> {
@@ -280,6 +440,9 @@ async function pollAndBroadcast(): Promise<void> {
 
   // Broadcast to all connected WebSocket clients
   io.emit("agents:update", agentList);
+
+  // Poll messages from transcripts
+  await pollMessages();
 }
 
 // ---- REST API ----
@@ -296,6 +459,10 @@ app.get("/api/status", (_req, res) => {
     activeCount: agents.filter((a) => a.active).length,
     uptime: process.uptime(),
   });
+});
+
+app.get("/api/messages", (_req, res) => {
+  res.json({ messages: tickerMessages });
 });
 
 app.post("/api/agents/:id/toggle", (req, res) => {
@@ -509,6 +676,7 @@ io.on("connection", (socket) => {
 
   // Send current state on connect
   socket.emit("agents:update", Array.from(agentStates.values()));
+  socket.emit("ticker:messages", tickerMessages);
 
   socket.on("disconnect", () => {
     console.log("[ws] Client disconnected:", socket.id);
