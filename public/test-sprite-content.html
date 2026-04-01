@@ -1,0 +1,64 @@
+<html>
+<body>
+<h3>Sprite Content Test</h3>
+<div id="log" style="font-family:monospace;font-size:12px;white-space:pre;"></div>
+<canvas id="test" width="800" height="200" style="image-rendering:pixelated;border:1px solid #333;"></canvas>
+<script type="module">
+const logEl = document.getElementById('log');
+const canvas = document.getElementById('test');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+function log(msg) { logEl.textContent += msg + '\n'; console.log(msg); }
+
+// Load char_0.png
+const res = await fetch('/assets/characters/char_0.png');
+const blob = await res.blob();
+const bitmap = await createImageBitmap(blob);
+log(`Loaded bitmap: ${bitmap.width}x${bitmap.height}`);
+
+// Slice frame 3 (typing, first frame) from row 0 (down direction)
+const frameCanvas = document.createElement('canvas');
+frameCanvas.width = 16;
+frameCanvas.height = 32;
+const fctx = frameCanvas.getContext('2d');
+fctx.imageSmoothingEnabled = false;
+fctx.drawImage(bitmap, 3 * 16, 0, 16, 32, 0, 0, 16, 32);
+
+// Check pixel data
+const imgData = fctx.getImageData(0, 0, 16, 32);
+let opaque = 0, semi = 0, transparent = 0;
+for (let i = 3; i < imgData.data.length; i += 4) {
+  const a = imgData.data[i];
+  if (a === 0) transparent++;
+  else if (a === 255) opaque++;
+  else semi++;
+}
+log(`Frame pixels: ${opaque} opaque, ${semi} semi, ${transparent} transparent (total ${16*32})`);
+
+// Draw the sliced frame at 2x on the main canvas
+ctx.fillStyle = '#333';
+ctx.fillRect(0, 0, 800, 200);
+ctx.imageSmoothingEnabled = false;
+ctx.drawImage(frameCanvas, 0, 0, 32, 64);
+log('Drew at 2x (32x64)');
+
+// Now test the same thing the GameEngine does: py + tileSize - spriteH
+const tileSize = 32;
+const py = 6 * tileSize;  // y=6
+const spriteH = 64;
+const drawY = py + tileSize - spriteH;
+log(`Calculated drawY = ${py} + ${tileSize} - ${spriteH} = ${drawY}`);
+
+// Draw at that position
+ctx.fillStyle = '#e94560';
+ctx.fillRect(100, drawY, 32, 64); // red background for visibility
+ctx.drawImage(frameCanvas, 100, drawY, 32, 64);
+log(`Drew at y=${drawY} (should be visible between ${drawY} and ${drawY + 64})`);
+
+// Also draw all 3 directions at 2x
+ctx.drawImage(bitmap, 200, 0, bitmap.width * 2, bitmap.height * 2);
+log('Full spritesheet at 2x drawn');
+</script>
+</body>
+</html>

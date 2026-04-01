@@ -25,8 +25,19 @@ export function useAgentStore() {
   useEffect(() => {
     fetchAgents();
     const interval = setInterval(fetchAgents, 2000);
-    return () => clearInterval(interval);
-  }, [fetchAgents]);
+
+    // Listen for toggle events from the sidebar
+    const handleToggle = (e: Event) => {
+      const { agentId, enabled } = (e as CustomEvent).detail;
+      toggleAgent(agentId, enabled);
+    };
+    window.addEventListener('agent:toggle', handleToggle);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('agent:toggle', handleToggle);
+    };
+  }, [fetchAgents, toggleAgent]);
 
   const toggleAgent = useCallback(async (agentId: string, enabled: boolean) => {
     try {

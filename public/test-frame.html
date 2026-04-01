@@ -1,0 +1,47 @@
+<html>
+<body>
+<h3>Frame Test</h3>
+<div id="log" style="font-family:monospace;font-size:12px;"></div>
+<canvas id="test" width="400" height="200" style="image-rendering:pixelated;border:1px solid #333;zoom:2;"></canvas>
+<script type="module">
+const log = document.getElementById('log');
+const canvas = document.getElementById('test');
+const ctx = canvas.getContext('2d');
+
+ctx.fillStyle = '#1a1a2e';
+ctx.fillRect(0, 0, 400, 200);
+
+log.textContent += 'Loading sprite...\n';
+const res = await fetch('/assets/characters/char_0.png');
+const blob = await res.blob();
+const bitmap = await createImageBitmap(blob);
+log.textContent += `Bitmap: ${bitmap.width}x${bitmap.height}\n`;
+
+// Slice frame 3 (typing frame 0) from row 0 (down direction)
+const frameCanvas = document.createElement('canvas');
+frameCanvas.width = 16;
+frameCanvas.height = 32;
+const fctx = frameCanvas.getContext('2d');
+fctx.imageSmoothingEnabled = false;
+fctx.drawImage(bitmap, 3 * 16, 0 * 32, 16, 32, 0, 0, 16, 32);
+
+// Draw at 2x scale
+ctx.imageSmoothingEnabled = false;
+ctx.drawImage(frameCanvas, 10, 10, 32, 64);
+log.textContent += `Drew frame at 32x64\n`;
+log.textContent += `Frame canvas size: ${frameCanvas.width}x${frameCanvas.height}\n`;
+
+// Also draw at 1x
+ctx.drawImage(frameCanvas, 50, 10, 16, 32);
+log.textContent += `Drew frame at 16x32\n`;
+
+// Draw the raw sprite at pixel level to verify content
+const imgData = fctx.getImageData(0, 0, 16, 32);
+let hasPixels = 0;
+for (let i = 3; i < imgData.data.length; i += 4) {
+  if (imgData.data[i] > 0) hasPixels++;
+}
+log.textContent += `Frame has ${hasPixels} non-transparent pixels out of ${16*32}\n`;
+</script>
+</body>
+</html>

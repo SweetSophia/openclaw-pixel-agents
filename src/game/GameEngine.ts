@@ -20,8 +20,10 @@ import {
   loadCharacters,
   getSpriteFrame,
   getCachedCharacters,
+  getCachedFurniture,
   type LoadedCharacter,
   type LoadedFloor,
+  type LoadedFurnitureItem,
   type AnimState,
   type Direction,
 } from './SpriteLoader';
@@ -51,13 +53,16 @@ interface Character extends CharacterData {
   paletteIndex: number; // which character sprite to use (0-5)
 }
 
-// Default seat positions for known agents
+// Default seat positions for known agents (2 rows of 4 desks)
 const DEFAULT_SEATS: Record<string, { x: number; y: number }> = {
-  cybera: { x: 4, y: 5 },
-  shodan: { x: 10, y: 5 },
-  cyberlogis: { x: 16, y: 5 },
-  descartes: { x: 4, y: 11 },
-  sysauxilia: { x: 10, y: 11 },
+  cybera: { x: 3, y: 4 },
+  shodan: { x: 9, y: 4 },
+  cyberlogis: { x: 15, y: 4 },
+  descartes: { x: 20, y: 4 },
+  chi: { x: 3, y: 10 },
+  cylena: { x: 9, y: 10 },
+  sysauxilia: { x: 15, y: 10 },
+  miku: { x: 20, y: 10 },
 };
 
 // Assign distinct character palettes to known agents
@@ -66,7 +71,10 @@ const AGENT_PALETTES: Record<string, number> = {
   shodan: 1,
   cyberlogis: 2,
   descartes: 3,
-  sysauxilia: 4,
+  chi: 4,
+  cylena: 5,
+  sysauxilia: 3,
+  miku: 0,
 };
 
 export class GameEngine {
@@ -79,8 +87,10 @@ export class GameEngine {
   private animFrameId = 0;
   private lastTime = 0;
   private assetsLoaded = false;
+  private _renderDiagLogged = false;
   private characters_sprites: LoadedCharacter[] = [];
   private floors: LoadedFloor[] = [];
+  private furniture: Map<string, LoadedFurnitureItem> = new Map();
   private zoom: number;
   private onAssetsLoaded?: () => void;
 
@@ -114,6 +124,11 @@ export class GameEngine {
       { id: 'cybera', name: 'Cybera', state: 'typing' },
       { id: 'shodan', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
+      { id: 'descartes', name: 'Descartes', state: 'idle' },
+      { id: 'chi', name: 'Chi', state: 'waiting_input' },
+      { id: 'cylena', name: 'Cylena', state: 'sleeping' },
+      { id: 'sysauxilia', name: 'Sysauxilia', state: 'idle' },
+      { id: 'miku', name: 'Miku', state: 'reading' },
     ];
 
     for (const agent of demoAgents) {
@@ -132,11 +147,12 @@ export class GameEngine {
   private async loadAssets(signal?: AbortSignal) {
     try {
       console.log('[GameEngine] Loading assets...');
-      const { characters, floors } = await loadAllAssets(signal);
+      const { characters, floors, furniture } = await loadAllAssets(signal);
       this.characters_sprites = characters;
       this.floors = floors;
+      this.furniture = furniture;
       this.assetsLoaded = true;
-      console.log(`[GameEngine] Assets loaded: ${characters.length} characters, ${floors.length} floors`);
+      console.log(`[GameEngine] Assets loaded: ${characters.length} characters, ${floors.length} floors, ${furniture.size} furniture types`);
     } catch (err) {
       console.error('[GameEngine] Failed to load assets:', err);
       // Try to load just characters for a better fallback
@@ -144,7 +160,7 @@ export class GameEngine {
         const chars = await loadCharacters(undefined, signal);
         this.characters_sprites = chars;
         this.assetsLoaded = true;
-        console.log(`[GameEngine] Partial load: ${chars.length} characters (no floors)`);
+        console.log(`[GameEngine] Partial load: ${chars.length} characters (no floors/furniture)`);
       } catch (err2) {
         console.error('[GameEngine] Even character loading failed:', err2);
       }
@@ -211,6 +227,16 @@ export class GameEngine {
 
   private render() {
     const { ctx, config } = this;
+
+    // One-time diagnostic (log once, then replace this with a no-op)
+    if (!this._renderDiagLogged) {
+      this._renderDiagLogged = true;
+      console.log(`[GameEngine DIAG] render() called. chars=${this.characters.size} assetsLoaded=${this.assetsLoaded} sprites=${this.characters_sprites?.length ?? 'null'}`);
+      for (const [id, c] of this.characters.entries()) {
+        console.log(`[GameEngine DIAG] char "${id}": x=${c.x.toFixed(1)} y=${c.y.toFixed(1)} palette=${c.paletteIndex} state=${c.state}`);
+      }
+    }
+
     const { tileSize, gridWidth, gridHeight } = config;
     const zoom = this.zoom;
 
@@ -277,36 +303,130 @@ export class GameEngine {
   }
 
   private renderFurniture(tileSize: number, zoom: number) {
-    const { ctx, seats, assetsLoaded } = this;
+    const { ctx, seats, assetsLoaded, furniture } = this;
 
+    // Pre-rendered office furniture layout (type, grid x, grid y)
+    // Placed relative to each agent's desk position
+    const officeFurniture: Array<{ type: string; offsetX: number; offsetY: number }> = [
+      // Shared office furniture placed in fixed positions
+      { type: 'LARGE_PLANT', offsetX: 1, offsetY: 1 },
+      { type: 'COFFEE', offsetX: 22, offsetY: 1 },
+      { type: 'WHITEBOARD', offsetX: 11, offsetY: 0 },
+      { type: 'BOOKSHELF', offsetX: 1, offsetY: 8 },
+      { type: 'LARGE_PAINTING', offsetX: 22, offsetY: 8 },
+    ];
+
+    // Draw shared office furniture
+    for (const item of officeFurniture) {
+      const px = item.offsetX * tileSize;
+      const py = item.offsetY * tileSize;
+      this.drawFurnitureItem(item.type, px, py, tileSize, zoom);
+    }
+
+    // Draw per-agent desk setups
     for (const [agentId, seat] of this.seats.entries()) {
       const px = seat.x * tileSize;
       const py = seat.y * tileSize;
 
-      // Desk surface
-      ctx.fillStyle = '#533483';
-      ctx.fillRect(px + 2, py - tileSize * 0.4, tileSize * 1.8, tileSize * 0.5);
+      // Try to draw actual desk + PC sprites
+      const deskItem = furniture.get('DESK');
+      const pcItem = furniture.get('PC');
+      const chairItem = furniture.get('CUSHIONED_CHAIR') || furniture.get('WOODEN_CHAIR');
 
-      // PC monitor
-      ctx.fillStyle = '#0f3460';
-      ctx.fillRect(px + tileSize * 0.3, py - tileSize * 0.6, tileSize * 0.6, tileSize * 0.4);
+      const hasSprites = assetsLoaded && (deskItem || pcItem);
 
-      // Monitor screen glow when agent is active
-      const char = this.characters.get(agentId);
-      if (char && char.state !== 'sleeping' && char.state !== 'idle') {
-        ctx.fillStyle = char.state === 'error' ? '#e9456040' : '#4ecca340';
-        ctx.fillRect(
-          px + tileSize * 0.35,
-          py - tileSize * 0.55,
-          tileSize * 0.5,
-          tileSize * 0.3,
-        );
+      if (hasSprites) {
+        // Draw desk sprite
+        if (deskItem) {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(
+            deskItem.canvas,
+            px,
+            py - deskItem.height * zoom,
+            deskItem.width * zoom,
+            deskItem.height * zoom,
+          );
+        }
+
+        // Draw PC on desk — animated if agent is active
+        if (pcItem) {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(
+            pcItem.canvas,
+            px + tileSize * 0.3,
+            py - pcItem.height * zoom - (deskItem?.height ?? 0) * zoom * 0.5,
+            pcItem.width * zoom,
+            pcItem.height * zoom,
+          );
+        }
+
+        // Draw chair
+        if (chairItem) {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(
+            chairItem.canvas,
+            px + tileSize * 0.2,
+            py + tileSize * 0.1,
+            chairItem.width * zoom,
+            chairItem.height * zoom,
+          );
+        }
+      } else {
+        // Fallback: colored rectangles (original behavior)
+        this.renderFallbackDesk(agentId, px, py, tileSize);
       }
-
-      // Chair below desk
-      ctx.fillStyle = '#2d6a4f';
-      ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
     }
+  }
+
+  /** Draw a single furniture item from sprites or fallback */
+  private drawFurnitureItem(type: string, px: number, py: number, tileSize: number, zoom: number) {
+    const { ctx, furniture, assetsLoaded } = this;
+    const item = furniture.get(type);
+
+    if (assetsLoaded && item) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(item.canvas, px, py, item.width * zoom, item.height * zoom);
+    } else {
+      // Fallback: colored placeholder
+      const colors: Record<string, string> = {
+        LARGE_PLANT: '#2d6a4f',
+        COFFEE: '#6f4e37',
+        WHITEBOARD: '#e8e8e8',
+        BOOKSHELF: '#8b4513',
+        LARGE_PAINTING: '#daa520',
+      };
+      ctx.fillStyle = colors[type] || '#533483';
+      ctx.fillRect(px, py, tileSize * 2, tileSize);
+    }
+  }
+
+  /** Fallback desk rendering with colored rectangles */
+  private renderFallbackDesk(agentId: string, px: number, py: number, tileSize: number) {
+    const { ctx } = this;
+
+    // Desk surface
+    ctx.fillStyle = '#533483';
+    ctx.fillRect(px + 2, py - tileSize * 0.4, tileSize * 1.8, tileSize * 0.5);
+
+    // PC monitor
+    ctx.fillStyle = '#0f3460';
+    ctx.fillRect(px + tileSize * 0.3, py - tileSize * 0.6, tileSize * 0.6, tileSize * 0.4);
+
+    // Monitor screen glow when agent is active
+    const char = this.characters.get(agentId);
+    if (char && char.state !== 'sleeping' && char.state !== 'idle') {
+      ctx.fillStyle = char.state === 'error' ? '#e9456040' : '#4ecca340';
+      ctx.fillRect(
+        px + tileSize * 0.35,
+        py - tileSize * 0.55,
+        tileSize * 0.5,
+        tileSize * 0.3,
+      );
+    }
+
+    // Chair below desk
+    ctx.fillStyle = '#2d6a4f';
+    ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
   }
 
   private renderCharacter(char: Character, tileSize: number, zoom: number) {
@@ -387,6 +507,9 @@ export class GameEngine {
       cyberlogis: '#ffc107',
       descartes: '#17a2b8',
       sysauxilia: '#6c757d',
+      chi: '#ff6b9d',
+      cylena: '#a78bfa',
+      miku: '#39ff14',
     };
     const color = bodyColors[char.id] || '#e94560';
 

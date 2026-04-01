@@ -45,7 +45,12 @@ export const AgentSidebar: React.FC<Props> = ({ agents }) => {
               <span className="agent-name">{agent.name}</span>
               <button
                 className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
-                onClick={() => {/* TODO: toggle */}}
+                onClick={() => {
+                  // Dispatch a custom event that useAgentStore can handle
+                  window.dispatchEvent(
+                    new CustomEvent('agent:toggle', { detail: { agentId: agent.id, enabled: !agent.pixelEnabled } })
+                  );
+                }}
                 title={agent.pixelEnabled ? 'Hide in office' : 'Show in office'}
               >
                 {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}

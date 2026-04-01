@@ -302,3 +302,8 @@ export function getSpriteFrame(
 export function getCachedCharacters(): LoadedCharacter[] {
   return cachedCharacters;
 }
+
+/** Access cached furniture */
+export function getCachedFurniture(): Map<string, LoadedFurnitureItem> {
+  return cachedFurniture;
+}
