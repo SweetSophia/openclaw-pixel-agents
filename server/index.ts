@@ -306,21 +306,21 @@ const lastReadOffset = new Map<string, number>();
  * Returns the first text content found, truncated.
  */
 function extractText(content: unknown): string {
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     return content.slice(0, TICKER_MAX_CHARS);
   }
   if (Array.isArray(content)) {
     for (const block of content) {
-      if (!block || typeof block !== 'object') continue;
+      if (!block || typeof block !== "object") continue;
       const b = block as Record<string, unknown>;
       // Skip non-text content blocks (thinking, tool calls, tool results)
-      if (b.type === 'thinking' || b.type === 'tool_use' || b.type === 'tool_result') continue;
-      if (b.type === 'text' && typeof b.text === 'string') {
+      if (b.type === "thinking" || b.type === "tool_use" || b.type === "tool_result") continue;
+      if (b.type === "text" && typeof b.text === "string") {
         return b.text.slice(0, TICKER_MAX_CHARS);
       }
     }
   }
-  return '';
+  return "";
 }
 
 /**
@@ -333,7 +333,7 @@ async function tailTranscript(
   agentName: string,
   transcriptPath: string | undefined,
 ): Promise<TickerMessage[]> {
-  if (!transcriptPath || !existsSync(transcriptPath)) return [];
+  if (!transcriptPath) return [];
 
   const key = `${agentId}:${transcriptPath}`;
   const offset = lastReadOffset.get(key) ?? 0;
@@ -344,6 +344,7 @@ async function tailTranscript(
   try {
     fileSize = (await statAsync(transcriptPath)).size;
   } catch {
+    // File doesn't exist or is unreadable — skip silently
     return [];
   }
 
@@ -355,26 +356,26 @@ async function tailTranscript(
 
   return new Promise((resolve) => {
     const stream = createReadStream(transcriptPath, {
-      encoding: 'utf-8',
+      encoding: "utf-8",
       start: offset,
       end: fileSize - 1,
     });
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const msg = JSON.parse(line);
 
         // Only extract assistant and user messages with text
         const role = msg.role;
-        if (role !== 'assistant' && role !== 'user') return;
+        if (role !== "assistant" && role !== "user") return;
 
         const text = extractText(msg.content);
         if (!text || text.length < 5) return;
 
         // Skip heartbeat messages
-        if (text.startsWith('HEARTBEAT_OK') || text.includes('HEARTBEAT.md')) return;
+        if (text.startsWith("HEARTBEAT_OK") || text.includes("HEARTBEAT.md")) return;
 
         const id = msg.__openclaw?.id || `${agentId}-${msg.__openclaw?.seq ?? Date.now()}`;
         const timestamp = msg.timestamp || msg.__openclaw?.ts || Date.now();
@@ -388,12 +389,17 @@ async function tailTranscript(
       }
     });
 
-    rl.on('close', () => {
+    rl.on("close", () => {
       lastReadOffset.set(key, fileSize);
       resolve(newMessages);
     });
 
-    rl.on('error', () => resolve([]));
+    // readline.Interface does not emit "error"; handle errors on the underlying stream.
+    stream.on("error", () => {
+      rl.close();
+      stream.destroy();
+      resolve([]);
+    });
   });
 }
 
@@ -438,22 +444,34 @@ async function pollMessages(): Promise<void> {
 
   // Broadcast whenever the snapshot changed (new messages OR pruning)
   if (newMsgs.length > 0 || pruned) {
-    // Broadcast
-    io.emit('ticker:messages', tickerMessages);
+    io.emit("ticker:messages", tickerMessages);
   }
 }
 
 // ---- Polling loop ----
 
+/**
+ * Guard against overlapping poll cycles: if a previous invocation is still
+ * awaiting the CLI or transcript reads, skip the next tick rather than
+ * running concurrently and racing on shared state.
+ */
+let isPolling = false;
+
 async function pollAndBroadcast(): Promise<void> {
-  const { sessions } = await pollSessions();
-  const agentList = mapToAgentStates(sessions);
+  if (isPolling) return;
+  isPolling = true;
+  try {
+    const { sessions } = await pollSessions();
+    const agentList = mapToAgentStates(sessions);
 
-  // Broadcast to all connected WebSocket clients
-  io.emit("agents:update", agentList);
+    // Broadcast to all connected WebSocket clients
+    io.emit("agents:update", agentList);
 
-  // Poll messages from transcripts
-  await pollMessages();
+    // Poll messages from transcripts
+    await pollMessages();
+  } finally {
+    isPolling = false;
+  }
 }
 
 // ---- REST API ----

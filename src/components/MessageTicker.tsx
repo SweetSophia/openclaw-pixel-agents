@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { io as socketIO, Socket } from 'socket.io-client';
+import { io as socketIO } from 'socket.io-client';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
@@ -27,32 +27,43 @@ function truncate(text: string, maxLen: number): string {
 export default function MessageTicker() {
   const [messages, setMessages] = useState<TickerMessage[]>([]);
   const [connected, setConnected] = useState(false);
-  const socketRef = useRef<Socket | null>(null);
+  const [now, setNow] = useState(Date.now());
   const trackRef = useRef<HTMLDivElement>(null);
+
+  // Tick every 30s so age-based opacity updates even when no new messages arrive
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Connect to WebSocket
   useEffect(() => {
+    let isCancelled = false;
     const socket = socketIO(API_BASE, { transports: ['websocket', 'polling'] });
-    socketRef.current = socket;
 
-    socket.on('connect', () => setConnected(true));
-    socket.on('disconnect', () => setConnected(false));
+    const handleConnect = () => { if (!isCancelled) setConnected(true); };
+    const handleDisconnect = () => { if (!isCancelled) setConnected(false); };
+    const handleMessages = (msgs: TickerMessage[]) => { if (!isCancelled) setMessages(msgs); };
 
-    socket.on('ticker:messages', (msgs: TickerMessage[]) => {
-      setMessages(msgs);
-    });
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('ticker:messages', handleMessages);
 
     // Fetch initial state; abort if this effect is cleaned up before it resolves
     const controller = new AbortController();
     fetch(`${API_BASE}/api/messages`, { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
-        if (data.messages) setMessages(data.messages);
+        if (!isCancelled && data.messages) setMessages(data.messages);
       })
       .catch(() => {});
 
     return () => {
+      isCancelled = true;
       controller.abort();
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('ticker:messages', handleMessages);
       socket.disconnect();
     };
   }, []);
@@ -77,9 +88,10 @@ export default function MessageTicker() {
     return () => clearTimeout(timer);
   }, [messages, updateScrollParams]);
 
-  // Age-based opacity class
+  // Age-based opacity class — uses `now` state so it re-evaluates every 30s
+  // even when no new messages arrive, ensuring old messages actually fade
   const getAgeClass = (msg: TickerMessage) => {
-    const age = Date.now() - msg.timestamp;
+    const age = now - msg.timestamp;
     if (age < 180000) return 'visible'; // < 3 min: full opacity
     return 'fading'; // > 3 min: fading
   };
