@@ -28,6 +28,7 @@ export default function MessageTicker() {
   const [messages, setMessages] = useState<TickerMessage[]>([]);
   const [connected, setConnected] = useState(false);
   const [now, setNow] = useState(Date.now());
+
   const trackRef = useRef<HTMLDivElement>(null);
 
   // Tick every 30s so age-based opacity updates even when no new messages arrive
