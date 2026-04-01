@@ -4,6 +4,7 @@ import { AgentSidebar } from './components/AgentSidebar';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SoundControls } from './components/SoundControls';
+import { RoomSwitcher } from './components/RoomSwitcher';
 import MessageTicker from './components/MessageTicker';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
@@ -11,7 +12,7 @@ import type { PlacedFurniture } from '../shared/types';
 import './App.css';
 
 export const App: React.FC = () => {
-  const { agents, connected, toggleAgent, toggleAll } = useAgentStore();
+  const { agents, connected, toggleAgent, toggleAll, updateTags, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
   const {
     layouts, activeLayout, catalog,
     loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
@@ -92,6 +93,11 @@ export const App: React.FC = () => {
           <SoundControls />
         </div>
       </header>
+      <RoomSwitcher
+        activeRoomId={activeRoomId}
+        onRoomChange={setActiveRoomId}
+        agents={agents}
+      />
       <main className="app-main">
         <div className="office-wrapper">
           {editorMode && (
@@ -116,7 +122,7 @@ export const App: React.FC = () => {
             />
           )}
           <PixelOffice
-            agents={agents}
+            agents={roomAgents}
             editorMode={editorMode}
             activeLayout={activeLayout}
             selectedFurnitureType={selectedFurnitureType}
@@ -131,6 +137,7 @@ export const App: React.FC = () => {
           onToggle={toggleAgent}
           onToggleAll={toggleAll}
           onSelectAgent={setSelectedAgentId}
+          onUpdateTags={updateTags}
         />
       </main>
       <AgentDetailPanel

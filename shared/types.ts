@@ -38,6 +38,10 @@ export interface AgentState {
   characterSpriteId?: string;
   /** Whether pixel visualization is enabled for this agent */
   pixelEnabled: boolean;
+  /** User-assigned tags for room routing and categorization */
+  tags: string[];
+  /** Current room ID (set by server based on tag routing) */
+  roomId?: string;
   /** Sub-agents spawned by this agent */
   subAgents?: SubAgentInfo[];
   /** Last message sent by this agent (truncated) */
@@ -95,6 +99,68 @@ export interface GatewayStatus {
   uptime: number;
   version: string;
 }
+
+// ── Tags & Rooms ───────────────────────────────────────
+
+/** Preset tag categories for agent classification */
+export type AgentTag =
+  | 'coding'
+  | 'research'
+  | 'monitoring'
+  | 'infrastructure'
+  | 'orchestration'
+  | 'creative'
+  | 'analysis'
+  | 'logic'
+  | 'frontend'
+  | 'media';
+
+/** All available tags for the tag picker UI */
+export const ALL_TAGS: AgentTag[] = [
+  'coding', 'research', 'monitoring', 'infrastructure',
+  'orchestration', 'creative', 'analysis', 'logic',
+  'frontend', 'media',
+];
+
+/** Tag colors for UI badges */
+export const TAG_COLORS: Record<AgentTag, string> = {
+  coding: '#4ecca3',
+  research: '#a78bfa',
+  monitoring: '#fbbf24',
+  infrastructure: '#6b7280',
+  orchestration: '#f472b6',
+  creative: '#fb923c',
+  analysis: '#60a5fa',
+  logic: '#34d399',
+  frontend: '#c084fc',
+  media: '#f87171',
+};
+
+/** A room definition — agents are routed to rooms by tag */
+export interface Room {
+  /** Unique room ID (e.g. "office", "lab", "server-room") */
+  id: string;
+  /** Display name */
+  name: string;
+  /** Primary tag — agents with this tag route here */
+  primaryTag: AgentTag;
+  /** Optional secondary tags — agents with these also route here */
+  secondaryTags?: AgentTag[];
+  /** Room background color (fallback if no floor tiles) */
+  backgroundColor?: string;
+  /** Icon for the room switcher */
+  icon: string;
+  /** Sort order (lower = first) */
+  order: number;
+}
+
+/** Default room definitions */
+export const DEFAULT_ROOMS: Room[] = [
+  { id: 'office', name: 'Office', primaryTag: 'coding', secondaryTags: ['frontend', 'logic'], icon: '🏢', order: 0 },
+  { id: 'lab', name: 'Research Lab', primaryTag: 'research', secondaryTags: ['analysis'], icon: '🔬', order: 1 },
+  { id: 'server-room', name: 'Server Room', primaryTag: 'infrastructure', secondaryTags: ['monitoring'], icon: '🖥️', order: 2 },
+  { id: 'lounge', name: 'Lounge', primaryTag: 'creative', secondaryTags: ['orchestration', 'media'], icon: '🎨', order: 3 },
+];
 
 // ── Message Ticker ─────────────────────────────────────
 

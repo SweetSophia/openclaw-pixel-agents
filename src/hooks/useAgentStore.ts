@@ -1,12 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { AgentState } from '../../shared/types';
+import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
 
 const API_BASE = '/api';
+
+export { ALL_TAGS, TAG_COLORS };
+export type { AgentTag };
 
 export function useAgentStore() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeRoomId, setActiveRoomId] = useState<string>('office');
 
   const fetchAgents = useCallback(async () => {
     try {
@@ -75,11 +80,32 @@ export function useAgentStore() {
     }
   }, [fetchAgents]);
 
+  /** Update tags for an agent */
+  const updateTags = useCallback(async (agentId: string, tags: string[]) => {
+    try {
+      await fetch(`${API_BASE}/agents/${agentId}/tags`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags }),
+      });
+      // Optimistic update
+      setAgents(prev => prev.map(a =>
+        a.id === agentId ? { ...a, tags } : a
+      ));
+    } catch (err) {
+      console.error('Failed to update tags:', err);
+      fetchAgents();
+    }
+  }, [fetchAgents]);
+
+  /** Filter agents visible in the current room */
+  const roomAgents = agents.filter(a => a.roomId === activeRoomId || !a.roomId);
+
   useEffect(() => {
     fetchAgents();
     const interval = setInterval(fetchAgents, 2000);
     return () => clearInterval(interval);
   }, [fetchAgents]);
 
-  return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, refresh: fetchAgents };
+  return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
 }

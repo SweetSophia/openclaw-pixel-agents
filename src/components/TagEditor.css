@@ -1,0 +1,135 @@
+.tag-editor-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.tag-editor {
+  background: #0f0f23;
+  border: 1px solid #2a2a4e;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 320px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tag-editor h3 {
+  margin: 0 0 4px 0;
+  color: #e0e0e0;
+  font-size: 16px;
+}
+
+.tag-hint {
+  margin: 0 0 12px 0;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.tag-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1.5px solid #333;
+  border-radius: 14px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: monospace;
+  transition: all 0.15s ease;
+  min-height: 28px;
+}
+
+.tag-chip:hover {
+  color: #e0e0e0;
+}
+
+.tag-chip.selected {
+  color: #fff;
+  font-weight: bold;
+}
+
+.tag-chip.primary {
+  box-shadow: 0 0 8px rgba(78, 204, 163, 0.2);
+}
+
+.tag-star {
+  font-size: 10px;
+  color: #fbbf24;
+}
+
+.tag-selected-order {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.tag-order-label {
+  font-weight: bold;
+  color: #9ca3af;
+}
+
+.tag-order-item {
+  font-family: monospace;
+}
+
+.tag-editor-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.tag-save-btn, .tag-cancel-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid #2a2a4e;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: monospace;
+  min-height: 36px;
+}
+
+.tag-save-btn {
+  background: #4ecca3;
+  color: #0f0f23;
+  font-weight: bold;
+}
+
+.tag-save-btn:hover {
+  background: #3db892;
+}
+
+.tag-cancel-btn {
+  background: transparent;
+  color: #9ca3af;
+}
+
+.tag-cancel-btn:hover {
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+@media (max-width: 768px) {
+  .tag-editor {
+    min-width: auto;
+    width: 90vw;
+    padding: 16px;
+  }
+}

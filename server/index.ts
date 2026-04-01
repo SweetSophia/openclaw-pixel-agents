@@ -15,7 +15,8 @@ import { stat as statAsync } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { AgentState, AgentActivity, SubAgentInfo, TickerMessage } from "../shared/types";
+import type { AgentState, AgentActivity, SubAgentInfo, TickerMessage, Room, AgentTag } from "../shared/types";
+import { DEFAULT_ROOMS } from "../shared/types";
 
 const app = express();
 const server = createServer(app);
@@ -42,31 +43,32 @@ interface KnownAgent {
   name: string;
   pixelEnabled: boolean;
   characterSpriteId?: string;
+  tags: string[];
 }
 
 /** Default agent definitions */
 function defaultRegistry(): Map<string, KnownAgent> {
   return new Map([
-    ["main", { id: "main", name: "Shodan", pixelEnabled: true }],
-    ["miku", { id: "miku", name: "Miku", pixelEnabled: true }],
-    ["chi", { id: "chi", name: "Chi", pixelEnabled: true }],
-    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true }],
-    ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true }],
-    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true }],
-    ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true }],
-    ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true }],
+    ["main",       { id: "main",       name: "Shodan",      pixelEnabled: true, tags: ["orchestration", "research"] }],
+    ["miku",       { id: "miku",       name: "Miku",        pixelEnabled: true, tags: ["creative", "media"] }],
+    ["chi",        { id: "chi",        name: "Chi",         pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia",  pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
+    ["descartes",  { id: "descartes",  name: "Descartes",   pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis",  pixelEnabled: true, tags: ["coding", "logic"] }],
+    ["cylena",     { id: "cylena",     name: "Cylena",      pixelEnabled: true, tags: ["coding", "frontend"] }],
+    ["cybera",     { id: "cybera",     name: "Cybera",      pixelEnabled: true, tags: ["coding", "systems"] }],
   ]);
 }
 
-/** Load persisted agent preferences (pixelEnabled, spriteId) from disk */
-function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string }> {
+/** Load persisted agent preferences (pixelEnabled, spriteId, tags) from disk */
+function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: string[] }> {
   try {
     if (!existsSync(PERSIST_PATH)) return new Map();
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
-    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string }>();
+    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: string[] }>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as { pixelEnabled?: boolean; characterSpriteId?: string });
+      map.set(k, v as { pixelEnabled?: boolean; characterSpriteId?: string; tags?: string[] });
     }
     return map;
   } catch {
@@ -77,9 +79,9 @@ function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSp
 /** Save agent preferences to disk */
 function savePersistedPrefs() {
   try {
-    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string }> = {};
+    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string; tags: string[] }> = {};
     for (const [id, agent] of AGENT_REGISTRY) {
-      prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId };
+      prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags };
     }
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(PERSIST_PATH, JSON.stringify(prefs, null, 2));
@@ -96,7 +98,28 @@ for (const [id, prefs] of savedPrefs) {
   if (agent) {
     if (prefs.pixelEnabled !== undefined) agent.pixelEnabled = prefs.pixelEnabled;
     if (prefs.characterSpriteId !== undefined) agent.characterSpriteId = prefs.characterSpriteId;
+    if (prefs.tags !== undefined) agent.tags = prefs.tags;
   }
+}
+
+// ---- Rooms ----
+
+const rooms: Room[] = [...DEFAULT_ROOMS];
+
+/** Determine which room an agent should be in based on their first tag */
+function resolveRoom(agentTags: string[]): string {
+  if (agentTags.length === 0) return "office"; // default
+
+  const firstTag = agentTags[0] as AgentTag;
+  // Check primary tag match
+  const primaryMatch = rooms.find(r => r.primaryTag === firstTag);
+  if (primaryMatch) return primaryMatch.id;
+
+  // Check secondary tag match
+  const secondaryMatch = rooms.find(r => r.secondaryTags?.includes(firstTag));
+  if (secondaryMatch) return secondaryMatch.id;
+
+  return "office"; // fallback
 }
 
 // ---- State ----
@@ -251,6 +274,8 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
           : undefined,
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
+        tags: known.tags,
+        roomId: resolveRoom(known.tags),
         subAgents: sessions
           ?.filter((s) => s.kind === "subagent")
           .map((s) => ({
@@ -276,6 +301,8 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         lastActivity: 0,
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
+        tags: known.tags,
+        roomId: resolveRoom(known.tags),
       };
       agentStates.set(agentId, state);
       results.push(state);
@@ -548,6 +575,54 @@ app.post("/api/agents/:id/sprite", (req, res) => {
   } else {
     res.status(404).json({ error: "Agent not found" });
   }
+});
+
+// ---- Tag management ----
+
+/** Get all available tags */
+app.get("/api/tags", (_req, res) => {
+  const { ALL_TAGS, TAG_COLORS } = require("../shared/types");
+  res.json({ tags: ALL_TAGS, colors: TAG_COLORS });
+});
+
+/** Update tags for an agent */
+app.put("/api/agents/:id/tags", (req, res) => {
+  const { id } = req.params;
+  const { tags } = req.body as { tags: string[] };
+
+  if (!Array.isArray(tags)) {
+    return res.status(400).json({ error: "tags must be an array of strings" });
+  }
+
+  const known = AGENT_REGISTRY.get(id);
+  if (!known) {
+    return res.status(404).json({ error: "Agent not found" });
+  }
+
+  known.tags = tags;
+  const state = agentStates.get(id);
+  if (state) {
+    state.tags = tags;
+    state.roomId = resolveRoom(tags);
+  }
+  savePersistedPrefs();
+
+  // Broadcast updated agent states
+  io.emit("agents:update", Array.from(agentStates.values()));
+  res.json({ success: true, tags, roomId: resolveRoom(tags) });
+});
+
+// ---- Room management ----
+
+/** Get all rooms */
+app.get("/api/rooms", (_req, res) => {
+  // Attach live agent counts per room
+  const roomsWithCounts = rooms.map(room => ({
+    ...room,
+    agentCount: Array.from(agentStates.values()).filter(a => a.roomId === room.id && a.pixelEnabled).length,
+    activeCount: Array.from(agentStates.values()).filter(a => a.roomId === room.id && a.active && a.pixelEnabled).length,
+  }));
+  res.json({ rooms: roomsWithCounts });
 });
 
 // ---- Layout persistence ----

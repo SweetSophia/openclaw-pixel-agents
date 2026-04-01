@@ -1,5 +1,7 @@
-import React from 'react';
-import type { AgentState, AgentActivity } from '../../shared/types';
+import React, { useState } from 'react';
+import type { AgentState, AgentActivity, AgentTag } from '../../shared/types';
+import { TAG_COLORS } from '../hooks/useAgentStore';
+import { TagEditor } from './TagEditor';
 import './AgentSidebar.css';
 
 interface Props {
@@ -7,6 +9,7 @@ interface Props {
   onToggle: (agentId: string, enabled: boolean) => void;
   onToggleAll: (enabled: boolean) => void;
   onSelectAgent?: (agentId: string) => void;
+  onUpdateTags?: (agentId: string, tags: string[]) => void;
 }
 
 const activityIcons: Record<AgentActivity, string> = {
@@ -31,9 +34,10 @@ const activityColors: Record<AgentActivity, string> = {
   error: '#dc3545',
 };
 
-export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, onSelectAgent }) => {
+export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, onSelectAgent, onUpdateTags }) => {
   const enabledCount = agents.filter(a => a.pixelEnabled).length;
   const activeCount = agents.filter(a => a.active).length;
+  const [tagEditorAgent, setTagEditorAgent] = useState<AgentState | null>(null);
 
   return (
     <aside className="agent-sidebar">
@@ -87,6 +91,35 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                   </span>
                 </div>
               )}
+              {agent.tags && agent.tags.length > 0 && (
+                <div className="agent-tags">
+                  {agent.tags.map(tag => (
+                    <span
+                      key={tag}
+                      className="tag-badge"
+                      style={{ backgroundColor: (TAG_COLORS[tag as AgentTag] || '#666') + '30', color: TAG_COLORS[tag as AgentTag] || '#999' }}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                  <button
+                    className="tag-edit-btn"
+                    onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
+                    title="Edit tags"
+                  >
+                    ✏️
+                  </button>
+                </div>
+              )}
+              {(!agent.tags || agent.tags.length === 0) && (
+                <button
+                  className="tag-add-btn"
+                  onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
+                  title="Add tags"
+                >
+                  + tags
+                </button>
+              )}
             </div>
           );
         })}
@@ -99,6 +132,15 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
           🚫 Hide All
         </button>
       </div>
+      {tagEditorAgent && onUpdateTags && (
+        <TagEditor
+          agentId={tagEditorAgent.id}
+          agentName={tagEditorAgent.name}
+          currentTags={tagEditorAgent.tags || []}
+          onUpdateTags={onUpdateTags}
+          onClose={() => setTagEditorAgent(null)}
+        />
+      )}
     </aside>
   );
 };
