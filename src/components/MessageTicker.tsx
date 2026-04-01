@@ -10,7 +10,7 @@ import { io as socketIO, Socket } from 'socket.io-client';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
 
 /** Format timestamp to HH:MM */
 function fmtTime(ts: number): string {
@@ -32,7 +32,7 @@ export default function MessageTicker() {
 
   // Connect to WebSocket
   useEffect(() => {
-    const socket = socketIO(SOCKET_URL, { transports: ['websocket', 'polling'] });
+    const socket = socketIO(API_BASE, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => setConnected(true));
@@ -44,7 +44,7 @@ export default function MessageTicker() {
 
     // Fetch initial state; abort if this effect is cleaned up before it resolves
     const controller = new AbortController();
-    fetch(`${SOCKET_URL}/api/messages`, { signal: controller.signal })
+    fetch(`${API_BASE}/api/messages`, { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
         if (data.messages) setMessages(data.messages);

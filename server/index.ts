@@ -422,7 +422,8 @@ async function pollMessages(): Promise<void> {
   const cutoff = Date.now() - TICKER_MAX_AGE;
   let i = 0;
   while (i < tickerMessages.length && tickerMessages[i].timestamp < cutoff) i++;
-  if (i > 0) tickerMessages.splice(0, i);
+  const pruned = i > 0;
+  if (pruned) tickerMessages.splice(0, i);
 
   if (newMsgs.length > 0) {
     // Add new messages and sort by timestamp
@@ -433,7 +434,10 @@ async function pollMessages(): Promise<void> {
     while (tickerMessages.length > TICKER_BUFFER_SIZE) {
       tickerMessages.shift();
     }
+  }
 
+  // Broadcast whenever the snapshot changed (new messages OR pruning)
+  if (newMsgs.length > 0 || pruned) {
     // Broadcast
     io.emit('ticker:messages', tickerMessages);
   }
