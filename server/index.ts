@@ -10,6 +10,8 @@ import { execFile } from "node:child_process";
 import express from "express";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import type { AgentState, AgentActivity } from "../shared/types";
 
 const app = express();
@@ -25,6 +27,8 @@ app.use(express.json());
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || "3000", 10);
 const ACTIVE_THRESHOLD_MIN = parseInt(process.env.ACTIVE_MINUTES || "30", 10);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
+const DATA_DIR = process.env.DATA_DIR || join(dirname(import.meta.dirname || __dirname), "data");
+const PERSIST_PATH = join(DATA_DIR, "agent-prefs.json");
 
 // ---- Known agents from config ----
 
@@ -35,17 +39,60 @@ interface KnownAgent {
   characterSpriteId?: string;
 }
 
-/** All configured agents — matches openclaw.json agents.list */
-const AGENT_REGISTRY: Map<string, KnownAgent> = new Map([
-  ["main", { id: "main", name: "Shodan", pixelEnabled: true }],
-  ["miku", { id: "miku", name: "Miku", pixelEnabled: true }],
-  ["chi", { id: "chi", name: "Chi", pixelEnabled: true }],
-  ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true }],
-  ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true }],
-  ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true }],
-  ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true }],
-  ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true }],
-]);
+/** Default agent definitions */
+function defaultRegistry(): Map<string, KnownAgent> {
+  return new Map([
+    ["main", { id: "main", name: "Shodan", pixelEnabled: true }],
+    ["miku", { id: "miku", name: "Miku", pixelEnabled: true }],
+    ["chi", { id: "chi", name: "Chi", pixelEnabled: true }],
+    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true }],
+    ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true }],
+    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true }],
+    ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true }],
+    ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true }],
+  ]);
+}
+
+/** Load persisted agent preferences (pixelEnabled, spriteId) from disk */
+function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string }> {
+  try {
+    if (!existsSync(PERSIST_PATH)) return new Map();
+    const raw = readFileSync(PERSIST_PATH, "utf-8");
+    const data = JSON.parse(raw);
+    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string }>();
+    for (const [k, v] of Object.entries(data)) {
+      map.set(k, v as { pixelEnabled?: boolean; characterSpriteId?: string });
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Save agent preferences to disk */
+function savePersistedPrefs() {
+  try {
+    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string }> = {};
+    for (const [id, agent] of AGENT_REGISTRY) {
+      prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId };
+    }
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(PERSIST_PATH, JSON.stringify(prefs, null, 2));
+  } catch (err) {
+    console.error("[persist] Failed to save prefs:", err);
+  }
+}
+
+// Build registry from defaults + persisted prefs
+const AGENT_REGISTRY = defaultRegistry();
+const savedPrefs = loadPersistedPrefs();
+for (const [id, prefs] of savedPrefs) {
+  const agent = AGENT_REGISTRY.get(id);
+  if (agent) {
+    if (prefs.pixelEnabled !== undefined) agent.pixelEnabled = prefs.pixelEnabled;
+    if (prefs.characterSpriteId !== undefined) agent.characterSpriteId = prefs.characterSpriteId;
+  }
+}
 
 // ---- State ----
 
@@ -251,9 +298,10 @@ app.post("/api/agents/:id/toggle", (req, res) => {
     known.pixelEnabled = enabled;
     const state = agentStates.get(id);
     if (state) state.pixelEnabled = enabled;
+    savePersistedPrefs();
     // Broadcast the change
     io.emit("agents:update", Array.from(agentStates.values()));
-    res.json({ success: true });
+    res.json({ success: true, enabled });
   } else {
     res.status(404).json({ error: "Agent not found" });
   }
@@ -268,6 +316,7 @@ app.post("/api/agents/:id/sprite", (req, res) => {
     known.characterSpriteId = spriteId;
     const state = agentStates.get(id);
     if (state) state.characterSpriteId = spriteId;
+    savePersistedPrefs();
     res.json({ success: true });
   } else {
     res.status(404).json({ error: "Agent not found" });

@@ -1,0 +1,26 @@
+{
+  "main": {
+    "pixelEnabled": true
+  },
+  "miku": {
+    "pixelEnabled": true
+  },
+  "chi": {
+    "pixelEnabled": true
+  },
+  "sysauxilia": {
+    "pixelEnabled": true
+  },
+  "descartes": {
+    "pixelEnabled": true
+  },
+  "cyberlogis": {
+    "pixelEnabled": true
+  },
+  "cylena": {
+    "pixelEnabled": true
+  },
+  "cybera": {
+    "pixelEnabled": true
+  }
+}

@@ -4,6 +4,8 @@ import './AgentSidebar.css';
 
 interface Props {
   agents: AgentState[];
+  onToggle: (agentId: string, enabled: boolean) => void;
+  onToggleAll: (enabled: boolean) => void;
 }
 
 const activityIcons: Record<AgentActivity, string> = {
@@ -28,60 +30,73 @@ const activityColors: Record<AgentActivity, string> = {
   error: '#dc3545',
 };
 
-export const AgentSidebar: React.FC<Props> = ({ agents }) => {
+export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll }) => {
+  const enabledCount = agents.filter(a => a.pixelEnabled).length;
+  const activeCount = agents.filter(a => a.active).length;
+
   return (
     <aside className="agent-sidebar">
-      <h2>Agents</h2>
+      <h2>Agents ({enabledCount}/{agents.length})</h2>
       <div className="agent-list">
-        {agents.map(agent => (
-          <div
-            key={agent.id}
-            className={`agent-card ${agent.active ? 'active' : 'inactive'}`}
-          >
-            <div className="agent-header">
-              <span className="agent-icon">
-                {activityIcons[agent.activity]}
-              </span>
-              <span className="agent-name">{agent.name}</span>
-              <button
-                className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
-                onClick={() => {
-                  // Dispatch a custom event that useAgentStore can handle
-                  window.dispatchEvent(
-                    new CustomEvent('agent:toggle', { detail: { agentId: agent.id, enabled: !agent.pixelEnabled } })
-                  );
-                }}
-                title={agent.pixelEnabled ? 'Hide in office' : 'Show in office'}
-              >
-                {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}
-              </button>
-            </div>
-            <div className="agent-details">
-              <span
-                className="activity-badge"
-                style={{ backgroundColor: activityColors[agent.activity] }}
-              >
-                {agent.activity}
-              </span>
-              <span className="agent-model">{agent.model.split('/').pop()}</span>
-            </div>
-            {agent.tokens && (
-              <div className="agent-tokens">
-                <div className="token-bar">
-                  <div
-                    className="token-fill"
-                    style={{
-                      width: `${(agent.tokens.used / agent.tokens.limit) * 100}%`,
-                    }}
-                  />
-                </div>
-                <span className="token-text">
-                  {((agent.tokens.used / agent.tokens.limit) * 100).toFixed(0)}%
+        {agents.map(agent => {
+          const cardClass = !agent.pixelEnabled
+            ? 'agent-card disabled'
+            : agent.active
+              ? 'agent-card active'
+              : 'agent-card inactive';
+
+          return (
+            <div key={agent.id} className={cardClass}>
+              <div className="agent-header">
+                <span className="agent-icon">
+                  {agent.pixelEnabled ? activityIcons[agent.activity] : '🚫'}
+                </span>
+                <span className="agent-name">{agent.name}</span>
+                <button
+                  className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
+                  onClick={() => onToggle(agent.id, !agent.pixelEnabled)}
+                  title={agent.pixelEnabled ? 'Hide from office' : 'Show in office'}
+                >
+                  {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}
+                </button>
+              </div>
+              <div className="agent-details">
+                <span
+                  className="activity-badge"
+                  style={{ backgroundColor: activityColors[agent.activity] }}
+                >
+                  {agent.activity}
+                </span>
+                <span className="agent-model">
+                  {agent.model !== 'unknown' ? agent.model.split('/').pop() : '—'}
                 </span>
               </div>
-            )}
-          </div>
-        ))}
+              {agent.tokens && (
+                <div className="agent-tokens">
+                  <div className="token-bar">
+                    <div
+                      className="token-fill"
+                      style={{
+                        width: `${(agent.tokens.used / agent.tokens.limit) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="token-text">
+                    {((agent.tokens.used / agent.tokens.limit) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="sidebar-footer">
+        <button onClick={() => onToggleAll(true)}>
+          👁 Show All
+        </button>
+        <button className="danger" onClick={() => onToggleAll(false)}>
+          🚫 Hide All
+        </button>
       </div>
     </aside>
   );

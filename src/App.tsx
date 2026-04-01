@@ -5,7 +5,7 @@ import { useAgentStore } from './hooks/useAgentStore';
 import './App.css';
 
 export const App: React.FC = () => {
-  const { agents, connected } = useAgentStore();
+  const { agents, connected, toggleAgent, toggleAll } = useAgentStore();
 
   return (
     <div className="app">
@@ -17,7 +17,7 @@ export const App: React.FC = () => {
       </header>
       <main className="app-main">
         <PixelOffice agents={agents} />
-        <AgentSidebar agents={agents} />
+        <AgentSidebar agents={agents} onToggle={toggleAgent} onToggleAll={toggleAll} />
       </main>
     </div>
   );
