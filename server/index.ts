@@ -43,6 +43,8 @@ interface KnownAgent {
   pixelEnabled: boolean;
   characterSpriteId?: string;
   tags: AgentTag[];
+  /** Paperdoll recipe: body/hair/outfit indices */
+  recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number };
 }
 
 /** Default agent definitions */
@@ -59,15 +61,15 @@ function defaultRegistry(): Map<string, KnownAgent> {
   ]);
 }
 
-/** Load persisted agent preferences (pixelEnabled, spriteId, tags) from disk */
-function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[] }> {
+/** Load persisted agent preferences (pixelEnabled, spriteId, tags, recipe) from disk */
+function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }> {
   try {
     if (!existsSync(PERSIST_PATH)) return new Map();
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
-    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[] }>();
+    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[] });
+      map.set(k, v as any);
     }
     return map;
   } catch {
@@ -78,9 +80,9 @@ function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSp
 /** Save agent preferences to disk */
 function savePersistedPrefs() {
   try {
-    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string; tags: AgentTag[] }> = {};
+    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string; tags: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }> = {};
     for (const [id, agent] of AGENT_REGISTRY) {
-      prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags };
+      prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
     }
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(PERSIST_PATH, JSON.stringify(prefs, null, 2));
@@ -574,6 +576,47 @@ app.post("/api/agents/:id/sprite", (req, res) => {
   } else {
     res.status(404).json({ error: "Agent not found" });
   }
+});
+
+// ---- Character recipe (paperdoll) ----
+
+app.put("/api/agents/:id/recipe", (req, res) => {
+  const { id } = req.params;
+  const { bodyIndex, hairIndex, outfitIndex } = req.body;
+
+  if (typeof bodyIndex !== 'number' || typeof hairIndex !== 'number' || typeof outfitIndex !== 'number') {
+    res.status(400).json({ error: "bodyIndex, hairIndex, outfitIndex required (numbers)" });
+    return;
+  }
+
+  const known = AGENT_REGISTRY.get(id);
+  if (!known) {
+    res.status(404).json({ error: "Agent not found" });
+    return;
+  }
+
+  // Validate ranges
+  if (bodyIndex < 0 || bodyIndex > 5 || hairIndex < 0 || hairIndex > 8 || outfitIndex < 0 || outfitIndex > 5) {
+    res.status(400).json({ error: "Indices out of range (body: 0-5, hair: 0-8, outfit: 0-5)" });
+    return;
+  }
+
+  known.recipe = { bodyIndex, hairIndex, outfitIndex };
+  savePersistedPrefs();
+
+  // Broadcast recipe change to connected Socket.IO clients
+  io.emit("recipe-update", { agentId: id, recipe: known.recipe });
+
+  res.json({ success: true, recipe: known.recipe });
+});
+
+/** Get available recipe options (body/hair/outfit counts) */
+app.get("/api/recipes/options", (_req, res) => {
+  res.json({
+    bodies: 6,   // 6 skin tone / body type rows
+    hairs: 8,    // 8 hairstyle rows in Hairs.png
+    outfits: 6,  // 6 outfit sheets
+  });
 });
 
 // ---- Tag management ----

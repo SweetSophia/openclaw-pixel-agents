@@ -48,6 +48,8 @@ export interface AgentState {
   lastMessage?: string;
   /** Uptime in seconds for this session */
   sessionUptime?: number;
+  /** Paperdoll recipe (body/hair/outfit indices) */
+  recipe?: CharacterRecipe;
 }
 
 export interface SubAgentInfo {
@@ -56,6 +58,13 @@ export interface SubAgentInfo {
   task?: string;
   spawnedAt: number;
   status: 'running' | 'completed' | 'failed';
+}
+
+/** Paperdoll recipe — which body/hair/outfit to compose */
+export interface CharacterRecipe {
+  bodyIndex: number;   // 0-5: skin tone / body type
+  hairIndex: number;   // 0-8: hairstyle
+  outfitIndex: number; // 0-5: clothing
 }
 
 export interface OfficeLayout {
@@ -101,6 +110,13 @@ export interface GatewayStatus {
 }
 
 // ── Tags & Rooms ───────────────────────────────────────
+
+/** Paperdoll recipe — defines an agent's visual appearance */
+export interface CharacterRecipe {
+  bodyIndex: number;    // 0-5: skin tone / body type
+  hairIndex: number;    // 0-8: hairstyle
+  outfitIndex: number;  // 0-5: clothing
+}
 
 /** Preset tag categories for agent classification */
 export type AgentTag =

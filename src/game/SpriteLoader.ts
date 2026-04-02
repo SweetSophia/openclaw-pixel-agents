@@ -1,9 +1,12 @@
 /**
  * Sprite loader and renderer for OpenClaw Pixel Agents
  *
- * Loads character sprite sheets, furniture PNGs, and floor tiles from assets.
+ * Two character rendering paths:
+ *   1. CharacterComposer (preferred): layers MetroCity source assets (body+hair+outfit)
+ *      into unique per-agent sprites. Config-driven via CharacterRecipe.
+ *   2. Legacy pre-composited: char_0..5.png sprite sheets (fallback).
  *
- * Character sprite sheet layout (112×96):
+ * Character sprite sheet layout (legacy, 112×96):
  *   - 3 rows: down (row 0), up (row 1), right (row 2)
  *   - 7 columns per row (16×32 each):
  *     0-2: walk frames (3 unique, ping-pong 0→1→2→1)
@@ -19,6 +22,14 @@ const CHAR_FRAME_H = 32;
 const CHAR_FRAMES_PER_ROW = 7;
 const CHARACTER_DIRS = ['down', 'up', 'right'] as const;
 const FLOOR_TILE_SIZE = 16;
+
+import {
+  loadSourceSheets,
+  composeCharacter,
+  getRecipe,
+  type CharacterRecipe,
+  type ComposedCharacter,
+} from './CharacterComposer';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -52,6 +63,7 @@ export interface LoadedFloor {
 let cachedCharacters: LoadedCharacter[] = [];
 let cachedFloors: LoadedFloor[] = [];
 const cachedFurniture: Map<string, LoadedFurnitureItem> = new Map();
+const cachedComposed: Map<string, ComposedCharacter> = new Map();
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -233,19 +245,15 @@ export async function loadFurniture(
 }
 
 /**
- * Load all assets in parallel
+ * Load all assets in parallel. Tries the paperdoll compositor first;
+ * falls back to legacy pre-composited sprites if source sheets are missing.
  */
 export async function loadAllAssets(signal?: AbortSignal): Promise<{
   characters: LoadedCharacter[];
   floors: LoadedFloor[];
   furniture: Map<string, LoadedFurnitureItem>;
 }> {
-  // Load each independently so one failure doesn't kill the others
-  const characters = await loadCharacters(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Character loading failed:', err);
-    return [] as LoadedCharacter[];
-  });
+  // Load floors and furniture independently
   const floors = await loadFloors(undefined, signal).catch(err => {
     if (err.name === 'AbortError') throw err;
     console.error('[SpriteLoader] Floor loading failed:', err);
@@ -257,12 +265,61 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
     return new Map<string, LoadedFurnitureItem>();
   });
 
+  // Try paperdoll compositor
+  let characters: LoadedCharacter[] = [];
+  try {
+    await loadSourceSheets();
+    cachedComposed.clear();
+
+    // Compose characters for known agents
+    const agentIds = ['main', 'cybera', 'chi', 'descartes', 'cyberlogis', 'cylena', 'sysauxilia', 'miku'];
+    for (const id of agentIds) {
+      const recipe = getRecipe(id);
+      const composed = composeCharacter(recipe);
+      cachedComposed.set(id, composed);
+    }
+
+    // Convert first composed character to legacy format for the default character set
+    // (the engine still uses numeric indexing for "which sprite to use")
+    characters = Array.from(cachedComposed.values()).map(composedToLoaded);
+
+    console.log(`[SpriteLoader] Composed ${cachedComposed.size} characters from source sheets`);
+  } catch (err) {
+    console.warn('[SpriteLoader] Compositor failed, falling back to pre-composited sprites:', err);
+    characters = await loadCharacters(undefined, signal).catch(err2 => {
+      if (err2.name === 'AbortError') throw err2;
+      console.error('[SpriteLoader] Legacy character loading also failed:', err2);
+      return [] as LoadedCharacter[];
+    });
+  }
+
+  cachedCharacters = characters;
+
   console.log(
     `[SpriteLoader] Assets loaded: ${characters.length} characters, ${floors.length} floors, ${furniture.size} furniture types`,
   );
 
   return { characters, floors, furniture };
 }
+
+/**
+ * Convert a ComposedCharacter (from CharacterComposer) to the LoadedCharacter
+ * format expected by the engine and getSpriteFrame().
+ */
+function composedToLoaded(composed: ComposedCharacter): LoadedCharacter {
+  const toFrames = (canvases: HTMLCanvasElement[]): SpriteFrame[] =>
+    canvases.map(canvas => ({ canvas, width: OUT_FRAME_W, height: OUT_FRAME_H }));
+
+  // The compositor outputs are already in the correct format (3 dirs × 7 frames)
+  return {
+    down: toFrames(composed.down),
+    up: toFrames(composed.up),
+    right: toFrames(composed.right),
+  };
+}
+
+const OUT_FRAME_W = 16;
+const OUT_FRAME_H = 32;
 
 // ── Frame access helpers ───────────────────────────────────
 
@@ -307,4 +364,29 @@ export function getCachedCharacters(): LoadedCharacter[] {
 /** Access cached furniture */
 export function getCachedFurniture(): Map<string, LoadedFurnitureItem> {
   return cachedFurniture;
+}
+
+/** Access a composed character portrait by agent ID */
+export function getComposedPortrait(agentId: string): HTMLCanvasElement | null {
+  return cachedComposed.get(agentId)?.portrait ?? null;
+}
+
+/** Get the composed character for a specific agent */
+export function getComposedCharacter(agentId: string): ComposedCharacter | null {
+  return cachedComposed.get(agentId) ?? null;
+}
+
+/**
+ * Recompose a single agent's character (e.g. after recipe change).
+ * Returns the new LoadedCharacter for engine update.
+ */
+export function recomposeAgent(agentId: string, recipe: CharacterRecipe): LoadedCharacter | null {
+  try {
+    const composed = composeCharacter(recipe);
+    cachedComposed.set(agentId, composed);
+    return composedToLoaded(composed);
+  } catch (err) {
+    console.error(`[SpriteLoader] Failed to recompose ${agentId}:`, err);
+    return null;
+  }
 }
