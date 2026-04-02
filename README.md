@@ -38,8 +38,9 @@ The app runs at `http://localhost:5173` with the backend API on port 3001.
 ### Requirements
 
 - **Node.js** 20+
-- **OpenClaw** running locally (for live agent data; works in demo mode without it)
-- **OpenClaw CLI** available in PATH (for `openclaw sessions` polling)
+- **One of:**
+  - **OpenClaw** running locally with CLI in PATH (for `cli`/`auto` data mode)
+  - **Ingest API** — set `DATA_SOURCE=ingest` + `INGEST_API_TOKEN` and push data from a collector script on the OpenClaw host
 
 ### Demo Mode
 
@@ -80,20 +81,43 @@ Click **📐 Layouts** to manage saved layouts:
 
 ## Architecture
 
+### Data Source Modes
+
+The server supports three modes for getting agent data, controlled by the `DATA_SOURCE` env var:
+
+| Mode | `DATA_SOURCE` | How it works |
+|------|--------------|--------------|
+| **Auto** (default) | `auto` | Tries CLI polling; if `openclaw` is not found and `INGEST_API_TOKEN` is set, switches to ingest-only |
+| **CLI Poll** | `cli` | Polls `openclaw sessions` locally every 3 seconds (requires OpenClaw on the same machine) |
+| **Ingest** | `ingest` | Accepts pushed data via `POST /api/ingest/agents` — no local OpenClaw needed |
+
+#### Mode 1: Same machine as OpenClaw (CLI Poll)
+
 ```
 Browser                          Server                     OpenClaw
 ┌──────────────┐   HTTP/WS   ┌──────────────┐   CLI poll   ┌──────────────┐
 │ React 19     │◄───────────►│ Express      │◄────────────►│ Gateway      │
 │ Canvas 2D    │             │ Socket.IO    │   (3s)       │ Sessions API │
 │ GameEngine   │             │ Layout API   │              └──────────────┘
-│ SpriteLoader │             │ Agent Prefs  │
 └──────────────┘             └──────────────┘
-       │                            │
-   assets/                      data/
-   characters/                  layouts/*.json
-   furniture/                   agent-prefs.json
-   floors/
 ```
+
+Just run it on the same machine as OpenClaw. No extra configuration needed.
+
+#### Mode 2: Separate server (Ingest via Collector)
+
+```
+┌─────────────────────┐         every 15s          ┌──────────────────┐
+│  OpenClaw Server     │ ──── collector script ───→ │  Your Server     │
+│  (has openclaw CLI)  │    token-authenticated     │  (pixel-agents)  │
+│                      │    POST /api/ingest/agents │                  │
+└─────────────────────┘                            └──────────────────┘
+```
+
+1. Set `DATA_SOURCE=ingest` and `INGEST_API_TOKEN=<secret>` on the pixel-agents server
+2. Install the [openclaw-ops-dashboard](https://github.com/SweetSophia/openclaw-ops-dashboard) collector on the OpenClaw machine
+3. Configure `.env.collector` with `PIXEL_AGENTS_URL` and `PIXEL_INGEST_TOKEN`
+4. Enable the `openclaw-pixel-collector` systemd timer
 
 ### Key Components
 
@@ -160,9 +184,14 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `PORT` | `3001` | Backend server port |
-| `OPENCLAW_CLI` | `openclaw` | Path to OpenClaw CLI binary |
-| `POLL_INTERVAL` | `3000` | Agent state poll interval (ms) |
+| `PORT` | `3001` | Backend server port (`3000` in production) |
+| `DATA_SOURCE` | `auto` | Data mode: `auto`, `cli` (local polling), or `ingest` (push-based) |
+| `OPENCLAW_CLI` | `openclaw` | Path to OpenClaw CLI binary (cli mode only) |
+| `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
+| `ACTIVE_MINUTES` | `30` | Session staleness threshold |
+| `INGEST_API_TOKEN` | *(none)* | Shared secret for ingest API auth (required for ingest mode) |
+| `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
+| `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
 
 ## Scripts
 

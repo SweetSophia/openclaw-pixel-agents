@@ -39,6 +39,14 @@ const PERSIST_PATH = join(DATA_DIR, "agent-prefs.json");
 /** Base directory for OpenClaw agent session transcripts */
 const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "/root", ".openclaw", "agents");
 
+/**
+ * Data source mode:
+ *   "auto"    — try CLI polling; if openclaw not found and ingest token is set, use ingest-only
+ *   "cli"     — always poll via local openclaw CLI (original behavior)
+ *   "ingest"  — only accept pushed data via the ingest API (no local CLI needed)
+ */
+const DATA_SOURCE = (process.env.DATA_SOURCE || "auto").toLowerCase() as "auto" | "cli" | "ingest";
+
 // ---- Known agents from config ----
 
 interface KnownAgent {
@@ -579,15 +587,16 @@ app.get("/api/agents", (_req, res) => {
 
 app.get("/api/status", (_req, res) => {
   const agents = Array.from(agentStates.values());
+  const effectiveSource = useCli && !ingestExplicit ? "cli-poll" : "ingest";
   res.json({
     connected: true,
     agentCount: agents.length,
     activeCount: agents.filter((a) => a.active).length,
     uptime: process.uptime(),
-    dataSource: INGEST_TOKEN
-      ? (lastIngestAt > 0 ? "ingest" : "cli-poll")
-      : "cli-poll",
+    dataSource: lastIngestAt > 0 ? "ingest" : effectiveSource,
+    dataSourceConfig: DATA_SOURCE,
     lastIngestAt: lastIngestAt || null,
+    cliPolling: useCli && !ingestExplicit,
   });
 });
 
@@ -936,13 +945,23 @@ app.get("*", (_req, res) => {
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 
+// Determine effective data source
+const hasIngestToken = !!INGEST_TOKEN;
+const cliExplicit = DATA_SOURCE === "cli";
+const ingestExplicit = DATA_SOURCE === "ingest";
+const useCli = cliExplicit || (DATA_SOURCE === "auto" && !ingestExplicit);
+
 server.listen(PORT, () => {
   console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);
-  console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
+  console.log(`📊 Data source: ${DATA_SOURCE} (effective: ${useCli && !ingestExplicit ? "cli-poll" : "ingest-only"})`);
 
-  // Initial poll + interval
-  pollAndBroadcast();
-  setInterval(pollAndBroadcast, POLL_INTERVAL);
+  if (useCli && !ingestExplicit) {
+    console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
+    pollAndBroadcast();
+    setInterval(pollAndBroadcast, POLL_INTERVAL);
+  } else {
+    console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
+  }
 });
 
 export { app, server, io };
