@@ -25,12 +25,16 @@ const io = new SocketIOServer(server, {
 
 app.use(express.json());
 
+// Serve built frontend in production (Vite output is in dist/ at project root)
+const FRONTEND_DIR = join(__dirname, "..", "..");
+app.use(express.static(FRONTEND_DIR));
+
 // ---- Configuration ----
 
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || "3000", 10);
 const ACTIVE_THRESHOLD_MIN = parseInt(process.env.ACTIVE_MINUTES || "30", 10);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
-const DATA_DIR = process.env.DATA_DIR || join(dirname(import.meta.dirname || __dirname), "data");
+const DATA_DIR = process.env.DATA_DIR || join(__dirname, "data");
 const PERSIST_PATH = join(DATA_DIR, "agent-prefs.json");
 /** Base directory for OpenClaw agent session transcripts */
 const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "/root", ".openclaw", "agents");
@@ -869,6 +873,16 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log("[ws] Client disconnected:", socket.id);
   });
+});
+
+// SPA fallback: serve index.html for any non-API/non-asset route
+app.get("*", (_req, res) => {
+  const indexPath = join(FRONTEND_DIR, "index.html");
+  if (existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send("Not found");
+  }
 });
 
 // ---- Start ----
