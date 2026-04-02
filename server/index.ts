@@ -574,6 +574,8 @@ app.post("/api/ingest/agents", (req, res) => {
   // Map and broadcast
   const agentList = mapToAgentStates(sessions as CliSession[]);
   lastIngestAt = Date.now();
+  console.log(`[ingest] ${agentList.length} agents updated (${sessions.length} sessions)`);
+  io.emit("agents:update", agentList);
   res.json({ ok: true, agents: agentList.length, received: sessions.length });
 });
 
