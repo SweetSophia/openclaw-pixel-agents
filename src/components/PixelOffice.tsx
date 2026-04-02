@@ -93,8 +93,11 @@ export const PixelOffice: React.FC<Props> = ({
     const agentIds = agents.map(a => a.id);
     const activeIds = agents.filter(a => a.pixelEnabled).map(a => a.id);
 
+    // Remove characters no longer in this room's agent list (handles room switches)
     for (const id of currentIds) {
-      if (agentIds.includes(id) && !activeIds.includes(id)) engine.removeCharacter(id);
+      if (!agentIds.includes(id) || !activeIds.includes(id)) {
+        engine.removeCharacter(id);
+      }
     }
 
     for (const agent of agents) {
