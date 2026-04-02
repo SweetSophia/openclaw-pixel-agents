@@ -528,6 +528,49 @@ async function pollAndBroadcast(): Promise<void> {
   }
 }
 
+// ---- Ingest API (receives data from OpenClaw host collector) ----
+
+const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
+
+function authenticateIngest(req: express.Request, res: express.Response): boolean {
+  if (!INGEST_TOKEN) return false; // no token configured = ingest disabled
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith("Bearer ")) return false;
+  return auth.slice(7) === INGEST_TOKEN;
+}
+
+/**
+ * POST /api/ingest/agents
+ *
+ * Accepts agent session data pushed from the OpenClaw host via the collector script.
+ * Payload: { sessions: CliSession[], generatedAt: string }
+ *
+ * When valid ingest data arrives, it replaces the CLI-poll result and broadcasts.
+ */
+app.post("/api/ingest/agents", (req, res) => {
+  if (!INGEST_TOKEN) {
+    res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
+    return;
+  }
+  if (!authenticateIngest(req, res)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const { sessions } = req.body;
+  if (!Array.isArray(sessions)) {
+    res.status(400).json({ error: "Missing or invalid 'sessions' array" });
+    return;
+  }
+
+  // Map and broadcast
+  const agentList = mapToAgentStates(sessions as CliSession[]);
+  lastIngestAt = Date.now();
+  res.json({ ok: true, agents: agentList.length, received: sessions.length });
+});
+
+let lastIngestAt = 0;
+
 // ---- REST API ----
 
 app.get("/api/agents", (_req, res) => {
@@ -541,6 +584,10 @@ app.get("/api/status", (_req, res) => {
     agentCount: agents.length,
     activeCount: agents.filter((a) => a.active).length,
     uptime: process.uptime(),
+    dataSource: INGEST_TOKEN
+      ? (lastIngestAt > 0 ? "ingest" : "cli-poll")
+      : "cli-poll",
+    lastIngestAt: lastIngestAt || null,
   });
 });
 
