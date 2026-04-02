@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { AgentState } from '../../shared/types';
+import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
 
 const API_BASE = '/api';
@@ -109,11 +109,33 @@ export function useAgentStore() {
     || (a.roomId == null && activeRoomId === 'office')
   );
 
+  /** Update character recipe (paperdoll body/hair/outfit) for an agent */
+  const updateRecipe = useCallback(async (agentId: string, recipe: CharacterRecipe) => {
+    try {
+      const res = await fetch(`${API_BASE}/agents/${agentId}/recipe`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(recipe),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      // Optimistic update
+      setAgents(prev => prev.map(a =>
+        a.id === agentId ? { ...a, recipe } : a
+      ));
+    } catch (err) {
+      console.error('Failed to update recipe:', err);
+      throw err;
+    }
+  }, []);
+
   useEffect(() => {
     fetchAgents();
     const interval = setInterval(fetchAgents, 2000);
     return () => clearInterval(interval);
   }, [fetchAgents]);
 
-  return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
+  return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
 }

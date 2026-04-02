@@ -12,7 +12,7 @@ import type { PlacedFurniture } from '../shared/types';
 import './App.css';
 
 export const App: React.FC = () => {
-  const { agents, connected, toggleAgent, toggleAll, updateTags, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
+  const { agents, connected, toggleAgent, toggleAll, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
   const {
     layouts, activeLayout, catalog,
     loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
@@ -138,6 +138,7 @@ export const App: React.FC = () => {
           onToggleAll={toggleAll}
           onSelectAgent={setSelectedAgentId}
           onUpdateTags={updateTags}
+          onUpdateRecipe={updateRecipe}
         />
       </main>
       <AgentDetailPanel

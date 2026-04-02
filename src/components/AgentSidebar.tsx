@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import type { AgentState, AgentActivity, AgentTag } from '../../shared/types';
+import type { AgentState, AgentActivity, AgentTag, CharacterRecipe } from '../../shared/types';
 import { TAG_COLORS } from '../../shared/types';
 import { TagEditor } from './TagEditor';
+import { CharacterCustomizer } from './CharacterCustomizer';
 import './AgentSidebar.css';
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
   onToggleAll: (enabled: boolean) => void;
   onSelectAgent?: (agentId: string) => void;
   onUpdateTags?: (agentId: string, tags: AgentTag[]) => Promise<void>;
+  onUpdateRecipe?: (agentId: string, recipe: CharacterRecipe) => Promise<void>;
 }
 
 const activityIcons: Record<AgentActivity, string> = {
@@ -34,10 +36,11 @@ const activityColors: Record<AgentActivity, string> = {
   error: '#dc3545',
 };
 
-export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, onSelectAgent, onUpdateTags }) => {
+export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, onSelectAgent, onUpdateTags, onUpdateRecipe }) => {
   const enabledCount = agents.filter(a => a.pixelEnabled).length;
   const activeCount = agents.filter(a => a.active).length;
   const [tagEditorAgent, setTagEditorAgent] = useState<AgentState | null>(null);
+  const [customizerAgent, setCustomizerAgent] = useState<AgentState | null>(null);
 
   return (
     <aside className="agent-sidebar">
@@ -109,16 +112,32 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                   >
                     ✏️
                   </button>
+                  <button
+                    className="tag-edit-btn"
+                    onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
+                    title="Customize appearance"
+                  >
+                    🎨
+                  </button>
                 </div>
               )}
               {(!agent.tags || agent.tags.length === 0) && (
-                <button
-                  className="tag-add-btn"
-                  onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
-                  title="Add tags"
-                >
-                  + tags
-                </button>
+                <div className="agent-tags">
+                  <button
+                    className="tag-add-btn"
+                    onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
+                    title="Add tags"
+                  >
+                    + tags
+                  </button>
+                  <button
+                    className="tag-edit-btn"
+                    onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
+                    title="Customize appearance"
+                  >
+                    🎨
+                  </button>
+                </div>
               )}
             </div>
           );
@@ -139,6 +158,15 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
           currentTags={tagEditorAgent.tags || []}
           onUpdateTags={onUpdateTags}
           onClose={() => setTagEditorAgent(null)}
+        />
+      )}
+      {customizerAgent && onUpdateRecipe && (
+        <CharacterCustomizer
+          agentId={customizerAgent.id}
+          agentName={customizerAgent.name}
+          currentRecipe={customizerAgent.recipe || { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 }}
+          onUpdateRecipe={onUpdateRecipe}
+          onClose={() => setCustomizerAgent(null)}
         />
       )}
     </aside>
