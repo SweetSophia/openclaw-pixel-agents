@@ -15,8 +15,7 @@ import { stat as statAsync } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { ALL_TAGS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
-import { DEFAULT_ROOMS } from "../shared/types";
+import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 
 const app = express();
 const server = createServer(app);
@@ -43,7 +42,7 @@ interface KnownAgent {
   name: string;
   pixelEnabled: boolean;
   characterSpriteId?: string;
-  tags: string[];
+  tags: AgentTag[];
 }
 
 /** Default agent definitions */
@@ -61,14 +60,14 @@ function defaultRegistry(): Map<string, KnownAgent> {
 }
 
 /** Load persisted agent preferences (pixelEnabled, spriteId, tags) from disk */
-function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: string[] }> {
+function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[] }> {
   try {
     if (!existsSync(PERSIST_PATH)) return new Map();
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
-    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: string[] }>();
+    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[] }>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as { pixelEnabled?: boolean; characterSpriteId?: string; tags?: string[] });
+      map.set(k, v as { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[] });
     }
     return map;
   } catch {
@@ -79,7 +78,7 @@ function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSp
 /** Save agent preferences to disk */
 function savePersistedPrefs() {
   try {
-    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string; tags: string[] }> = {};
+    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string; tags: AgentTag[] }> = {};
     for (const [id, agent] of AGENT_REGISTRY) {
       prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags };
     }
@@ -107,10 +106,10 @@ for (const [id, prefs] of savedPrefs) {
 const rooms: Room[] = [...DEFAULT_ROOMS];
 
 /** Determine which room an agent should be in based on their first tag */
-function resolveRoom(agentTags: string[]): string {
+function resolveRoom(agentTags: AgentTag[]): string {
   if (agentTags.length === 0) return "office"; // default
 
-  const firstTag = agentTags[0] as AgentTag;
+  const firstTag = agentTags[0];
   // Check primary tag match
   const primaryMatch = rooms.find(r => r.primaryTag === firstTag);
   if (primaryMatch) return primaryMatch.id;
@@ -581,14 +580,13 @@ app.post("/api/agents/:id/sprite", (req, res) => {
 
 /** Get all available tags */
 app.get("/api/tags", (_req, res) => {
-  const { ALL_TAGS, TAG_COLORS } = require("../shared/types");
   res.json({ tags: ALL_TAGS, colors: TAG_COLORS });
 });
 
 /** Update tags for an agent */
 app.put("/api/agents/:id/tags", (req, res) => {
   const { id } = req.params;
-  const { tags } = req.body as { tags: string[] };
+  const { tags } = req.body as { tags: AgentTag[] };
 
   if (!Array.isArray(tags)) {
     return res.status(400).json({ error: "tags must be an array of strings" });
@@ -628,11 +626,20 @@ app.put("/api/agents/:id/tags", (req, res) => {
 
 /** Get all rooms */
 app.get("/api/rooms", (_req, res) => {
-  // Attach live agent counts per room
+  // Single-pass: build room stats from agentStates once
+  const stats = new Map<string, { agentCount: number; activeCount: number }>();
+  for (const a of agentStates.values()) {
+    if (!a.pixelEnabled) continue;
+    const rid = a.roomId ?? "office";
+    const s = stats.get(rid) ?? { agentCount: 0, activeCount: 0 };
+    s.agentCount++;
+    if (a.active) s.activeCount++;
+    stats.set(rid, s);
+  }
   const roomsWithCounts = rooms.map(room => ({
     ...room,
-    agentCount: Array.from(agentStates.values()).filter(a => a.roomId === room.id && a.pixelEnabled).length,
-    activeCount: Array.from(agentStates.values()).filter(a => a.roomId === room.id && a.active && a.pixelEnabled).length,
+    agentCount: stats.get(room.id)?.agentCount ?? 0,
+    activeCount: stats.get(room.id)?.activeCount ?? 0,
   }));
   res.json({ rooms: roomsWithCounts });
 });

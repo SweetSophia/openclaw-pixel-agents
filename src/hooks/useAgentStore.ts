@@ -80,26 +80,33 @@ export function useAgentStore() {
     }
   }, [fetchAgents]);
 
-  /** Update tags for an agent */
-  const updateTags = useCallback(async (agentId: string, tags: string[]) => {
+  /** Update tags for an agent — only mutates local state on server success */
+  const updateTags = useCallback(async (agentId: string, tags: AgentTag[]) => {
     try {
-      await fetch(`${API_BASE}/agents/${agentId}/tags`, {
+      const res = await fetch(`${API_BASE}/agents/${agentId}/tags`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tags }),
       });
-      // Optimistic update
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      // Only mutate local state after server confirms success
       setAgents(prev => prev.map(a =>
         a.id === agentId ? { ...a, tags } : a
       ));
     } catch (err) {
       console.error('Failed to update tags:', err);
-      fetchAgents();
+      throw err; // re-throw so caller (TagEditor) can display the error
     }
-  }, [fetchAgents]);
+  }, []);
 
   /** Filter agents visible in the current room */
-  const roomAgents = agents.filter(a => a.roomId === activeRoomId || !a.roomId);
+  const roomAgents = agents.filter(a =>
+    a.roomId === activeRoomId
+    || (a.roomId == null && activeRoomId === 'office')
+  );
 
   useEffect(() => {
     fetchAgents();

@@ -39,7 +39,7 @@ export interface AgentState {
   /** Whether pixel visualization is enabled for this agent */
   pixelEnabled: boolean;
   /** User-assigned tags for room routing and categorization */
-  tags: string[];
+  tags: AgentTag[];
   /** Current room ID (set by server based on tag routing) */
   roomId?: string;
   /** Sub-agents spawned by this agent */

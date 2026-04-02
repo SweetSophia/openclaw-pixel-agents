@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../hooks/useAgentStore';
+import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
 import './TagEditor.css';
 
 interface Props {
   agentId: string;
   agentName: string;
-  currentTags: string[];
-  onUpdateTags: (agentId: string, tags: string[]) => Promise<void>;
+  currentTags: AgentTag[];
+  onUpdateTags: (agentId: string, tags: AgentTag[]) => Promise<void>;
   onClose: () => void;
 }
 
 export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, onUpdateTags, onClose }) => {
-  const [selectedTags, setSelectedTags] = useState<string[]>([...currentTags]);
+  const [selectedTags, setSelectedTags] = useState<AgentTag[]>([...currentTags]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +37,7 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const toggleTag = (tag: string) => {
+  const toggleTag = (tag: AgentTag) => {
     setSelectedTags(prev => {
       if (prev.includes(tag)) {
         return prev.filter(t => t !== tag);
@@ -70,8 +70,8 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
                 key={tag}
                 className={`tag-chip ${isSelected ? 'selected' : ''} ${isFirst ? 'primary' : ''}`}
                 style={{
-                  borderColor: isSelected ? TAG_COLORS[tag as AgentTag] : '#333',
-                  backgroundColor: isSelected ? TAG_COLORS[tag as AgentTag] + '20' : 'transparent',
+                  borderColor: isSelected ? TAG_COLORS[tag] : '#333',
+                  backgroundColor: isSelected ? TAG_COLORS[tag] + '20' : 'transparent',
                 }}
                 onClick={() => toggleTag(tag)}
               >
@@ -87,7 +87,7 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
             selectedTags.map((tag, i) => (
               <span key={tag} className="tag-order-item">
                 {i === 0 ? '→' : '+'}
-                <span style={{ color: TAG_COLORS[tag as AgentTag] }}>{tag}</span>
+                <span style={{ color: TAG_COLORS[tag] }}>{tag}</span>
               </span>
             ))
           ) : (

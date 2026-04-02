@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { AgentState, AgentActivity, AgentTag } from '../../shared/types';
-import { TAG_COLORS } from '../hooks/useAgentStore';
+import { TAG_COLORS } from '../../shared/types';
 import { TagEditor } from './TagEditor';
 import './AgentSidebar.css';
 
@@ -9,7 +9,7 @@ interface Props {
   onToggle: (agentId: string, enabled: boolean) => void;
   onToggleAll: (enabled: boolean) => void;
   onSelectAgent?: (agentId: string) => void;
-  onUpdateTags?: (agentId: string, tags: string[]) => Promise<void>;
+  onUpdateTags?: (agentId: string, tags: AgentTag[]) => Promise<void>;
 }
 
 const activityIcons: Record<AgentActivity, string> = {
