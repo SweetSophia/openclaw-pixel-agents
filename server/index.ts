@@ -15,7 +15,7 @@ import { stat as statAsync } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { AgentState, AgentActivity, SubAgentInfo, TickerMessage, Room, AgentTag } from "../shared/types";
+import { ALL_TAGS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 import { DEFAULT_ROOMS } from "../shared/types";
 
 const app = express();
@@ -56,7 +56,7 @@ function defaultRegistry(): Map<string, KnownAgent> {
     ["descartes",  { id: "descartes",  name: "Descartes",   pixelEnabled: true, tags: ["research", "analysis"] }],
     ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis",  pixelEnabled: true, tags: ["coding", "logic"] }],
     ["cylena",     { id: "cylena",     name: "Cylena",      pixelEnabled: true, tags: ["coding", "frontend"] }],
-    ["cybera",     { id: "cybera",     name: "Cybera",      pixelEnabled: true, tags: ["coding", "systems"] }],
+    ["cybera",     { id: "cybera",     name: "Cybera",      pixelEnabled: true, tags: ["coding", "infrastructure"] }],
   ]);
 }
 
@@ -592,6 +592,18 @@ app.put("/api/agents/:id/tags", (req, res) => {
 
   if (!Array.isArray(tags)) {
     return res.status(400).json({ error: "tags must be an array of strings" });
+  }
+
+  // Validate each tag against the known AgentTag set
+  const validTags = new Set<string>(ALL_TAGS);
+  for (const tag of tags) {
+    if (typeof tag !== "string" || !validTags.has(tag)) {
+      return res.status(400).json({ error: `Invalid tag: "${tag}". Valid tags: ${ALL_TAGS.join(", ")}` });
+    }
+  }
+
+  if (tags.length > 3) {
+    return res.status(400).json({ error: "Maximum 3 tags allowed per agent" });
   }
 
   const known = AGENT_REGISTRY.get(id);

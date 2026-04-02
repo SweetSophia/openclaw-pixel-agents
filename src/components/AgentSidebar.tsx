@@ -9,7 +9,7 @@ interface Props {
   onToggle: (agentId: string, enabled: boolean) => void;
   onToggleAll: (enabled: boolean) => void;
   onSelectAgent?: (agentId: string) => void;
-  onUpdateTags?: (agentId: string, tags: string[]) => void;
+  onUpdateTags?: (agentId: string, tags: string[]) => Promise<void>;
 }
 
 const activityIcons: Record<AgentActivity, string> = {

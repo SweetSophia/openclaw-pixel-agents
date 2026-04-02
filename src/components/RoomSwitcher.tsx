@@ -16,8 +16,8 @@ export const RoomSwitcher: React.FC<Props> = ({ activeRoomId, onRoomChange, agen
     fetch('/api/rooms')
       .then(r => r.json())
       .then(data => setRooms(data.rooms || []))
-      .catch(() => {});
-  }, [agents]);
+      .catch((err) => console.error('[RoomSwitcher] Failed to fetch rooms:', err));
+  }, []);
 
   return (
     <nav className="room-switcher">

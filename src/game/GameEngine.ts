@@ -1826,6 +1826,7 @@ export class GameEngine {
   removeCharacter(id: string) {
     this.characters.delete(id);
     this.idleBehaviors.delete(id);
+    this.seats.delete(id);
   }
 
   updateCharacter(id: string, updates: Partial<CharacterData>) {
