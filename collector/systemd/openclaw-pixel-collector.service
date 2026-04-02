@@ -1,0 +1,14 @@
+[Unit]
+Description=Push OpenClaw session data to pixel-agents server
+After=network.target
+
+[Service]
+Type=oneshot
+User=niya
+WorkingDirectory=/path/to/openclaw-pixel-agents
+EnvironmentFile=/path/to/openclaw-pixel-agents/collector/.env.collector
+ExecStart=/usr/bin/node collector/push-pixel-agents.mjs
+Environment=PATH=/home/niya/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/niya
+StandardOutput=journal
+StandardError=journal

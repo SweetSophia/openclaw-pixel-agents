@@ -1,0 +1,10 @@
+[Unit]
+Description=Push OpenClaw session data to pixel-agents (every 15s)
+
+[Timer]
+OnBootSec=5
+OnUnitActiveSec=15
+AccuracySec=2
+
+[Install]
+WantedBy=timers.target
