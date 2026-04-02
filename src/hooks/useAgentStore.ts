@@ -93,8 +93,9 @@ export function useAgentStore() {
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
       // Only mutate local state after server confirms success
+      const body = await res.json();
       setAgents(prev => prev.map(a =>
-        a.id === agentId ? { ...a, tags } : a
+        a.id === agentId ? { ...a, tags, roomId: body.roomId } : a
       ));
     } catch (err) {
       console.error('Failed to update tags:', err);
