@@ -42,7 +42,7 @@ export function useLayoutStore() {
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     if (!activeLayout) return;
-    const merged = { ...activeLayout, ...updates };
+    const merged = { ...activeLayout, ...updates, updatedAt: Date.now() };
     try {
       await fetch(`${API_BASE}/layouts/${merged.id}`, {
         method: 'PUT',
@@ -101,14 +101,9 @@ export function useLayoutStore() {
     setActiveLayout(prev => prev ? { ...prev, furniture } : null);
   }, [activeLayout]);
 
-  // Auto-save with debounce
-  useEffect(() => {
-    if (!activeLayout) return;
-    const timer = setTimeout(() => {
-      saveActiveLayout();
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [activeLayout?.furniture, activeLayout?.seats]);
+  // Auto-save removed — furniture is persisted only via the explicit
+  // Save button (saveActiveLayout) to avoid race conditions on initial
+  // load and StrictMode double-mounts that caused furniture to reset.
 
   // Initial load
   useEffect(() => {

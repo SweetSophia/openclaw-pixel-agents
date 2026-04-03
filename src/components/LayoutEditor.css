@@ -113,6 +113,18 @@
   gap: 8px;
 }
 
+.placement-hint.danger {
+  background: #3a1a1a;
+  border-bottom-color: #e94560;
+  color: #e94560;
+}
+
+.toolbar-btn.active.danger {
+  background: #4a1a1a;
+  border-color: #e94560;
+  color: #e94560;
+}
+
 /* Furniture palette */
 .furniture-palette {
   position: absolute;

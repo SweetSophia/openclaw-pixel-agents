@@ -8,6 +8,7 @@ import { RoomSwitcher } from './components/RoomSwitcher';
 import MessageTicker from './components/MessageTicker';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
+import { sfx } from './audio/SoundFX';
 import type { PlacedFurniture } from '../shared/types';
 import './App.css';
 
@@ -22,6 +23,7 @@ export const App: React.FC = () => {
   const [selectedFurnitureType, setSelectedFurnitureType] = useState<string | null>(null);
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [deleteMode, setDeleteMode] = useState(false);
 
   // Place new furniture
   const handlePlaceFurniture = useCallback((type: string, gridX: number, gridY: number) => {
@@ -48,11 +50,18 @@ export const App: React.FC = () => {
     updateFurniture(newFurniture);
   }, [activeLayout, updateFurniture]);
 
-  // Select furniture
+  // Select furniture (or delete in delete mode)
   const handleSelectFurniture = useCallback((id: string | null) => {
+    if (deleteMode && id && activeLayout) {
+      // In delete mode, clicking furniture deletes it immediately
+      const newFurniture = activeLayout.furniture.filter(f => f.id !== id);
+      updateFurniture(newFurniture);
+      sfx.place();
+      return;
+    }
     setSelectedFurnitureId(id);
     setSelectedFurnitureType(null);
-  }, []);
+  }, [deleteMode, activeLayout, updateFurniture]);
 
   // Rotate selected furniture
   const handleRotateFurniture = useCallback((id: string) => {
@@ -74,6 +83,19 @@ export const App: React.FC = () => {
   // Character click handler
   const handleCharacterClick = useCallback((agentId: string) => {
     setSelectedAgentId(agentId);
+  }, []);
+
+  // Toggle delete mode
+  const handleToggleDeleteMode = useCallback(() => {
+    setDeleteMode(prev => {
+      const next = !prev;
+      if (next) {
+        // Entering delete mode — clear placement and selection
+        setSelectedFurnitureType(null);
+        setSelectedFurnitureId(null);
+      }
+      return next;
+    });
   }, []);
 
   return (
@@ -108,17 +130,19 @@ export const App: React.FC = () => {
               editorMode={editorMode}
               selectedFurnitureType={selectedFurnitureType}
               selectedFurnitureId={selectedFurnitureId}
+              deleteMode={deleteMode}
               onSelectFurnitureType={setSelectedFurnitureType}
               onSelectFurnitureId={handleSelectFurniture}
               onPlaceFurniture={handlePlaceFurniture}
               onMoveFurniture={handleMoveFurniture}
               onRotateFurniture={handleRotateFurniture}
               onDeleteFurniture={handleDeleteFurniture}
+              onToggleDeleteMode={handleToggleDeleteMode}
               onSave={() => saveActiveLayout()}
               onLoad={loadLayoutById}
               onCreate={createLayout}
               onDeleteLayout={deleteLayout}
-              onToggleEditor={() => setEditorMode(false)}
+              onToggleEditor={() => { setEditorMode(false); setDeleteMode(false); }}
             />
           )}
           <PixelOffice

@@ -79,10 +79,14 @@ export const PixelOffice: React.FC<Props> = ({
   }, [selectedFurnitureType]);
 
   // Load layout data into engine
+  // Use a serialised key so moves, rotations, and deletions are all detected
+  const furnitureKey = activeLayout?.furniture
+    ? JSON.stringify(activeLayout.furniture.map(f => `${f.id}:${f.x},${f.y},${f.rotation}`))
+    : '';
   useEffect(() => {
     if (!engineRef.current || !activeLayout) return;
     engineRef.current.setLayout(activeLayout.furniture, activeLayout.seats);
-  }, [activeLayout?.id, activeLayout?.furniture?.length]);
+  }, [activeLayout?.id, furnitureKey]);
 
   // Sync agent states
   useEffect(() => {

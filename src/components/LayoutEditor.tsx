@@ -10,12 +10,14 @@ interface Props {
   editorMode: boolean;
   selectedFurnitureType: string | null;
   selectedFurnitureId: string | null;
+  deleteMode: boolean;
   onSelectFurnitureType: (type: string | null) => void;
   onSelectFurnitureId: (id: string | null) => void;
   onPlaceFurniture: (type: string, x: number, y: number) => void;
   onMoveFurniture: (id: string, x: number, y: number) => void;
   onRotateFurniture: (id: string) => void;
   onDeleteFurniture: (id: string) => void;
+  onToggleDeleteMode: () => void;
   onSave: () => void;
   onLoad: (id: string) => void;
   onCreate: (name: string) => void;
@@ -107,10 +109,12 @@ export const LayoutEditor: React.FC<Props> = ({
   editorMode,
   selectedFurnitureType,
   selectedFurnitureId,
+  deleteMode,
   onSelectFurnitureType,
   onSelectFurnitureId,
   onRotateFurniture,
   onDeleteFurniture,
+  onToggleDeleteMode,
   onSave,
   onLoad,
   onCreate,
@@ -135,6 +139,13 @@ export const LayoutEditor: React.FC<Props> = ({
           title="Furniture palette"
         >
           📦 Furniture
+        </button>
+        <button
+          className={`toolbar-btn ${deleteMode ? 'active danger' : ''}`}
+          onClick={onToggleDeleteMode}
+          title="Delete mode — click placed items to remove them"
+        >
+          🗑️ Delete
         </button>
         <button
           className={`toolbar-btn ${showLayouts ? 'active' : ''}`}
@@ -172,6 +183,14 @@ export const LayoutEditor: React.FC<Props> = ({
         <div className="placement-hint">
           Click on the office to place {FURNITURE_LABELS[selectedFurnitureType] || selectedFurnitureType}
           <button className="action-btn" onClick={() => onSelectFurnitureType(null)}>✖ Cancel</button>
+        </div>
+      )}
+
+      {/* Delete mode hint */}
+      {deleteMode && !selectedFurnitureType && (
+        <div className="placement-hint danger">
+          🗑️ Click on placed furniture to delete it
+          <button className="action-btn" onClick={onToggleDeleteMode}>✖ Cancel</button>
         </div>
       )}
 
