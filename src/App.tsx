@@ -56,7 +56,7 @@ export const App: React.FC = () => {
       // In delete mode, clicking furniture deletes it immediately
       const newFurniture = activeLayout.furniture.filter(f => f.id !== id);
       updateFurniture(newFurniture);
-      sfx.place();
+      sfx.click();
       return;
     }
     setSelectedFurnitureId(id);
