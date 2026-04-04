@@ -42,7 +42,7 @@ export function useLayoutStore() {
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     if (!activeLayout) return;
-    const merged = { ...activeLayout, ...updates };
+    const merged = { ...activeLayout, ...updates, updatedAt: Date.now() };
     try {
       await fetch(`${API_BASE}/layouts/${merged.id}`, {
         method: 'PUT',
@@ -95,20 +95,25 @@ export function useLayoutStore() {
     }
   }, []);
 
-  // Update furniture on the active layout (optimistic)
-  const updateFurniture = useCallback((furniture: PlacedFurniture[]) => {
-    if (!activeLayout) return;
-    setActiveLayout(prev => prev ? { ...prev, furniture } : null);
-  }, [activeLayout]);
+  // Update furniture on the active layout (optimistic).
+  // Accepts either a new array or a functional updater that receives the
+  // current furniture list — use the updater form for actions (like
+  // delete-mode rapid clicks) that may fire faster than React batches.
+  const updateFurniture = useCallback((
+    furnitureOrUpdater: PlacedFurniture[] | ((prev: PlacedFurniture[]) => PlacedFurniture[]),
+  ) => {
+    setActiveLayout(prev => {
+      if (!prev) return null;
+      const furniture = typeof furnitureOrUpdater === 'function'
+        ? furnitureOrUpdater(prev.furniture)
+        : furnitureOrUpdater;
+      return { ...prev, furniture };
+    });
+  }, []);
 
-  // Auto-save with debounce
-  useEffect(() => {
-    if (!activeLayout) return;
-    const timer = setTimeout(() => {
-      saveActiveLayout();
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [activeLayout?.furniture, activeLayout?.seats]);
+  // Auto-save removed — furniture is persisted only via the explicit
+  // Save button (saveActiveLayout) to avoid race conditions on initial
+  // load and StrictMode double-mounts that caused furniture to reset.
 
   // Initial load
   useEffect(() => {
