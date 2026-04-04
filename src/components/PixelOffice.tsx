@@ -7,6 +7,7 @@ import './PixelOffice.css';
 interface Props {
   agents: AgentState[];
   editorMode: boolean;
+  deleteMode: boolean;
   activeLayout: LayoutDoc | null;
   selectedFurnitureType: string | null;
   onPlaceFurniture: (type: string, gridX: number, gridY: number) => void;
@@ -27,7 +28,7 @@ function activityToAnimState(activity: AgentActivity): string {
 }
 
 export const PixelOffice: React.FC<Props> = ({
-  agents, editorMode, activeLayout,
+  agents, editorMode, deleteMode, activeLayout,
   selectedFurnitureType,
   onPlaceFurniture, onSelectFurniture, onMoveFurniture,
   onCharacterClick,
@@ -73,20 +74,28 @@ export const PixelOffice: React.FC<Props> = ({
     engineRef.current?.setEditorMode(editorMode);
   }, [editorMode]);
 
+  // Sync delete mode into engine so it can suppress drag/pickup SFX
+  useEffect(() => {
+    engineRef.current?.setDeleteMode(deleteMode);
+  }, [deleteMode]);
+
   // Sync selected furniture type
   useEffect(() => {
     engineRef.current?.setSelectedFurnitureType(selectedFurnitureType);
   }, [selectedFurnitureType]);
 
   // Load layout data into engine
-  // Use a serialised key so moves, rotations, and deletions are all detected
+  // Use serialised keys so moves, rotations, deletions, and seat changes are all detected
   const furnitureKey = activeLayout?.furniture
     ? JSON.stringify(activeLayout.furniture.map(f => `${f.id}:${f.x},${f.y},${f.rotation}`))
+    : '';
+  const seatsKey = activeLayout?.seats
+    ? JSON.stringify(activeLayout.seats)
     : '';
   useEffect(() => {
     if (!engineRef.current || !activeLayout) return;
     engineRef.current.setLayout(activeLayout.furniture, activeLayout.seats);
-  }, [activeLayout?.id, furnitureKey]);
+  }, [activeLayout?.id, furnitureKey, seatsKey]);
 
   // Sync agent states
   useEffect(() => {

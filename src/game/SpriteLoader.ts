@@ -252,6 +252,11 @@ export async function loadFurniture(
       if (!primaryFile) continue;
 
       const bitmap = await loadPng(`${basePath}${type}/${primaryFile}`, signal);
+
+      // Guard dimensions — if manifest/leaf omits width/height, derive from bitmap
+      if (!fw) fw = bitmap.width;
+      if (!fh) fh = bitmap.height;
+
       cachedFurniture.set(type, {
         id: type,
         canvas: sliceFrame(bitmap, 0, 0, fw, fh),

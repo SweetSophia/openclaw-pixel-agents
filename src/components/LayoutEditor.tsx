@@ -143,6 +143,7 @@ export const LayoutEditor: React.FC<Props> = ({
         <button
           className={`toolbar-btn ${deleteMode ? 'active danger' : ''}`}
           onClick={onToggleDeleteMode}
+          aria-pressed={deleteMode}
           title="Delete mode — click placed items to remove them"
         >
           🗑️ Delete

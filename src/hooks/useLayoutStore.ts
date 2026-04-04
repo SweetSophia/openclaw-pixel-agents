@@ -95,11 +95,21 @@ export function useLayoutStore() {
     }
   }, []);
 
-  // Update furniture on the active layout (optimistic)
-  const updateFurniture = useCallback((furniture: PlacedFurniture[]) => {
-    if (!activeLayout) return;
-    setActiveLayout(prev => prev ? { ...prev, furniture } : null);
-  }, [activeLayout]);
+  // Update furniture on the active layout (optimistic).
+  // Accepts either a new array or a functional updater that receives the
+  // current furniture list — use the updater form for actions (like
+  // delete-mode rapid clicks) that may fire faster than React batches.
+  const updateFurniture = useCallback((
+    furnitureOrUpdater: PlacedFurniture[] | ((prev: PlacedFurniture[]) => PlacedFurniture[]),
+  ) => {
+    setActiveLayout(prev => {
+      if (!prev) return null;
+      const furniture = typeof furnitureOrUpdater === 'function'
+        ? furnitureOrUpdater(prev.furniture)
+        : furnitureOrUpdater;
+      return { ...prev, furniture };
+    });
+  }, []);
 
   // Auto-save removed — furniture is persisted only via the explicit
   // Save button (saveActiveLayout) to avoid race conditions on initial

@@ -207,6 +207,7 @@ export class GameEngine {
 
   // Editor state
   private editorMode = false;
+  private deleteMode = false;
   private selectedFurnitureType: string | null = null;
   private selectedFurnitureId: string | null = null;
   private dragging: { id: string; offsetX: number; offsetY: number } | null = null;
@@ -1307,9 +1308,11 @@ export class GameEngine {
     if (this.editorMode) {
       this.canvas.style.cursor = this.selectedFurnitureType
         ? 'crosshair'
-        : this.findFurnitureAt(gridX, gridY)
-          ? (this.dragging ? 'grabbing' : 'grab')
-          : 'default';
+        : this.deleteMode && this.findFurnitureAt(gridX, gridY)
+          ? 'pointer'
+          : this.findFurnitureAt(gridX, gridY)
+            ? (this.dragging ? 'grabbing' : 'grab')
+            : 'default';
     } else {
       // Non-editor: pointer on character hover, crosshair if agent is selected
       if (this.selectedAgentId) {
@@ -1331,6 +1334,11 @@ export class GameEngine {
       }
       const hit = this.findFurnitureAt(gridX, gridY);
       if (hit) {
+        if (this.deleteMode) {
+          // In delete mode: just notify React, skip drag/pickup
+          this.editorCallbacks?.onSelectFurniture(hit.id);
+          return;
+        }
         this.selectedFurnitureId = hit.id;
         this.editorCallbacks?.onSelectFurniture(hit.id);
         this.dragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
@@ -1446,9 +1454,14 @@ export class GameEngine {
       } else {
         const hit = this.findFurnitureAt(gridX, gridY);
         if (hit) {
-          this.touchDragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
-          this.selectedFurnitureId = hit.id;
-          this.editorCallbacks?.onSelectFurniture(hit.id);
+          if (this.deleteMode) {
+            // In delete mode: just notify React, skip drag
+            this.editorCallbacks?.onSelectFurniture(hit.id);
+          } else {
+            this.touchDragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
+            this.selectedFurnitureId = hit.id;
+            this.editorCallbacks?.onSelectFurniture(hit.id);
+          }
         }
       }
     }
@@ -1937,6 +1950,7 @@ export class GameEngine {
 
   setEditorCallbacks(cb: EditorCallbacks) { this.editorCallbacks = cb; }
   setGameCallbacks(cb: GameCallbacks) { this.gameCallbacks = cb; }
+  setDeleteMode(enabled: boolean) { this.deleteMode = enabled; }
   setSelectedFurnitureType(type: string | null) { this.selectedFurnitureType = type; this.selectedFurnitureId = null; }
   setSelectedFurnitureId(id: string | null) { this.selectedFurnitureId = id; this.selectedFurnitureType = null; }
 

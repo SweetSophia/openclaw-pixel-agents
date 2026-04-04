@@ -52,16 +52,16 @@ export const App: React.FC = () => {
 
   // Select furniture (or delete in delete mode)
   const handleSelectFurniture = useCallback((id: string | null) => {
-    if (deleteMode && id && activeLayout) {
-      // In delete mode, clicking furniture deletes it immediately
-      const newFurniture = activeLayout.furniture.filter(f => f.id !== id);
-      updateFurniture(newFurniture);
+    if (deleteMode && id) {
+      // In delete mode, clicking furniture deletes it immediately.
+      // Use functional updater so rapid clicks always read the latest list.
+      updateFurniture(prev => prev.filter(f => f.id !== id));
       sfx.click();
       return;
     }
     setSelectedFurnitureId(id);
     setSelectedFurnitureType(null);
-  }, [deleteMode, activeLayout, updateFurniture]);
+  }, [deleteMode, updateFurniture]);
 
   // Rotate selected furniture
   const handleRotateFurniture = useCallback((id: string) => {
@@ -131,7 +131,10 @@ export const App: React.FC = () => {
               selectedFurnitureType={selectedFurnitureType}
               selectedFurnitureId={selectedFurnitureId}
               deleteMode={deleteMode}
-              onSelectFurnitureType={setSelectedFurnitureType}
+              onSelectFurnitureType={(type) => {
+                setDeleteMode(false);
+                setSelectedFurnitureType(type);
+              }}
               onSelectFurnitureId={handleSelectFurniture}
               onPlaceFurniture={handlePlaceFurniture}
               onMoveFurniture={handleMoveFurniture}
@@ -148,6 +151,7 @@ export const App: React.FC = () => {
           <PixelOffice
             agents={roomAgents}
             editorMode={editorMode}
+            deleteMode={deleteMode}
             activeLayout={activeLayout}
             selectedFurnitureType={selectedFurnitureType}
             onPlaceFurniture={handlePlaceFurniture}
