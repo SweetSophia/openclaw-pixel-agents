@@ -786,8 +786,8 @@ function listLayouts(): OfficeLayoutDoc[] {
 }
 
 /** Validate layout ID to prevent path traversal attacks */
-function isValidLayoutId(id: string): boolean {
-  return /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 64;
+function isValidLayoutId(id: unknown): boolean {
+  return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 64;
 }
 
 function loadLayout(id: string): OfficeLayoutDoc | null {
