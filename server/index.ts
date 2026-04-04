@@ -773,10 +773,13 @@ function listLayouts(): OfficeLayoutDoc[] {
   ensureLayoutsDir();
   try {
     const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
-    return files.map(f => {
-      const raw = readFileSync(join(LAYOUTS_DIR, f), "utf-8");
-      return JSON.parse(raw) as OfficeLayoutDoc;
-    }).sort((a, b) => b.updatedAt - a.updatedAt);
+    return files
+      .map(f => {
+        const raw = readFileSync(join(LAYOUTS_DIR, f), "utf-8");
+        return JSON.parse(raw) as OfficeLayoutDoc;
+      })
+      .filter(layout => isValidLayoutId(layout.id)) // Only return layouts with valid IDs
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {
     return [];
   }
@@ -918,7 +921,10 @@ app.delete("/api/layouts/:id", (req, res) => {
     return res.status(403).json({ error: "Cannot delete default layout" });
   }
   const ok = deleteLayout(id);
-  res.json({ success: ok });
+  if (!ok) {
+    return res.status(404).json({ error: "Layout not found" });
+  }
+  res.json({ success: true });
 });
 
 // Furniture catalog (what types are available)
