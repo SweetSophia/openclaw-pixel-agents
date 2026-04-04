@@ -97,6 +97,8 @@ export const CharacterCustomizer: React.FC<Props> = ({
         previewCtx.drawImage(hairImg, srcX + cropX, recipe.hairIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
 
       } catch (err) {
+        if (cancelled) return;
+
         // Preview failed — draw fallback
         previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
         previewCtx.fillStyle = '#1a1a2e';
