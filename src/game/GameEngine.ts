@@ -1306,13 +1306,14 @@ export class GameEngine {
       }
     }
     if (this.editorMode) {
-      this.canvas.style.cursor = this.selectedFurnitureType
-        ? 'crosshair'
-        : this.deleteMode && this.findFurnitureAt(gridX, gridY)
-          ? 'pointer'
-          : this.findFurnitureAt(gridX, gridY)
-            ? (this.dragging ? 'grabbing' : 'grab')
-            : 'default';
+      if (this.selectedFurnitureType) {
+        this.canvas.style.cursor = 'crosshair';
+      } else {
+        const overFurniture = this.findFurnitureAt(gridX, gridY);
+        this.canvas.style.cursor = overFurniture
+          ? (this.deleteMode ? 'pointer' : this.dragging ? 'grabbing' : 'grab')
+          : 'default';
+      }
     } else {
       // Non-editor: pointer on character hover, crosshair if agent is selected
       if (this.selectedAgentId) {
