@@ -782,7 +782,13 @@ function listLayouts(): OfficeLayoutDoc[] {
   }
 }
 
+/** Validate layout ID to prevent path traversal attacks */
+function isValidLayoutId(id: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 64;
+}
+
 function loadLayout(id: string): OfficeLayoutDoc | null {
+  if (!isValidLayoutId(id)) return null;
   try {
     const raw = readFileSync(join(LAYOUTS_DIR, `${id}.json`), "utf-8");
     return JSON.parse(raw) as OfficeLayoutDoc;
@@ -792,12 +798,14 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
 }
 
 function saveLayout(layout: OfficeLayoutDoc): void {
+  if (!isValidLayoutId(layout.id)) throw new Error(`Invalid layout ID: ${layout.id}`);
   ensureLayoutsDir();
   layout.updatedAt = Date.now();
   writeFileSync(join(LAYOUTS_DIR, `${layout.id}.json`), JSON.stringify(layout, null, 2));
 }
 
 function deleteLayout(id: string): boolean {
+  if (!isValidLayoutId(id)) return false;
   try {
     unlinkSync(join(LAYOUTS_DIR, `${id}.json`));
     return true;
@@ -857,10 +865,12 @@ app.get("/api/layouts", (_req, res) => {
 });
 
 app.get("/api/layouts/:id", (req, res) => {
-  const layout = loadLayout(req.params.id);
+  const { id } = req.params;
+  if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
+  const layout = loadLayout(id);
   if (!layout) {
     // Auto-create default
-    if (req.params.id === "default") {
+    if (id === "default") {
       const def = getDefaultLayout();
       saveLayout(def);
       return res.json(def);
@@ -871,11 +881,13 @@ app.get("/api/layouts/:id", (req, res) => {
 });
 
 app.put("/api/layouts/:id", (req, res) => {
-  const existing = loadLayout(req.params.id);
+  const { id } = req.params;
+  if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
+  const existing = loadLayout(id);
   const layout: OfficeLayoutDoc = {
-    ...(existing || { id: req.params.id, name: req.params.id, width: 24, height: 16 }),
+    ...(existing || { id, name: id, width: 24, height: 16 }),
     ...req.body,
-    id: req.params.id, // prevent id overwrite
+    id, // prevent id overwrite
   };
   saveLayout(layout);
   io.emit("layout:update", layout);
@@ -900,10 +912,12 @@ app.post("/api/layouts", (req, res) => {
 });
 
 app.delete("/api/layouts/:id", (req, res) => {
-  if (req.params.id === "default") {
+  const { id } = req.params;
+  if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
+  if (id === "default") {
     return res.status(403).json({ error: "Cannot delete default layout" });
   }
-  const ok = deleteLayout(req.params.id);
+  const ok = deleteLayout(id);
   res.json({ success: ok });
 });
 
