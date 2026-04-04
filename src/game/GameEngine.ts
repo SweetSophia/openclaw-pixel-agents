@@ -191,6 +191,7 @@ export class GameEngine {
   private lastTime = 0;
   private assetsLoaded = false;
   private _renderDiagLogged = false;
+  private _furnitureDiagLogged = false;
   private characters_sprites: LoadedCharacter[] = [];
   private floors: LoadedFloor[] = [];
   private furniture: Map<string, LoadedFurnitureItem> = new Map();
@@ -306,11 +307,13 @@ export class GameEngine {
       this.floors = floors;
       this.furniture = furniture;
       this.assetsLoaded = true;
+      console.log(`[GameEngine] Assets loaded: ${furniture.size} furniture types, ${characters.length} characters, ${floors.length} floors`);
     } catch (err) {
       console.error('[GameEngine] Asset load failed:', err);
       try {
         this.characters_sprites = await loadCharacters(undefined, signal);
         this.assetsLoaded = true;
+        console.warn('[GameEngine] Fell back to characters-only; furniture sprites unavailable');
       } catch {}
     }
   }
@@ -871,6 +874,12 @@ export class GameEngine {
 
   private renderFurniture(tileSize: number, zoom: number) {
     const { ctx, assetsLoaded, furniture } = this;
+    if (!this._furnitureDiagLogged && this.placedFurniture.length > 0) {
+      this._furnitureDiagLogged = true;
+      const types = this.placedFurniture.map(f => f.type);
+      const found = types.filter(t => furniture.has(t));
+      console.log(`[GameEngine] renderFurniture: assetsLoaded=${assetsLoaded}, furnitureMapSize=${furniture.size}, placedTypes=[${types}], found=[${found}]`);
+    }
 
     if (this.placedFurniture.length > 0) {
       for (const item of this.placedFurniture) {
