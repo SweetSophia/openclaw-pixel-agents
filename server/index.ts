@@ -525,9 +525,18 @@ async function pollAndBroadcast(): Promise<void> {
   try {
     const { sessions } = await pollSessions();
     const agentList = mapToAgentStates(sessions);
-
-    // Broadcast to all connected WebSocket clients
-    io.emit("agents:update", agentList);
+    
+    // Create immutable snapshot before any async operations
+    const snapshot = agentList.map(a => ({ ...a }));
+    
+    // Update global state atomically
+    agentStates.clear();
+    for (const agent of agentList) {
+      agentStates.set(agent.id, agent);
+    }
+    
+    // Broadcast the snapshot (not the mutable global state)
+    io.emit("agents:update", snapshot);
 
     // Poll messages from transcripts
     await pollMessages();
