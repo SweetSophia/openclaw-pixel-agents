@@ -471,8 +471,12 @@ async function tailTranscript(
 async function pollMessages(): Promise<void> {
   const promises: Promise<TickerMessage[]>[] = [];
 
+  // Collect active agent IDs for pruning
+  const activeAgentIds = new Set<string>();
+
   for (const [agentId, state] of agentStates) {
     if (!state.active) continue;
+    activeAgentIds.add(agentId);
 
     const known = AGENT_REGISTRY.get(agentId);
     if (!known) continue;
@@ -482,6 +486,9 @@ async function pollMessages(): Promise<void> {
       promises.push(tailTranscript(agentId, known.name, transcriptPath));
     }
   }
+
+  // Prune read offsets for inactive agents
+  pruneReadOffsets(activeAgentIds);
 
   const results = await Promise.all(promises);
   const newMsgs = results.flat();
@@ -507,6 +514,16 @@ async function pollMessages(): Promise<void> {
   // Broadcast whenever the snapshot changed (new messages OR pruning)
   if (newMsgs.length > 0 || pruned) {
     io.emit("ticker:messages", tickerMessages);
+  }
+}
+
+/** Prune read offsets for agents that are no longer active */
+function pruneReadOffsets(activeAgentIds: Set<string>): void {
+  for (const key of lastReadOffset.keys()) {
+    const agentId = key.split(':')[0];
+    if (!activeAgentIds.has(agentId)) {
+      lastReadOffset.delete(key);
+    }
   }
 }
 
