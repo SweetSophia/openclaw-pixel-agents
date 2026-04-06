@@ -239,7 +239,7 @@ function inferActivity(session: CliSession): AgentActivity {
  * Aggregates sessions by agentId — picks the most recently updated session
  * to determine the agent's current activity.
  */
-function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
+function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
   // Group sessions by agentId
   const byAgent = new Map<string, CliSession[]>();
   for (const s of cliSessions) {
@@ -250,7 +250,7 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
     byAgent.set(agentId, list);
   }
 
-  const results: AgentState[] = [];
+  const results = new Map<string, AgentState>();
 
   // Process all registered agents (including those without active sessions)
   for (const [agentId, known] of AGENT_REGISTRY) {
@@ -269,7 +269,7 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         agentTranscriptPaths.set(agentId, transcriptPath);
       }
 
-      const state: AgentState = {
+      results.set(agentId, {
         id: agentId,
         name: known.name,
         activity,
@@ -299,12 +299,10 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
             status: s.status === "completed" ? "completed" as const : s.abortedLastRun ? "failed" as const : "running" as const,
           })),
         sessionUptime: latestSession.updatedAt ? (Date.now() - latestSession.updatedAt) / 1000 : undefined,
-      };
-      agentStates.set(agentId, state);
-      results.push(state);
+      });
     } else {
       // No active session — agent is sleeping
-      const state: AgentState = {
+      results.set(agentId, {
         id: agentId,
         name: known.name,
         activity: "sleeping",
@@ -316,9 +314,7 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         pixelEnabled: known.pixelEnabled,
         tags: known.tags,
         roomId: resolveRoom(known.tags),
-      };
-      agentStates.set(agentId, state);
-      results.push(state);
+      });
     }
   }
 
@@ -466,13 +462,29 @@ async function tailTranscript(
 }
 
 /**
+ * Prune read offsets for agents that are no longer active
+ */
+function pruneReadOffsets(activeAgentIds: Set<string>): void {
+  for (const key of lastReadOffset.keys()) {
+    const agentId = key.split(':')[0];
+    if (!activeAgentIds.has(agentId)) {
+      lastReadOffset.delete(key);
+    }
+  }
+}
+
+/**
  * Poll messages from all active agent transcripts.
  */
 async function pollMessages(): Promise<void> {
   const promises: Promise<TickerMessage[]>[] = [];
 
+  // Collect active agent IDs for pruning
+  const activeAgentIds = new Set<string>();
+
   for (const [agentId, state] of agentStates) {
     if (!state.active) continue;
+    activeAgentIds.add(agentId);
 
     const known = AGENT_REGISTRY.get(agentId);
     if (!known) continue;
@@ -482,6 +494,9 @@ async function pollMessages(): Promise<void> {
       promises.push(tailTranscript(agentId, known.name, transcriptPath));
     }
   }
+
+  // Prune read offsets for inactive agents
+  pruneReadOffsets(activeAgentIds);
 
   const results = await Promise.all(promises);
   const newMsgs = results.flat();
@@ -524,14 +539,15 @@ async function pollAndBroadcast(): Promise<void> {
   isPolling = true;
   try {
     const { sessions } = await pollSessions();
-    const agentList = mapToAgentStates(sessions);
+    const agentMap = mapToAgentStates(sessions);
+    const agentList = Array.from(agentMap.values());
 
     // Create immutable snapshot before any async operations
     const snapshot = agentList.map(a => ({ ...a }));
 
     // Update global state atomically
     agentStates.clear();
-    for (const agent of agentList) {
+    for (const agent of agentMap.values()) {
       agentStates.set(agent.id, agent);
     }
 
@@ -581,7 +597,15 @@ app.post("/api/ingest/agents", (req, res) => {
   }
 
   // Map and broadcast
-  const agentList = mapToAgentStates(sessions as CliSession[]);
+  const agentMap = mapToAgentStates(sessions as CliSession[]);
+  const agentList = Array.from(agentMap.values());
+
+  // Update global state
+  agentStates.clear();
+  for (const agent of agentMap.values()) {
+    agentStates.set(agent.id, agent);
+  }
+
   lastIngestAt = Date.now();
   console.log(`[ingest] ${agentList.length} agents updated (${sessions.length} sessions)`);
   io.emit("agents:update", agentList);
