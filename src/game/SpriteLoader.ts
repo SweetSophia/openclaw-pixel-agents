@@ -43,6 +43,7 @@ export interface LoadedCharacter {
   down: SpriteFrame[];
   up: SpriteFrame[];
   right: SpriteFrame[];
+  left: SpriteFrame[]; // Pre-flipped for performance
 }
 
 export interface LoadedFurnitureItem {
@@ -105,6 +106,15 @@ function flipHorizontal(source: HTMLCanvasElement): HTMLCanvasElement {
   return canvas;
 }
 
+/** Create left-facing frames by flipping right frames */
+function createLeftFrames(rightFrames: SpriteFrame[]): SpriteFrame[] {
+  return rightFrames.map(frame => ({
+    canvas: flipHorizontal(frame.canvas),
+    width: frame.width,
+    height: frame.height,
+  }));
+}
+
 // ── Public loaders ─────────────────────────────────────────
 
 /**
@@ -122,7 +132,7 @@ export async function loadCharacters(
     const path = `${basePath}char_${i}.png`;
     const bitmap = await loadPng(path, signal);
 
-    const byDir: LoadedCharacter = { down: [], up: [], right: [] };
+    const byDir: LoadedCharacter = { down: [], up: [], right: [], left: [] };
 
     for (let dirIdx = 0; dirIdx < CHARACTER_DIRS.length; dirIdx++) {
       const dir = CHARACTER_DIRS[dirIdx];
@@ -142,6 +152,9 @@ export async function loadCharacters(
 
       byDir[dir] = frames;
     }
+
+    // Pre-generate left frames from right frames
+    byDir.left = createLeftFrames(byDir.right);
 
     characters.push(byDir);
   }
@@ -339,11 +352,14 @@ function composedToLoaded(composed: ComposedCharacter): LoadedCharacter {
   const toFrames = (canvases: HTMLCanvasElement[]): SpriteFrame[] =>
     canvases.map(canvas => ({ canvas, width: OUT_FRAME_W, height: OUT_FRAME_H }));
 
+  const rightFrames = toFrames(composed.right);
+
   // The compositor outputs are already in the correct format (3 dirs × 7 frames)
   return {
     down: toFrames(composed.down),
     up: toFrames(composed.up),
-    right: toFrames(composed.right),
+    right: rightFrames,
+    left: createLeftFrames(rightFrames), // Pre-flip left frames
   };
 }
 
@@ -371,18 +387,13 @@ export function getSpriteFrame(
   state: AnimState,
   dir: Direction,
   frameTick: number,
-): HTMLCanvasElement {
+): HTMLCanvasElement | null {
   const [startIdx, count] = FRAME_RANGES[state];
   const frameIdx = startIdx + (frameTick % count);
 
-  // "left" is "right" flipped horizontally
-  if (dir === 'left') {
-    const rightFrame = character.right[frameIdx];
-    return flipHorizontal(rightFrame.canvas);
-  }
-
-  const dirFrames = character[dir as 'down' | 'up' | 'right'];
-  return dirFrames[frameIdx].canvas;
+  // All directions now have pre-cached frames
+  const frame = character[dir]?.[frameIdx];
+  return frame?.canvas ?? null;
 }
 
 /** Access cached characters */
