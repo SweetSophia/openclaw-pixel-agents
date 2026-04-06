@@ -46,9 +46,6 @@ export const CharacterCustomizer: React.FC<Props> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const previewCanvas = canvas;
-    const previewCtx = ctx;
-
     ctx.imageSmoothingEnabled = false;
 
     // Load source sheets and composite a preview
@@ -111,7 +108,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
       }
     }
 
-    renderPreview(previewCanvas, previewCtx);
+    renderPreview(canvas, ctx);
     return () => { cancelled = true; };
   }, [recipe.bodyIndex, recipe.hairIndex, recipe.outfitIndex]);
 
