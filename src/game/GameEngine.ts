@@ -206,6 +206,7 @@ export class GameEngine {
   private obstacleGrid: boolean[][] | null = null;
   private obstacleDirty = true;
   private _obstacleRebuildScheduled = false;
+  private _obstacleRebuildRafId: number | null = null;
 
   // Editor state
   private editorMode = false;
@@ -329,6 +330,11 @@ export class GameEngine {
   stop() {
     this.running = false;
     if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+    if (this._obstacleRebuildRafId !== null) {
+      cancelAnimationFrame(this._obstacleRebuildRafId);
+      this._obstacleRebuildRafId = null;
+      this._obstacleRebuildScheduled = false;
+    }
     this.canvas.removeEventListener('mousemove', this.handleMouseMove);
     this.canvas.removeEventListener('mousedown', this.handleMouseDown);
     this.canvas.removeEventListener('mouseup', this.handleMouseUp);
@@ -369,7 +375,8 @@ export class GameEngine {
   private scheduleObstacleRebuild() {
     if (this._obstacleRebuildScheduled) return;
     this._obstacleRebuildScheduled = true;
-    requestAnimationFrame(() => {
+    this._obstacleRebuildRafId = requestAnimationFrame(() => {
+      this._obstacleRebuildRafId = null;
       if (this.obstacleDirty) {
         this.rebuildObstacles();
       }
