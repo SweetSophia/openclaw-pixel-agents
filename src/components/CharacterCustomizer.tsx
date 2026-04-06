@@ -49,7 +49,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
     const previewCanvas = canvas;
     const previewCtx = ctx;
 
-    ctx.imageSmoothingEnabled = false;
+    previewCtx.imageSmoothingEnabled = false;
 
     // Load source sheets and composite a preview
     let cancelled = false;
