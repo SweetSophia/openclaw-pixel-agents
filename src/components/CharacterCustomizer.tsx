@@ -51,7 +51,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
     // Load source sheets and composite a preview
     let cancelled = false;
 
-    async function renderPreview() {
+    async function renderPreview(c: HTMLCanvasElement, context: CanvasRenderingContext2D) {
       if (cancelled) return;
 
       const BASE = '/assets/source/MetroCity/';
@@ -69,14 +69,14 @@ export const CharacterCustomizer: React.FC<Props> = ({
         if (cancelled) return;
 
         // Clear
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        context.clearRect(0, 0, c.width, c.height);
 
         // Draw checkerboard background for transparency
         const CHECK = 6;
-        for (let y = 0; y < canvas.height; y += CHECK) {
-          for (let x = 0; x < canvas.width; x += CHECK) {
-            ctx.fillStyle = ((x / CHECK + y / CHECK) % 2 === 0) ? '#1a1a2e' : '#16213e';
-            ctx.fillRect(x, y, CHECK, CHECK);
+        for (let y = 0; y < c.height; y += CHECK) {
+          for (let x = 0; x < c.width; x += CHECK) {
+            context.fillStyle = ((x / CHECK + y / CHECK) % 2 === 0) ? '#1a1a2e' : '#16213e';
+            context.fillRect(x, y, CHECK, CHECK);
           }
         }
 
@@ -87,25 +87,28 @@ export const CharacterCustomizer: React.FC<Props> = ({
         const cropH = 32;
 
         // Layer: body
-        ctx.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
+        context.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
         // Layer: outfit
-        ctx.drawImage(outfitImg, srcX + cropX, 0, cropW, cropH, 16, 8, DST, DST * 2);
+        context.drawImage(outfitImg, srcX + cropX, 0, cropW, cropH, 16, 8, DST, DST * 2);
         // Layer: hair
-        ctx.drawImage(hairImg, srcX + cropX, recipe.hairIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
+        context.drawImage(hairImg, srcX + cropX, recipe.hairIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
 
       } catch (err) {
+        // Skip drawing if effect was cancelled or unmounted — a newer render may be in flight
+        if (cancelled) return;
+
         // Preview failed — draw fallback
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#4ecca3';
-        ctx.font = '12px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('Preview', canvas.width / 2, canvas.height / 2);
+        context.clearRect(0, 0, c.width, c.height);
+        context.fillStyle = '#1a1a2e';
+        context.fillRect(0, 0, c.width, c.height);
+        context.fillStyle = '#4ecca3';
+        context.font = '12px monospace';
+        context.textAlign = 'center';
+        context.fillText('Preview', c.width / 2, c.height / 2);
       }
     }
 
-    renderPreview();
+    renderPreview(canvas, ctx);
     return () => { cancelled = true; };
   }, [recipe.bodyIndex, recipe.hairIndex, recipe.outfitIndex]);
 
