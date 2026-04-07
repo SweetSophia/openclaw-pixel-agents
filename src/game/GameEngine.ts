@@ -250,6 +250,7 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
+  private _currentPhase: { overlay: string; light: number; label: string } | null = null;
 
   // Ambient particles (dust motes, steam)
   private ambientParticles: AmbientParticle[] = [];
@@ -538,6 +539,7 @@ export class GameEngine {
 
     // ── Day/night cycle update ──
     this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
+    this._currentPhase = this.getDayPhase();
 
     // ── Ambient particles update ──
     this.updateAmbientParticles(dt);
@@ -573,7 +575,7 @@ export class GameEngine {
   /** Render day/night color overlay and monitor glow */
   private renderDayNight(tileSize: number) {
     const { ctx, config } = this;
-    const phase = this.getDayPhase();
+    const phase = this._currentPhase!;
 
     // Color overlay
     ctx.fillStyle = phase.overlay;
@@ -618,8 +620,13 @@ export class GameEngine {
     const w = config.gridWidth;
     const h = config.gridHeight;
 
+    // Count particle types in a single pass
+    let dustCount = 0;
+    for (const p of this.ambientParticles) {
+      if (p.type === 'dust') dustCount++;
+    }
+
     // Spawn new dust motes
-    const dustCount = this.ambientParticles.filter(p => p.type === 'dust').length;
     let dustToAdd = AMBIENT_DUST_COUNT - dustCount;
     while (dustToAdd-- > 0) {
       const life = 8 + Math.random() * 12;
@@ -643,9 +650,10 @@ export class GameEngine {
     // Spawn steam near coffee cup furniture items
     for (const item of this.placedFurniture) {
       if (item.type.toLowerCase().includes('coffee') || item.type.toLowerCase().includes('cup')) {
-        const steamCount = this.ambientParticles.filter(
-          p => p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1
-        ).length;
+        let steamCount = 0;
+        for (const p of this.ambientParticles) {
+          if (p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1) steamCount++;
+        }
         if (steamCount < 3 && Math.random() < dt * 0.5) {
           this.ambientParticles.push({
             x: item.x + 0.3 + Math.random() * 0.4,
@@ -667,7 +675,7 @@ export class GameEngine {
     }
 
     // Spawn sparkles near monitors (at night)
-    const phase = this.getDayPhase();
+    const phase = this._currentPhase!;
     if (phase.light < 0.5 && Math.random() < dt * 2) {
       const typingAgents = Array.from(this.characters.values()).filter(
         c => c.state === 'typing' || c.state === 'running_command'
