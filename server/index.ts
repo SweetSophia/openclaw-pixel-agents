@@ -89,7 +89,9 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const data = JSON.parse(raw);
     const map = new Map<string, PersistedPrefs>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as PersistedPrefs);
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        map.set(k, v as PersistedPrefs);
+      }
     }
     return map;
   } catch {
