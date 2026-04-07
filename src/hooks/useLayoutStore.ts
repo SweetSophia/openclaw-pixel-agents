@@ -77,7 +77,12 @@ export function useLayoutStore() {
 
   const deleteLayout = useCallback(async (id: string) => {
     try {
-      await fetch(`${API_BASE}/layouts/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/layouts/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to delete layout' }));
+        console.error('Failed to delete layout:', err.error);
+        return;
+      }
       if (activeLayout?.id === id) setActiveLayout(null);
       fetchLayouts();
     } catch (err) {
