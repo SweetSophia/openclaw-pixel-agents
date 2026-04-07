@@ -298,6 +298,14 @@ export async function loadFurniture(
   return cachedFurniture;
 }
 
+function withAssetFallback<T>(promise: Promise<T>, label: string, fallback: T): Promise<T> {
+  return promise.catch(err => {
+    if (err.name === 'AbortError') throw err;
+    console.error(`[SpriteLoader] ${label} loading failed:`, err);
+    return fallback;
+  });
+}
+
 /**
  * Load all assets in parallel. Tries the paperdoll compositor first;
  * falls back to legacy pre-composited sprites if source sheets are missing.
@@ -307,17 +315,11 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
   floors: LoadedFloor[];
   furniture: Map<string, LoadedFurnitureItem>;
 }> {
-  // Load floors and furniture independently
-  const floors = await loadFloors(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Floor loading failed:', err);
-    return [] as LoadedFloor[];
-  });
-  const furniture = await loadFurniture(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Furniture loading failed:', err);
-    return new Map<string, LoadedFurnitureItem>();
-  });
+  // Load floors and furniture in parallel
+  const [floors, furniture] = await Promise.all([
+    withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as LoadedFloor[]),
+    withAssetFallback(loadFurniture(undefined, signal), 'Furniture', cachedFurniture),
+  ]);
 
   // Try paperdoll compositor
   let characters: LoadedCharacter[] = [];
