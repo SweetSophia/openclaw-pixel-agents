@@ -115,6 +115,8 @@ function createLeftFrames(rightFrames: SpriteFrame[]): SpriteFrame[] {
   }));
 }
 
+// ── Public loaders ─────────────────────────────────────────
+
 /**
  * Load all 6 character sprite sheets from /assets/characters/char_0..5.png
  *
@@ -385,13 +387,13 @@ export function getSpriteFrame(
   state: AnimState,
   dir: Direction,
   frameTick: number,
-): HTMLCanvasElement {
+): HTMLCanvasElement | null {
   const [startIdx, count] = FRAME_RANGES[state];
   const frameIdx = startIdx + (frameTick % count);
 
   // All directions now have pre-cached frames
-  const dirFrames = character[dir];
-  return dirFrames[frameIdx].canvas;
+  const frame = character[dir]?.[frameIdx];
+  return frame?.canvas ?? null;
 }
 
 /** Access cached characters */
