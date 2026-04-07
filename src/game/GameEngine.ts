@@ -205,6 +205,7 @@ export class GameEngine {
   // Pathfinding
   private obstacleGrid: boolean[][] | null = null;
   private obstacleDirty = true;
+  private _obstacleRebuildScheduled = false;
 
   // Editor state
   private editorMode = false;
@@ -362,6 +363,17 @@ export class GameEngine {
     });
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
+    this._obstacleRebuildScheduled = false;
+  }
+
+  private scheduleObstacleRebuild() {
+    if (this._obstacleRebuildScheduled) return;
+    this._obstacleRebuildScheduled = true;
+    requestAnimationFrame(() => {
+      if (this.obstacleDirty) {
+        this.rebuildObstacles();
+      }
+    });
   }
 
   private ensureObstacles() {
@@ -1967,6 +1979,8 @@ export class GameEngine {
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
     this.placedFurniture = furniture;
     this.obstacleDirty = true;
+    // Schedule deferred rebuild to avoid blocking during rapid updates
+    this.scheduleObstacleRebuild();
     if (seats) {
       this.seats.clear();
       for (const [aid, pos] of Object.entries(seats)) this.seats.set(aid, pos);
