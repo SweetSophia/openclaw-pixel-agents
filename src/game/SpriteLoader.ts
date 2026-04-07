@@ -307,17 +307,19 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
   floors: LoadedFloor[];
   furniture: Map<string, LoadedFurnitureItem>;
 }> {
-  // Load floors and furniture independently
-  const floors = await loadFloors(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Floor loading failed:', err);
-    return [] as LoadedFloor[];
-  });
-  const furniture = await loadFurniture(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Furniture loading failed:', err);
-    return new Map<string, LoadedFurnitureItem>();
-  });
+  // Load floors and furniture in parallel
+  const [floors, furniture] = await Promise.all([
+    loadFloors(undefined, signal).catch(err => {
+      if (err.name === 'AbortError') throw err;
+      console.error('[SpriteLoader] Floor loading failed:', err);
+      return [] as LoadedFloor[];
+    }),
+    loadFurniture(undefined, signal).catch(err => {
+      if (err.name === 'AbortError') throw err;
+      console.error('[SpriteLoader] Furniture loading failed:', err);
+      return new Map<string, LoadedFurnitureItem>();
+    }),
+  ]);
 
   // Try paperdoll compositor
   let characters: LoadedCharacter[] = [];

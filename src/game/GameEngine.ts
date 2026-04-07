@@ -301,7 +301,7 @@ export class GameEngine {
       { id: 'shodan', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
       { id: 'descartes', name: 'Descartes', state: 'idle' },
-      { id: 'chi', name: 'Chi', state: 'waiting', lastMessage: 'Need input on the deploy config...' },
+      { id: 'chi', name: 'Chi', state: 'waiting_input', lastMessage: 'Need input on the deploy config...' },
       { id: 'cylena', name: 'Cylena', state: 'sleeping' },
       { id: 'sysauxilia', name: 'Sysauxilia', state: 'idle' },
       { id: 'miku', name: 'Miku', state: 'reading' },
@@ -344,7 +344,10 @@ export class GameEngine {
 
   stop() {
     this.running = false;
-    if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+    if (this.animFrameId) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = 0;
+    }
     if (this._obstacleRebuildRafId !== null) {
       cancelAnimationFrame(this._obstacleRebuildRafId);
       this._obstacleRebuildRafId = null;
@@ -538,7 +541,7 @@ export class GameEngine {
       fx.particles = fx.particles.filter(p => p.life > 0);
     }
     this.stateEffects = this.stateEffects.filter(fx =>
-      performance.now() - fx.startTime < fx.duration || fx.particles.length > 0
+      nowMs - fx.startTime < fx.duration || fx.particles.length > 0
     );
 
     // ── Day/night cycle update ──
@@ -1193,7 +1196,7 @@ export class GameEngine {
 
     for (const [agentId, bubble] of this.speechBubbles) {
       const char = this.characters.get(agentId);
-      if (!char || char.state !== 'waiting') continue;
+      if (!char || char.state !== 'waiting_input') continue;
 
       const px = char.x * tileSize + tileSize / 2;
       const py = char.y * tileSize - tileSize * 0.8;
@@ -1870,7 +1873,7 @@ export class GameEngine {
     });
 
     // Create speech bubble if agent starts in waiting state with a message
-    if (data.state === 'waiting' && data.lastMessage) {
+    if (data.state === 'waiting_input' && data.lastMessage) {
       this.speechBubbles.set(data.id, {
         text: data.lastMessage,
         timer: 30,
@@ -1899,7 +1902,7 @@ export class GameEngine {
     }
 
     // When activity changes to a desk activity, route to seat
-    if (updates.state && ['typing', 'reading'].includes(updates.state)) {
+    if (updates.state && ['typing', 'reading', 'running_command', 'thinking'].includes(updates.state)) {
       const seat = this.seats.get(id);
       if (seat) {
         char.targetX = seat.x;
@@ -1914,7 +1917,7 @@ export class GameEngine {
     }
 
     // Update speech bubble for waiting state
-    if (updates.state === 'waiting' && updates.lastMessage) {
+    if (updates.state === 'waiting_input' && updates.lastMessage) {
       this.speechBubbles.set(id, {
         text: updates.lastMessage,
         timer: 30, // 30 seconds visible

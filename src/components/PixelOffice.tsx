@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import type { AgentState, AgentActivity, PlacedFurniture } from '../../shared/types';
+import type { AgentState, PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc } from '../hooks/useLayoutStore';
 import { GameEngine } from '../game/GameEngine';
 import './PixelOffice.css';
@@ -14,17 +14,6 @@ interface Props {
   onSelectFurniture: (id: string | null) => void;
   onMoveFurniture: (id: string, gridX: number, gridY: number) => void;
   onCharacterClick?: (agentId: string) => void;
-}
-
-function activityToAnimState(activity: AgentActivity): string {
-  switch (activity) {
-    case 'typing': case 'running_command': return 'typing';
-    case 'thinking': case 'reading': return 'reading';
-    case 'waiting_input': return 'waiting';
-    case 'sleeping': return 'idle';
-    case 'error': return 'error';
-    default: return 'idle';
-  }
 }
 
 export const PixelOffice: React.FC<Props> = ({
@@ -115,18 +104,17 @@ export const PixelOffice: React.FC<Props> = ({
 
     for (const agent of agents) {
       if (!agent.pixelEnabled) continue;
-      const animState = activityToAnimState(agent.activity);
       if (!currentIds.includes(agent.id)) {
         const seat = engine.assignSeat(agent.id);
         engine.addCharacter({
           id: agent.id, name: agent.name,
           x: seat.x, y: seat.y,
-          state: animState, model: agent.model, spriteId: agent.characterSpriteId,
+          state: agent.activity, model: agent.model, spriteId: agent.characterSpriteId,
           lastMessage: agent.lastMessage,
         });
       } else {
         engine.updateCharacter(agent.id, {
-          state: animState, model: agent.model, name: agent.name,
+          state: agent.activity, model: agent.model, name: agent.name,
           lastMessage: agent.lastMessage,
         });
       }
