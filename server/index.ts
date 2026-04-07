@@ -120,6 +120,7 @@ for (const [id, prefs] of savedPrefs) {
     if (prefs.pixelEnabled !== undefined) agent.pixelEnabled = prefs.pixelEnabled;
     if (prefs.characterSpriteId !== undefined) agent.characterSpriteId = prefs.characterSpriteId;
     if (prefs.tags !== undefined) agent.tags = prefs.tags;
+    if (prefs.recipe !== undefined) agent.recipe = prefs.recipe;
   }
 }
 
@@ -581,7 +582,12 @@ function authenticateIngest(req: express.Request, _res: express.Response): boole
   const token = auth.slice(7);
   const expected = Buffer.from(INGEST_TOKEN, "utf-8");
   const provided = Buffer.from(token, "utf-8");
-  if (expected.length !== provided.length) return false;
+  if (expected.length !== provided.length) {
+    const padded = Buffer.alloc(expected.length);
+    provided.copy(padded, 0, 0, expected.length);
+    timingSafeEqual(expected, padded);
+    return false;
+  }
   return timingSafeEqual(expected, provided);
 }
 

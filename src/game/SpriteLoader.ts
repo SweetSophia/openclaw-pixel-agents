@@ -443,10 +443,10 @@ function disposeComposed(composed: ComposedCharacter): void {
  */
 export function recomposeAgent(agentId: string, recipe: CharacterRecipe): LoadedCharacter | null {
   try {
-    const old = cachedComposed.get(agentId);
-    if (old) disposeComposed(old);
     const composed = composeCharacter(recipe);
+    const old = cachedComposed.get(agentId);
     cachedComposed.set(agentId, composed);
+    if (old) disposeComposed(old);
     return composedToLoaded(composed);
   } catch (err) {
     console.error(`[SpriteLoader] Failed to recompose ${agentId}:`, err);
