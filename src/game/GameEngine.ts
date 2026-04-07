@@ -111,6 +111,7 @@ const STATE_VFX: Record<string, {
   typing:          { color: '#4ecca3', icon: '⌨',  particleCount: 4,  particleSpeed: 15,  glowColor: 'rgba(78,204,163,0.12)',  glowDuration: 500 },
   running_command: { color: '#fbbf24', icon: '⚡', particleCount: 5,  particleSpeed: 30,  glowColor: 'rgba(251,191,36,0.15)',  glowDuration: 600 },
   waiting_input:   { color: '#60a5fa', icon: '💬', particleCount: 8,  particleSpeed: 20,  glowColor: 'rgba(96,165,250,0.15)',  glowDuration: 1000 },
+  sleeping:        { color: '#94a3b8', icon: '💤', particleCount: 0,  particleSpeed: 0,   glowColor: 'transparent',           glowDuration: 0 },
   error:           { color: '#ef4444', icon: '❌', particleCount: 10, particleSpeed: 40,  glowColor: 'rgba(239,68,68,0.2)',    glowDuration: 800 },
   reading:         { color: '#34d399', icon: '📖', particleCount: 3,  particleSpeed: 10,  glowColor: 'rgba(52,211,153,0.1)',   glowDuration: 400 },
 };
@@ -1855,7 +1856,7 @@ export class GameEngine {
   private getActivityIcon(state: string): string {
     const icons: Record<string, string> = {
       typing: '⌨', reading: '📖', thinking: '💭',
-      waiting: '💬', error: '❌',
+      waiting_input: '💬', sleeping: '💤', error: '❌',
     };
     return icons[state] || '';
   }
