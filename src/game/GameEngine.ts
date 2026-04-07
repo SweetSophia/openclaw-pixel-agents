@@ -548,16 +548,10 @@ export class GameEngine {
 
   // ── Day/Night Cycle ──────────────────────────────────
 
-  private _cachedPhase: { overlay: string; light: number; label: string } | null = null;
-  private _cachedPhaseIdx = -1;
-
-  /** Get interpolated day phase data (cached per discrete phase pair) */
+  /** Get interpolated day phase data */
   private getDayPhase(): { overlay: string; light: number; label: string } {
     const idx = this.dayPhase * PARSED_PHASES.length;
     const i = Math.floor(idx) % PARSED_PHASES.length;
-
-    if (i === this._cachedPhaseIdx && this._cachedPhase) return this._cachedPhase;
-
     const j = (i + 1) % PARSED_PHASES.length;
     const t = idx - Math.floor(idx);
 
@@ -569,13 +563,11 @@ export class GameEngine {
     const bb = Math.round(a.b + (b.b - a.b) * t);
     const aa = +(a.a + (b.a - a.a) * t).toFixed(3);
 
-    this._cachedPhase = {
+    return {
       overlay: `rgba(${r}, ${g}, ${bb}, ${aa})`,
       light: a.light + (b.light - a.light) * t,
       label: t < 0.5 ? a.label : b.label,
     };
-    this._cachedPhaseIdx = i;
-    return this._cachedPhase;
   }
 
   /** Render day/night color overlay and monitor glow */
@@ -1013,9 +1005,8 @@ export class GameEngine {
   }
 
   private renderCharacters(tileSize: number, zoom: number) {
-    const chars = Array.from(this.characters.values());
-    chars.sort((a, b) => a.y - b.y);
-    for (const char of chars) {
+    const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
+    for (const char of sorted) {
       this.renderCharacter(char, tileSize, zoom);
     }
   }
