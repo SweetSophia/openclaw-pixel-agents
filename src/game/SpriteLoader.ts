@@ -318,7 +318,7 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
   // Load floors and furniture in parallel
   const [floors, furniture] = await Promise.all([
     withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as LoadedFloor[]),
-    withAssetFallback(loadFurniture(undefined, signal), 'Furniture', new Map<string, LoadedFurnitureItem>()),
+    withAssetFallback(loadFurniture(undefined, signal), 'Furniture', cachedFurniture),
   ]);
 
   // Try paperdoll compositor
