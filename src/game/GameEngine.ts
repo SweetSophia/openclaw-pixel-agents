@@ -250,7 +250,11 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
-  private _currentPhase: { overlay: string; light: number; label: string } | null = null;
+  private _currentPhase: { overlay: string; light: number; label: string } = {
+    overlay: 'rgba(255, 255, 240, 0.02)',
+    light: 1.0,
+    label: 'Midday',
+  };
 
   // Ambient particles (dust motes, steam)
   private ambientParticles: AmbientParticle[] = [];
@@ -562,11 +566,11 @@ export class GameEngine {
 
     const r = Math.round(a.r + (b.r - a.r) * t);
     const g = Math.round(a.g + (b.g - a.g) * t);
-    const bb = Math.round(a.b + (b.b - a.b) * t);
-    const aa = +(a.a + (b.a - a.a) * t).toFixed(3);
+    const blue = Math.round(a.b + (b.b - a.b) * t);
+    const alpha = +(a.a + (b.a - a.a) * t).toFixed(3);
 
     return {
-      overlay: `rgba(${r}, ${g}, ${bb}, ${aa})`,
+      overlay: `rgba(${r}, ${g}, ${blue}, ${alpha})`,
       light: a.light + (b.light - a.light) * t,
       label: t < 0.5 ? a.label : b.label,
     };
@@ -575,7 +579,7 @@ export class GameEngine {
   /** Render day/night color overlay and monitor glow */
   private renderDayNight(tileSize: number) {
     const { ctx, config } = this;
-    const phase = this._currentPhase!;
+    const phase = this._currentPhase;
 
     // Color overlay
     ctx.fillStyle = phase.overlay;
@@ -620,7 +624,7 @@ export class GameEngine {
     const w = config.gridWidth;
     const h = config.gridHeight;
 
-    // Count particle types in a single pass
+    // Count dust particles
     let dustCount = 0;
     for (const p of this.ambientParticles) {
       if (p.type === 'dust') dustCount++;
@@ -675,7 +679,7 @@ export class GameEngine {
     }
 
     // Spawn sparkles near monitors (at night)
-    const phase = this._currentPhase!;
+    const phase = this._currentPhase;
     if (phase.light < 0.5 && Math.random() < dt * 2) {
       const typingAgents = Array.from(this.characters.values()).filter(
         c => c.state === 'typing' || c.state === 'running_command'
