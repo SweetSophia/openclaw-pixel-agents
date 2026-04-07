@@ -191,12 +191,22 @@ export async function loadFloors(
   return floors;
 }
 
+interface ManifestNode {
+  file?: string;
+  width?: number;
+  height?: number;
+  footprintW?: number;
+  footprintH?: number;
+  orientation?: string;
+  members?: ManifestNode[];
+}
+
 /**
  * Recursively find the first leaf asset node (one with a `file` field)
  * inside a potentially nested manifest member tree (e.g. PC has
  * rotation → state → animation → asset).
  */
-function findLeafAsset(node: any): { file: string; width: number; height: number; footprintW?: number; footprintH?: number } | null {
+function findLeafAsset(node: ManifestNode): ManifestNode | null {
   if (node.file) return node;
   if (node.members && node.members.length > 0) {
     for (const child of node.members) {
@@ -240,16 +250,16 @@ export async function loadFurniture(
       if (manifest.members && manifest.members.length > 0) {
         // Prefer the "front" orientation, fall back to first member
         const front = manifest.members.find(
-          (m: any) => m.orientation === 'front' || m.orientation === 'front_left',
+          (m: ManifestNode) => m.orientation === 'front' || m.orientation === 'front_left',
         );
         const member = front || manifest.members[0];
         // For nested groups (e.g. PC with state/animation sub-groups),
         // recursively dig to find the first leaf asset with a file
         const leaf = findLeafAsset(member);
         if (leaf) {
-          primaryFile = leaf.file;
-          fw = leaf.width;
-          fh = leaf.height;
+          primaryFile = leaf.file ?? '';
+          fw = leaf.width ?? 0;
+          fh = leaf.height ?? 0;
           footprintW = leaf.footprintW || 1;
           footprintH = leaf.footprintH || 1;
         }
@@ -417,11 +427,24 @@ export function getComposedCharacter(agentId: string): ComposedCharacter | null 
 }
 
 /**
+ * Dispose a composed character's canvases to free backing store.
+ */
+function disposeComposed(composed: ComposedCharacter): void {
+  for (const frames of [composed.down, composed.up, composed.right]) {
+    for (const c of frames) { c.width = 0; c.height = 0; }
+  }
+  composed.portrait.width = 0;
+  composed.portrait.height = 0;
+}
+
+/**
  * Recompose a single agent's character (e.g. after recipe change).
  * Returns the new LoadedCharacter for engine update.
  */
 export function recomposeAgent(agentId: string, recipe: CharacterRecipe): LoadedCharacter | null {
   try {
+    const old = cachedComposed.get(agentId);
+    if (old) disposeComposed(old);
     const composed = composeCharacter(recipe);
     cachedComposed.set(agentId, composed);
     return composedToLoaded(composed);
