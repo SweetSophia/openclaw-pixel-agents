@@ -12,6 +12,7 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
+import { timingSafeEqual } from "node:crypto";
 import { join, dirname } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -73,15 +74,24 @@ function defaultRegistry(): Map<string, KnownAgent> {
   ]);
 }
 
+interface PersistedPrefs {
+  pixelEnabled?: boolean;
+  characterSpriteId?: string;
+  tags?: AgentTag[];
+  recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number };
+}
+
 /** Load persisted agent preferences (pixelEnabled, spriteId, tags, recipe) from disk */
-function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }> {
+function loadPersistedPrefs(): Map<string, PersistedPrefs> {
   try {
     if (!existsSync(PERSIST_PATH)) return new Map();
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
-    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }>();
+    const map = new Map<string, PersistedPrefs>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as any);
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        map.set(k, v as PersistedPrefs);
+      }
     }
     return map;
   } catch {
@@ -112,6 +122,7 @@ for (const [id, prefs] of savedPrefs) {
     if (prefs.pixelEnabled !== undefined) agent.pixelEnabled = prefs.pixelEnabled;
     if (prefs.characterSpriteId !== undefined) agent.characterSpriteId = prefs.characterSpriteId;
     if (prefs.tags !== undefined) agent.tags = prefs.tags;
+    if (prefs.recipe !== undefined) agent.recipe = prefs.recipe;
   }
 }
 
@@ -255,7 +266,8 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
   // Process all registered agents (including those without active sessions)
   for (const [agentId, known] of AGENT_REGISTRY) {
     const sessions = byAgent.get(agentId);
-    const latestSession = sessions?.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
+    const sorted = sessions ? [...sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)) : [];
+    const latestSession = sorted[0];
 
     if (latestSession) {
       const activity = inferActivity(latestSession);
@@ -573,12 +585,19 @@ async function pollAndBroadcast(): Promise<void> {
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
 const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
+const INGEST_TOKEN_BUF = INGEST_TOKEN ? Buffer.from(INGEST_TOKEN, "utf-8") : Buffer.alloc(0);
 
-function authenticateIngest(req: express.Request, res: express.Response): boolean {
-  if (!INGEST_TOKEN) return false; // no token configured = ingest disabled
+function authenticateIngest(req: express.Request, _res: express.Response): boolean {
+  if (!INGEST_TOKEN_BUF.length) return false;
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Bearer ")) return false;
-  return auth.slice(7) === INGEST_TOKEN;
+  const token = auth.slice(7);
+  const provided = Buffer.from(token, "utf-8");
+  if (INGEST_TOKEN_BUF.length !== provided.length) {
+    timingSafeEqual(INGEST_TOKEN_BUF, Buffer.alloc(INGEST_TOKEN_BUF.length));
+    return false;
+  }
+  return timingSafeEqual(INGEST_TOKEN_BUF, provided);
 }
 
 /**

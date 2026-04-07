@@ -191,13 +191,25 @@ export async function loadFloors(
   return floors;
 }
 
+type LeafAsset = ManifestNode & { file: string };
+
+interface ManifestNode {
+  file?: string;
+  width?: number;
+  height?: number;
+  footprintW?: number;
+  footprintH?: number;
+  orientation?: string;
+  members?: ManifestNode[];
+}
+
 /**
  * Recursively find the first leaf asset node (one with a `file` field)
  * inside a potentially nested manifest member tree (e.g. PC has
  * rotation → state → animation → asset).
  */
-function findLeafAsset(node: any): { file: string; width: number; height: number; footprintW?: number; footprintH?: number } | null {
-  if (node.file) return node;
+function findLeafAsset(node: ManifestNode): LeafAsset | null {
+  if (node.file) return node as LeafAsset;
   if (node.members && node.members.length > 0) {
     for (const child of node.members) {
       const leaf = findLeafAsset(child);
@@ -228,7 +240,7 @@ export async function loadFurniture(
       const manifestRes = await fetch(`${basePath}${type}/manifest.json`, { signal });
       if (!manifestRes.ok) continue;
 
-      const manifest = await manifestRes.json();
+      const manifest = (await manifestRes.json()) as ManifestNode;
 
       // Find the primary (front-facing) sprite from manifest members
       let primaryFile = '';
@@ -240,7 +252,7 @@ export async function loadFurniture(
       if (manifest.members && manifest.members.length > 0) {
         // Prefer the "front" orientation, fall back to first member
         const front = manifest.members.find(
-          (m: any) => m.orientation === 'front' || m.orientation === 'front_left',
+          (m: ManifestNode) => m.orientation === 'front' || m.orientation === 'front_left',
         );
         const member = front || manifest.members[0];
         // For nested groups (e.g. PC with state/animation sub-groups),
@@ -248,16 +260,16 @@ export async function loadFurniture(
         const leaf = findLeafAsset(member);
         if (leaf) {
           primaryFile = leaf.file;
-          fw = leaf.width;
-          fh = leaf.height;
+          fw = leaf.width ?? 0;
+          fh = leaf.height ?? 0;
           footprintW = leaf.footprintW || 1;
           footprintH = leaf.footprintH || 1;
         }
       } else {
         // Simple asset — use explicit file or default to {ID}.png
         primaryFile = manifest.file || `${type}.png`;
-        fw = manifest.width;
-        fh = manifest.height;
+        fw = manifest.width ?? 0;
+        fh = manifest.height ?? 0;
         footprintW = manifest.footprintW || 1;
         footprintH = manifest.footprintH || 1;
       }
@@ -311,6 +323,7 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
   let characters: LoadedCharacter[] = [];
   try {
     await loadSourceSheets();
+    for (const prev of cachedComposed.values()) disposeComposed(prev);
     cachedComposed.clear();
 
     // Compose characters for known agents
@@ -417,13 +430,26 @@ export function getComposedCharacter(agentId: string): ComposedCharacter | null 
 }
 
 /**
+ * Dispose a composed character's canvases to free backing store.
+ */
+function disposeComposed(composed: ComposedCharacter): void {
+  for (const frames of [composed.down, composed.up, composed.right]) {
+    for (const c of frames) { c.width = 0; c.height = 0; }
+  }
+  composed.portrait.width = 0;
+  composed.portrait.height = 0;
+}
+
+/**
  * Recompose a single agent's character (e.g. after recipe change).
  * Returns the new LoadedCharacter for engine update.
  */
 export function recomposeAgent(agentId: string, recipe: CharacterRecipe): LoadedCharacter | null {
   try {
     const composed = composeCharacter(recipe);
+    const old = cachedComposed.get(agentId);
     cachedComposed.set(agentId, composed);
+    if (old) disposeComposed(old);
     return composedToLoaded(composed);
   } catch (err) {
     console.error(`[SpriteLoader] Failed to recompose ${agentId}:`, err);

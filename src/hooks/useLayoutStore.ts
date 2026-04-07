@@ -124,9 +124,8 @@ export function useLayoutStore() {
   useEffect(() => {
     fetchLayouts();
     fetchCatalog();
-    // Load default layout on mount
     loadLayoutById('default');
-  }, []);
+  }, [fetchLayouts, fetchCatalog, loadLayoutById]);
 
   return {
     layouts,
