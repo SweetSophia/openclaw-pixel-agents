@@ -510,12 +510,13 @@ async function pollMessages(): Promise<void> {
 
   if (newMsgs.length > 0) {
     // Insert each new message in sorted order (binary search)
+    // Use <= so equal-timestamp messages insert after existing ones (stable order)
     for (const msg of newMsgs) {
       let lo = 0;
       let hi = tickerMessages.length;
       while (lo < hi) {
         const mid = (lo + hi) >>> 1;
-        if (tickerMessages[mid].timestamp < msg.timestamp) lo = mid + 1;
+        if (tickerMessages[mid].timestamp <= msg.timestamp) lo = mid + 1;
         else hi = mid;
       }
       tickerMessages.splice(lo, 0, msg);
