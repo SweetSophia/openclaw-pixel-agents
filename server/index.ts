@@ -12,6 +12,7 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
+import { timingSafeEqual } from "node:crypto";
 import { join, dirname } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -73,15 +74,24 @@ function defaultRegistry(): Map<string, KnownAgent> {
   ]);
 }
 
+interface PersistedPrefs {
+  pixelEnabled?: boolean;
+  characterSpriteId?: string;
+  tags?: AgentTag[];
+  recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number };
+}
+
 /** Load persisted agent preferences (pixelEnabled, spriteId, tags, recipe) from disk */
-function loadPersistedPrefs(): Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }> {
+function loadPersistedPrefs(): Map<string, PersistedPrefs> {
   try {
     if (!existsSync(PERSIST_PATH)) return new Map();
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
-    const map = new Map<string, { pixelEnabled?: boolean; characterSpriteId?: string; tags?: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }>();
+    const map = new Map<string, PersistedPrefs>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as any);
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        map.set(k, v as PersistedPrefs);
+      }
     }
     return map;
   } catch {
@@ -112,6 +122,7 @@ for (const [id, prefs] of savedPrefs) {
     if (prefs.pixelEnabled !== undefined) agent.pixelEnabled = prefs.pixelEnabled;
     if (prefs.characterSpriteId !== undefined) agent.characterSpriteId = prefs.characterSpriteId;
     if (prefs.tags !== undefined) agent.tags = prefs.tags;
+    if (prefs.recipe !== undefined) agent.recipe = prefs.recipe;
   }
 }
 
@@ -239,7 +250,7 @@ function inferActivity(session: CliSession): AgentActivity {
  * Aggregates sessions by agentId — picks the most recently updated session
  * to determine the agent's current activity.
  */
-function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
+function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
   // Group sessions by agentId
   const byAgent = new Map<string, CliSession[]>();
   for (const s of cliSessions) {
@@ -250,12 +261,13 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
     byAgent.set(agentId, list);
   }
 
-  const results: AgentState[] = [];
+  const results = new Map<string, AgentState>();
 
   // Process all registered agents (including those without active sessions)
   for (const [agentId, known] of AGENT_REGISTRY) {
     const sessions = byAgent.get(agentId);
-    const latestSession = sessions?.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
+    const sorted = sessions ? [...sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)) : [];
+    const latestSession = sorted[0];
 
     if (latestSession) {
       const activity = inferActivity(latestSession);
@@ -269,7 +281,7 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         agentTranscriptPaths.set(agentId, transcriptPath);
       }
 
-      const state: AgentState = {
+      results.set(agentId, {
         id: agentId,
         name: known.name,
         activity,
@@ -299,12 +311,10 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
             status: s.status === "completed" ? "completed" as const : s.abortedLastRun ? "failed" as const : "running" as const,
           })),
         sessionUptime: latestSession.updatedAt ? (Date.now() - latestSession.updatedAt) / 1000 : undefined,
-      };
-      agentStates.set(agentId, state);
-      results.push(state);
+      });
     } else {
       // No active session — agent is sleeping
-      const state: AgentState = {
+      results.set(agentId, {
         id: agentId,
         name: known.name,
         activity: "sleeping",
@@ -316,9 +326,7 @@ function mapToAgentStates(cliSessions: CliSession[]): AgentState[] {
         pixelEnabled: known.pixelEnabled,
         tags: known.tags,
         roomId: resolveRoom(known.tags),
-      };
-      agentStates.set(agentId, state);
-      results.push(state);
+      });
     }
   }
 
@@ -466,13 +474,29 @@ async function tailTranscript(
 }
 
 /**
+ * Prune read offsets for agents that are no longer active
+ */
+function pruneReadOffsets(activeAgentIds: Set<string>): void {
+  for (const key of lastReadOffset.keys()) {
+    const agentId = key.split(':')[0];
+    if (!activeAgentIds.has(agentId)) {
+      lastReadOffset.delete(key);
+    }
+  }
+}
+
+/**
  * Poll messages from all active agent transcripts.
  */
 async function pollMessages(): Promise<void> {
   const promises: Promise<TickerMessage[]>[] = [];
 
+  // Collect active agent IDs for pruning
+  const activeAgentIds = new Set<string>();
+
   for (const [agentId, state] of agentStates) {
     if (!state.active) continue;
+    activeAgentIds.add(agentId);
 
     const known = AGENT_REGISTRY.get(agentId);
     if (!known) continue;
@@ -482,6 +506,9 @@ async function pollMessages(): Promise<void> {
       promises.push(tailTranscript(agentId, known.name, transcriptPath));
     }
   }
+
+  // Prune read offsets for inactive agents
+  pruneReadOffsets(activeAgentIds);
 
   const results = await Promise.all(promises);
   const newMsgs = results.flat();
@@ -494,9 +521,18 @@ async function pollMessages(): Promise<void> {
   if (pruned) tickerMessages.splice(0, i);
 
   if (newMsgs.length > 0) {
-    // Add new messages and sort by timestamp
-    tickerMessages.push(...newMsgs);
-    tickerMessages.sort((a, b) => a.timestamp - b.timestamp);
+    // Insert each new message in sorted order (binary search)
+    // Use <= so equal-timestamp messages insert after existing ones (stable order)
+    for (const msg of newMsgs) {
+      let lo = 0;
+      let hi = tickerMessages.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (tickerMessages[mid].timestamp <= msg.timestamp) lo = mid + 1;
+        else hi = mid;
+      }
+      tickerMessages.splice(lo, 0, msg);
+    }
 
     // Trim to buffer size
     while (tickerMessages.length > TICKER_BUFFER_SIZE) {
@@ -524,10 +560,20 @@ async function pollAndBroadcast(): Promise<void> {
   isPolling = true;
   try {
     const { sessions } = await pollSessions();
-    const agentList = mapToAgentStates(sessions);
+    const agentMap = mapToAgentStates(sessions);
+    const agentList = Array.from(agentMap.values());
 
-    // Broadcast to all connected WebSocket clients
-    io.emit("agents:update", agentList);
+    // Create immutable snapshot before any async operations
+    const snapshot = agentList.map(a => ({ ...a }));
+
+    // Update global state atomically
+    agentStates.clear();
+    for (const agent of agentMap.values()) {
+      agentStates.set(agent.id, agent);
+    }
+
+    // Broadcast the snapshot (not the mutable global state)
+    io.emit("agents:update", snapshot);
 
     // Poll messages from transcripts
     await pollMessages();
@@ -539,12 +585,19 @@ async function pollAndBroadcast(): Promise<void> {
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
 const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
+const INGEST_TOKEN_BUF = INGEST_TOKEN ? Buffer.from(INGEST_TOKEN, "utf-8") : Buffer.alloc(0);
 
-function authenticateIngest(req: express.Request, res: express.Response): boolean {
-  if (!INGEST_TOKEN) return false; // no token configured = ingest disabled
+function authenticateIngest(req: express.Request, _res: express.Response): boolean {
+  if (!INGEST_TOKEN_BUF.length) return false;
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Bearer ")) return false;
-  return auth.slice(7) === INGEST_TOKEN;
+  const token = auth.slice(7);
+  const provided = Buffer.from(token, "utf-8");
+  if (INGEST_TOKEN_BUF.length !== provided.length) {
+    timingSafeEqual(INGEST_TOKEN_BUF, Buffer.alloc(INGEST_TOKEN_BUF.length));
+    return false;
+  }
+  return timingSafeEqual(INGEST_TOKEN_BUF, provided);
 }
 
 /**
@@ -572,7 +625,15 @@ app.post("/api/ingest/agents", (req, res) => {
   }
 
   // Map and broadcast
-  const agentList = mapToAgentStates(sessions as CliSession[]);
+  const agentMap = mapToAgentStates(sessions as CliSession[]);
+  const agentList = Array.from(agentMap.values());
+
+  // Update global state
+  agentStates.clear();
+  for (const agent of agentMap.values()) {
+    agentStates.set(agent.id, agent);
+  }
+
   lastIngestAt = Date.now();
   console.log(`[ingest] ${agentList.length} agents updated (${sessions.length} sessions)`);
   io.emit("agents:update", agentList);
@@ -773,16 +834,25 @@ function listLayouts(): OfficeLayoutDoc[] {
   ensureLayoutsDir();
   try {
     const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
-    return files.map(f => {
-      const raw = readFileSync(join(LAYOUTS_DIR, f), "utf-8");
-      return JSON.parse(raw) as OfficeLayoutDoc;
-    }).sort((a, b) => b.updatedAt - a.updatedAt);
+    return files
+      .map(f => {
+        const raw = readFileSync(join(LAYOUTS_DIR, f), "utf-8");
+        return JSON.parse(raw) as OfficeLayoutDoc;
+      })
+      .filter(layout => isValidLayoutId(layout.id)) // Only return layouts with valid IDs
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {
     return [];
   }
 }
 
+/** Validate layout ID to prevent path traversal attacks */
+function isValidLayoutId(id: unknown): boolean {
+  return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 64;
+}
+
 function loadLayout(id: string): OfficeLayoutDoc | null {
+  if (!isValidLayoutId(id)) return null;
   try {
     const raw = readFileSync(join(LAYOUTS_DIR, `${id}.json`), "utf-8");
     return JSON.parse(raw) as OfficeLayoutDoc;
@@ -792,12 +862,14 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
 }
 
 function saveLayout(layout: OfficeLayoutDoc): void {
+  if (!isValidLayoutId(layout.id)) throw new Error(`Invalid layout ID: ${layout.id}`);
   ensureLayoutsDir();
   layout.updatedAt = Date.now();
   writeFileSync(join(LAYOUTS_DIR, `${layout.id}.json`), JSON.stringify(layout, null, 2));
 }
 
 function deleteLayout(id: string): boolean {
+  if (!isValidLayoutId(id)) return false;
   try {
     unlinkSync(join(LAYOUTS_DIR, `${id}.json`));
     return true;
@@ -857,10 +929,12 @@ app.get("/api/layouts", (_req, res) => {
 });
 
 app.get("/api/layouts/:id", (req, res) => {
-  const layout = loadLayout(req.params.id);
+  const { id } = req.params;
+  if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
+  const layout = loadLayout(id);
   if (!layout) {
     // Auto-create default
-    if (req.params.id === "default") {
+    if (id === "default") {
       const def = getDefaultLayout();
       saveLayout(def);
       return res.json(def);
@@ -871,11 +945,13 @@ app.get("/api/layouts/:id", (req, res) => {
 });
 
 app.put("/api/layouts/:id", (req, res) => {
-  const existing = loadLayout(req.params.id);
+  const { id } = req.params;
+  if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
+  const existing = loadLayout(id);
   const layout: OfficeLayoutDoc = {
-    ...(existing || { id: req.params.id, name: req.params.id, width: 24, height: 16 }),
+    ...(existing || { id, name: id, width: 24, height: 16 }),
     ...req.body,
-    id: req.params.id, // prevent id overwrite
+    id, // prevent id overwrite
   };
   saveLayout(layout);
   io.emit("layout:update", layout);
@@ -900,11 +976,16 @@ app.post("/api/layouts", (req, res) => {
 });
 
 app.delete("/api/layouts/:id", (req, res) => {
-  if (req.params.id === "default") {
+  const { id } = req.params;
+  if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
+  if (id === "default") {
     return res.status(403).json({ error: "Cannot delete default layout" });
   }
-  const ok = deleteLayout(req.params.id);
-  res.json({ success: ok });
+  const ok = deleteLayout(id);
+  if (!ok) {
+    return res.status(404).json({ error: "Layout not found" });
+  }
+  res.json({ success: true });
 });
 
 // Furniture catalog (what types are available)
