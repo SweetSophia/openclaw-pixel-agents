@@ -111,13 +111,6 @@ export interface GatewayStatus {
 
 // ── Tags & Rooms ───────────────────────────────────────
 
-/** Paperdoll recipe — defines an agent's visual appearance */
-export interface CharacterRecipe {
-  bodyIndex: number;    // 0-5: skin tone / body type
-  hairIndex: number;    // 0-8: hairstyle
-  outfitIndex: number;  // 0-5: clothing
-}
-
 /** Preset tag categories for agent classification */
 export type AgentTag =
   | 'coding'
