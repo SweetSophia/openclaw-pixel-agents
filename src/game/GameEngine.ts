@@ -250,7 +250,7 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
-  private _currentPhase: { overlay: string; light: number; label: string } = {
+  private _currentPhase: DayPhase = {
     overlay: 'rgba(255, 255, 240, 0.02)',
     light: 1.0,
     label: 'Midday',
@@ -555,7 +555,7 @@ export class GameEngine {
   // ── Day/Night Cycle ──────────────────────────────────
 
   /** Get interpolated day phase data */
-  private getDayPhase(): { overlay: string; light: number; label: string } {
+  private getDayPhase(): DayPhase {
     const idx = this.dayPhase * PARSED_PHASES.length;
     const i = Math.floor(idx) % PARSED_PHASES.length;
     const j = (i + 1) % PARSED_PHASES.length;
