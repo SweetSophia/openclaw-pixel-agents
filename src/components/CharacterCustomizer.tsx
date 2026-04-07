@@ -54,7 +54,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
     // Load source sheets and composite a preview
     let cancelled = false;
 
-    async function renderPreview() {
+    async function renderPreview(c: HTMLCanvasElement, context: CanvasRenderingContext2D) {
       if (cancelled) return;
 
       const BASE = '/assets/source/MetroCity/';
@@ -72,14 +72,14 @@ export const CharacterCustomizer: React.FC<Props> = ({
         if (cancelled) return;
 
         // Clear
-        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        context.clearRect(0, 0, c.width, c.height);
 
         // Draw checkerboard background for transparency
         const CHECK = 6;
-        for (let y = 0; y < previewCanvas.height; y += CHECK) {
-          for (let x = 0; x < previewCanvas.width; x += CHECK) {
-            previewCtx.fillStyle = ((x / CHECK + y / CHECK) % 2 === 0) ? '#1a1a2e' : '#16213e';
-            previewCtx.fillRect(x, y, CHECK, CHECK);
+        for (let y = 0; y < c.height; y += CHECK) {
+          for (let x = 0; x < c.width; x += CHECK) {
+            context.fillStyle = ((x / CHECK + y / CHECK) % 2 === 0) ? '#1a1a2e' : '#16213e';
+            context.fillRect(x, y, CHECK, CHECK);
           }
         }
 
@@ -90,27 +90,28 @@ export const CharacterCustomizer: React.FC<Props> = ({
         const cropH = 32;
 
         // Layer: body
-        previewCtx.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
+        context.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
         // Layer: outfit
-        previewCtx.drawImage(outfitImg, srcX + cropX, 0, cropW, cropH, 16, 8, DST, DST * 2);
+        context.drawImage(outfitImg, srcX + cropX, 0, cropW, cropH, 16, 8, DST, DST * 2);
         // Layer: hair
-        previewCtx.drawImage(hairImg, srcX + cropX, recipe.hairIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
+        context.drawImage(hairImg, srcX + cropX, recipe.hairIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
 
       } catch (err) {
+        // Skip drawing if effect was cancelled or unmounted — a newer render may be in flight
         if (cancelled) return;
 
         // Preview failed — draw fallback
-        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-        previewCtx.fillStyle = '#1a1a2e';
-        previewCtx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
-        previewCtx.fillStyle = '#4ecca3';
-        previewCtx.font = '12px monospace';
-        previewCtx.textAlign = 'center';
-        previewCtx.fillText('Preview', previewCanvas.width / 2, previewCanvas.height / 2);
+        context.clearRect(0, 0, c.width, c.height);
+        context.fillStyle = '#1a1a2e';
+        context.fillRect(0, 0, c.width, c.height);
+        context.fillStyle = '#4ecca3';
+        context.font = '12px monospace';
+        context.textAlign = 'center';
+        context.fillText('Preview', c.width / 2, c.height / 2);
       }
     }
 
-    renderPreview();
+    renderPreview(previewCanvas, previewCtx);
     return () => { cancelled = true; };
   }, [recipe.bodyIndex, recipe.hairIndex, recipe.outfitIndex]);
 
