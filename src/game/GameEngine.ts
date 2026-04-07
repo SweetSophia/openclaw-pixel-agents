@@ -126,22 +126,32 @@ interface DayPhase {
   label: string;
 }
 
+interface ParsedDayPhase {
+  r: number; g: number; b: number; a: number;
+  light: number;
+  label: string;
+}
+
+function parseRgbaStatic(s: string): [number, number, number, number] {
+  const m = s.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
+  if (!m) return [0, 0, 0, 0];
+  return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
+}
+
 const DAY_PHASES: DayPhase[] = [
-  // 0.00-0.15: Morning (warm amber)
   { overlay: 'rgba(255, 200, 100, 0.06)', light: 0.95, label: 'Morning' },
-  // 0.15-0.35: Midday (bright, neutral)
   { overlay: 'rgba(255, 255, 240, 0.02)', light: 1.0, label: 'Midday' },
-  // 0.35-0.50: Afternoon (warm orange)
   { overlay: 'rgba(255, 160, 60, 0.08)', light: 0.9, label: 'Afternoon' },
-  // 0.50-0.60: Sunset (deep orange/red)
   { overlay: 'rgba(255, 100, 30, 0.12)', light: 0.75, label: 'Sunset' },
-  // 0.60-0.75: Dusk (blue-purple)
   { overlay: 'rgba(60, 40, 120, 0.15)', light: 0.55, label: 'Dusk' },
-  // 0.75-0.90: Night (deep blue)
   { overlay: 'rgba(10, 10, 50, 0.25)', light: 0.35, label: 'Night' },
-  // 0.90-1.00: Late night (dark, slight warm)
   { overlay: 'rgba(15, 10, 40, 0.3)', light: 0.25, label: 'Late Night' },
 ];
+
+const PARSED_PHASES: ParsedDayPhase[] = DAY_PHASES.map(p => {
+  const [r, g, b, a] = parseRgbaStatic(p.overlay);
+  return { r, g, b, a, light: p.light, label: p.label };
+});
 
 // ── Ambient Particles ──────────────────────────────────
 
@@ -240,6 +250,11 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
+  private _currentPhase: DayPhase = {
+    overlay: 'rgba(255, 255, 240, 0.02)',
+    light: 1.0,
+    label: 'Midday',
+  };
 
   // Ambient particles (dust motes, steam)
   private ambientParticles: AmbientParticle[] = [];
@@ -528,6 +543,7 @@ export class GameEngine {
 
     // ── Day/night cycle update ──
     this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
+    this._currentPhase = this.getDayPhase();
 
     // ── Ambient particles update ──
     this.updateAmbientParticles(dt);
@@ -538,36 +554,23 @@ export class GameEngine {
 
   // ── Day/Night Cycle ──────────────────────────────────
 
-  /** Parse 'rgba(R, G, B, A)' into [r, g, b, a] */
-  private parseRgba(s: string): [number, number, number, number] {
-    const m = s.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
-    if (!m) return [0, 0, 0, 0];
-    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
-  }
-
-  /** Linearly interpolate two rgba overlay strings */
-  private lerpOverlay(colorA: string, colorB: string, t: number): string {
-    const [r1, g1, b1, a1] = this.parseRgba(colorA);
-    const [r2, g2, b2, a2] = this.parseRgba(colorB);
-    const r = Math.round(r1 + (r2 - r1) * t);
-    const g = Math.round(g1 + (g2 - g1) * t);
-    const b = Math.round(b1 + (b2 - b1) * t);
-    const a = +(a1 + (a2 - a1) * t).toFixed(3);
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
-  }
-
   /** Get interpolated day phase data */
   private getDayPhase(): DayPhase {
-    const idx = this.dayPhase * DAY_PHASES.length;
-    const i = Math.floor(idx) % DAY_PHASES.length;
-    const j = (i + 1) % DAY_PHASES.length;
+    const idx = this.dayPhase * PARSED_PHASES.length;
+    const i = Math.floor(idx) % PARSED_PHASES.length;
+    const j = (i + 1) % PARSED_PHASES.length;
     const t = idx - Math.floor(idx);
 
-    const a = DAY_PHASES[i];
-    const b = DAY_PHASES[j];
+    const a = PARSED_PHASES[i];
+    const b = PARSED_PHASES[j];
+
+    const r = Math.round(a.r + (b.r - a.r) * t);
+    const g = Math.round(a.g + (b.g - a.g) * t);
+    const blue = Math.round(a.b + (b.b - a.b) * t);
+    const alpha = +(a.a + (b.a - a.a) * t).toFixed(3);
 
     return {
-      overlay: this.lerpOverlay(a.overlay, b.overlay, t),
+      overlay: `rgba(${r}, ${g}, ${blue}, ${alpha})`,
       light: a.light + (b.light - a.light) * t,
       label: t < 0.5 ? a.label : b.label,
     };
@@ -576,7 +579,7 @@ export class GameEngine {
   /** Render day/night color overlay and monitor glow */
   private renderDayNight(tileSize: number) {
     const { ctx, config } = this;
-    const phase = this.getDayPhase();
+    const phase = this._currentPhase;
 
     // Color overlay
     ctx.fillStyle = phase.overlay;
@@ -621,8 +624,13 @@ export class GameEngine {
     const w = config.gridWidth;
     const h = config.gridHeight;
 
+    // Count dust particles
+    let dustCount = 0;
+    for (const p of this.ambientParticles) {
+      if (p.type === 'dust') dustCount++;
+    }
+
     // Spawn new dust motes
-    const dustCount = this.ambientParticles.filter(p => p.type === 'dust').length;
     let dustToAdd = AMBIENT_DUST_COUNT - dustCount;
     while (dustToAdd-- > 0) {
       const life = 8 + Math.random() * 12;
@@ -646,9 +654,10 @@ export class GameEngine {
     // Spawn steam near coffee cup furniture items
     for (const item of this.placedFurniture) {
       if (item.type.toLowerCase().includes('coffee') || item.type.toLowerCase().includes('cup')) {
-        const steamCount = this.ambientParticles.filter(
-          p => p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1
-        ).length;
+        let steamCount = 0;
+        for (const p of this.ambientParticles) {
+          if (p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1) steamCount++;
+        }
         if (steamCount < 3 && Math.random() < dt * 0.5) {
           this.ambientParticles.push({
             x: item.x + 0.3 + Math.random() * 0.4,
@@ -670,7 +679,7 @@ export class GameEngine {
     }
 
     // Spawn sparkles near monitors (at night)
-    const phase = this.getDayPhase();
+    const phase = this._currentPhase;
     if (phase.light < 0.5 && Math.random() < dt * 2) {
       const typingAgents = Array.from(this.characters.values()).filter(
         c => c.state === 'typing' || c.state === 'running_command'
@@ -719,8 +728,14 @@ export class GameEngine {
       if (p.x > config.gridWidth) p.x = 0;
     }
 
-    // Remove dead particles
-    this.ambientParticles = this.ambientParticles.filter(p => p.life > 0);
+    // Remove dead particles (in-place to avoid GC pressure)
+    let writeIdx = 0;
+    for (let i = 0; i < this.ambientParticles.length; i++) {
+      if (this.ambientParticles[i].life > 0) {
+        this.ambientParticles[writeIdx++] = this.ambientParticles[i];
+      }
+    }
+    this.ambientParticles.length = writeIdx;
   }
 
   private renderAmbientParticles(tileSize: number) {
@@ -1002,7 +1017,6 @@ export class GameEngine {
   }
 
   private renderCharacters(tileSize: number, zoom: number) {
-    // Sort by Y for depth (characters lower on screen render on top)
     const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
     for (const char of sorted) {
       this.renderCharacter(char, tileSize, zoom);

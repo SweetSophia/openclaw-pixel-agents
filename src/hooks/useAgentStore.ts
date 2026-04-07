@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
 
@@ -104,10 +104,10 @@ export function useAgentStore() {
   }, []);
 
   /** Filter agents visible in the current room */
-  const roomAgents = agents.filter(a =>
+  const roomAgents = useMemo(() => agents.filter(a =>
     a.roomId === activeRoomId
     || (a.roomId == null && activeRoomId === 'office')
-  );
+  ), [agents, activeRoomId]);
 
   /** Update character recipe (paperdoll body/hair/outfit) for an agent */
   const updateRecipe = useCallback(async (agentId: string, recipe: CharacterRecipe) => {
