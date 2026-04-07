@@ -509,9 +509,17 @@ async function pollMessages(): Promise<void> {
   if (pruned) tickerMessages.splice(0, i);
 
   if (newMsgs.length > 0) {
-    // Add new messages and sort by timestamp
-    tickerMessages.push(...newMsgs);
-    tickerMessages.sort((a, b) => a.timestamp - b.timestamp);
+    // Insert each new message in sorted order (binary search)
+    for (const msg of newMsgs) {
+      let lo = 0;
+      let hi = tickerMessages.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (tickerMessages[mid].timestamp < msg.timestamp) lo = mid + 1;
+        else hi = mid;
+      }
+      tickerMessages.splice(lo, 0, msg);
+    }
 
     // Trim to buffer size
     while (tickerMessages.length > TICKER_BUFFER_SIZE) {
