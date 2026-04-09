@@ -204,6 +204,7 @@ export class GameEngine {
   private _renderDiagLogged = false;
   private _furnitureDiagLogged = false;
   private characters_sprites: LoadedCharacter[] = [];
+  private characterSpriteOverrides: Map<string, LoadedCharacter> = new Map();
   private floors: LoadedFloor[] = [];
   private furniture: Map<string, LoadedFurnitureItem> = new Map();
   private zoom: number;
@@ -1069,7 +1070,8 @@ export class GameEngine {
     if (sprites == null || sprites.length === 0) {
       this.renderPlaceholderCharacter(char, px, py, tileSize);
     } else {
-      const sprite = sprites[char.paletteIndex % sprites.length];
+      const override = this.characterSpriteOverrides.get(char.id);
+      const sprite = override ?? sprites[char.paletteIndex % sprites.length];
       if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
       else {
         const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
@@ -1862,6 +1864,11 @@ export class GameEngine {
   }
 
   // ── Public API ──────────────────────────────────────────
+
+  /** Replace the sprite for a specific agent (e.g. after recipe change). */
+  setCharacterSprite(agentId: string, sprite: LoadedCharacter) {
+    this.characterSpriteOverrides.set(agentId, sprite);
+  }
 
   addCharacter(data: CharacterData) {
     const paletteIndex = AGENT_PALETTES[data.id] ?? Math.floor(Math.random() * 6);

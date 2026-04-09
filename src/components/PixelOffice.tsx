@@ -2,6 +2,8 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { AgentState, PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc } from '../hooks/useLayoutStore';
 import { GameEngine } from '../game/GameEngine';
+import { recomposeAgent } from '../game/SpriteLoader';
+import type { CharacterRecipe } from '../game/CharacterComposer';
 import './PixelOffice.css';
 
 interface Props {
@@ -25,6 +27,7 @@ export const PixelOffice: React.FC<Props> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const prevRecipesRef = useRef<Record<string, string>>({});
 
   // Initialize engine
   useEffect(() => {
@@ -85,6 +88,23 @@ export const PixelOffice: React.FC<Props> = ({
     if (!engineRef.current || !activeLayout) return;
     engineRef.current.setLayout(activeLayout.furniture, activeLayout.seats);
   }, [activeLayout?.id, furnitureKey, seatsKey]);
+
+  // Sync agent recipes → recompute sprites
+  useEffect(() => {
+    if (!engineRef.current || !loaded) return;
+    const prev = prevRecipesRef.current;
+    const curr: Record<string, string> = {};
+    for (const agent of agents) {
+      if (!agent.recipe || !agent.pixelEnabled) continue;
+      const key = `${agent.recipe.bodyIndex}-${agent.recipe.hairIndex}-${agent.recipe.outfitIndex}`;
+      curr[agent.id] = key;
+      if (prev[agent.id] !== key) {
+        const sprite = recomposeAgent(agent.id, agent.recipe);
+        if (sprite) engineRef.current!.setCharacterSprite(agent.id, sprite);
+      }
+    }
+    prevRecipesRef.current = curr;
+  }, [agents, loaded]);
 
   // Sync agent states
   useEffect(() => {
