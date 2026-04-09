@@ -9,6 +9,7 @@ A pixel art office dashboard for [OpenClaw](https://github.com/openclaw/openclaw
 
 <img width="797" height="6560" alt="screenshot-office" src="https://github.com/user-attachments/assets/0f67fc70-269f-4458-af88-f79a499e8b1b" />
 <img width="797" height="660" alt="screenshot-furniture" src="https://github.com/user-attachments/assets/6b834772-5973-4a55-a58e-891e4bc4fdde" />
+<img width="578" height="321" alt="character-customization" src="https://github.com/user-attachments/assets/9a0a0315-a7a5-4907-adf5-a68dd8010ed3" />
 
 
 ## What It Does
