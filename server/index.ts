@@ -300,6 +300,7 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
         tags: known.tags,
+        recipe: known.recipe,
         roomId: resolveRoom(known.tags),
         subAgents: sessions
           ?.filter((s) => s.kind === "subagent")
@@ -325,6 +326,7 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
         tags: known.tags,
+        recipe: known.recipe,
         roomId: resolveRoom(known.tags),
       });
     }
