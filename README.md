@@ -7,11 +7,14 @@ A pixel art office dashboard for [OpenClaw](https://github.com/openclaw/openclaw
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)
 ![Vite](https://img.shields.io/badge/Vite-6-646cff.svg)
 
+<img width="797" height="6560" alt="screenshot-office" src="https://github.com/user-attachments/assets/0f67fc70-269f-4458-af88-f79a499e8b1b" />
+<img width="797" height="660" alt="screenshot-furniture" src="https://github.com/user-attachments/assets/6b834772-5973-4a55-a58e-891e4bc4fdde" />
+
+
 ## What It Does
 
 Turns your OpenClaw multi-agent system into a live pixel art office. Each agent becomes a character that walks to their desk, sits down, and animates based on real agent state — typing when writing code, reading when analyzing, thinking when reasoning, waiting when they need your attention.
 
-![Pixel Office](docs/screenshot.png)
 
 ## Features
 
