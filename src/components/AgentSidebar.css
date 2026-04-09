@@ -30,6 +30,28 @@
   transition: border-color 0.2s, opacity 0.3s, transform 0.15s;
 }
 
+.agent-card-inner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.agent-portrait-wrapper {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  background: #0f346020;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-content {
+  flex: 1;
+  min-width: 0;
+}
+
 .agent-card.active {
   border-color: #4ecca3;
 }
@@ -49,11 +71,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .agent-icon {
-  font-size: 16px;
+  font-size: 12px;
 }
 
 .agent-name {
@@ -94,7 +116,8 @@
 .agent-details {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  margin-bottom: 2px;
 }
 
 .activity-badge {
@@ -112,7 +135,7 @@
 }
 
 .agent-tokens {
-  margin-top: 6px;
+  margin-top: 4px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -142,7 +165,7 @@
 
 /* Tag badges */
 .agent-tags {
-  margin-top: 6px;
+  margin-top: 4px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
