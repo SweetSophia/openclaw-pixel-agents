@@ -117,7 +117,9 @@ export const PixelOffice: React.FC<Props> = ({
     const activeIds = new Set(agents.filter(a => a.pixelEnabled).map(a => a.id));
 
     // Remove characters no longer in this room's agent list (handles room switches)
+    // Skip sub-agent IDs — they are managed by the dedicated sub-agent cleanup loop below
     for (const id of currentIdsArray) {
+      if (id.startsWith('sub-')) continue;
       if (!agentIds.has(id) || !activeIds.has(id)) {
         engine.removeCharacter(id);
       }

@@ -610,6 +610,22 @@ function authenticateIngest(req: express.Request, _res: express.Response): boole
  *
  * When valid ingest data arrives, it replaces the CLI-poll result and broadcasts.
  */
+
+// In-process rate limiter: max RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS per token
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 10;
+const ingestRateBuckets = new Map<string, number[]>();
+
+// Periodically prune expired rate-limit entries to prevent memory leak
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [key, timestamps] of ingestRateBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) ingestRateBuckets.delete(key);
+    else ingestRateBuckets.set(key, pruned);
+  }
+}, RATE_LIMIT_WINDOW_MS);
+
 app.post("/api/ingest/agents", (req, res) => {
   if (!INGEST_TOKEN) {
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
@@ -619,6 +635,19 @@ app.post("/api/ingest/agents", (req, res) => {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
+
+  // Rate limiting: track requests per token
+  const rateKey = req.headers.authorization || req.ip || "unknown";
+  const now = Date.now();
+  const bucket = ingestRateBuckets.get(rateKey) || [];
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recentRequests = bucket.filter(t => t > windowStart);
+  if (recentRequests.length >= RATE_LIMIT_MAX) {
+    res.status(429).json({ error: "Too many requests" });
+    return;
+  }
+  recentRequests.push(now);
+  ingestRateBuckets.set(rateKey, recentRequests);
 
   const { sessions } = req.body;
   if (!Array.isArray(sessions)) {
@@ -954,6 +983,17 @@ app.put("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const existing = loadLayout(id);
+
+  // Server-side conflict detection: reject stale writes
+  if (existing && req.body.updatedAt != null && existing.updatedAt != null) {
+    if (req.body.updatedAt < existing.updatedAt) {
+      return res.status(409).json({
+        error: "Conflict: your data is stale. Reload and try again.",
+        serverUpdatedAt: existing.updatedAt,
+      });
+    }
+  }
+
   const layout: OfficeLayoutDoc = {
     ...(existing || { id, name: id, width: 24, height: 16 }),
     ...req.body,

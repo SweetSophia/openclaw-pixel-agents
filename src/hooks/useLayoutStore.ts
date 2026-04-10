@@ -52,13 +52,18 @@ export function useLayoutStore() {
     abortControllerRef.current = ac;
 
     try {
-      await fetch(`${API_BASE}/layouts/${merged.id}`, {
+      const response = await fetch(`${API_BASE}/layouts/${merged.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(merged),
         signal: ac.signal,
       });
       if (!ac.signal.aborted) {
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => null);
+          console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
+          return;
+        }
         setActiveLayout(merged);
         fetchLayouts();
       }

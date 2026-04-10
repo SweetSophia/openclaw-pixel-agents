@@ -437,7 +437,7 @@ export class GameEngine {
     for (const char of this.characters.values()) {
       // Sub-agent lifecycle
       if (char.isSubAgent) {
-        const age = now - char.spawnTime;
+        const age = this.nowMs - char.spawnTime;
         if (age > SUBAGENT_LIFETIME && !char.dying) {
           char.dying = true;
           sfx.despawn();
@@ -550,7 +550,7 @@ export class GameEngine {
       fx.particles = fx.particles.filter(p => p.life > 0);
     }
     this.stateEffects = this.stateEffects.filter(fx =>
-      nowMs - fx.startTime < fx.duration || fx.particles.length > 0
+      this.nowMs - fx.startTime < fx.duration || fx.particles.length > 0
     );
 
     // ── Day/night cycle update ──
