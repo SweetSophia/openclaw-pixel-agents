@@ -15,9 +15,20 @@ export interface LayoutDoc {
 
 export function useLayoutStore() {
   const [layouts, setLayouts] = useState<LayoutDoc[]>([]);
-  const [activeLayout, setActiveLayout] = useState<LayoutDoc | null>(null);
+  const [activeLayoutState, _setActiveLayout] = useState<LayoutDoc | null>(null);
+  const activeLayoutRef = useRef<LayoutDoc | null>(null);
   const [catalog, setCatalog] = useState<string[]>([]);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
+
+  const setActiveLayout = useCallback((layout: LayoutDoc | null | ((prev: LayoutDoc | null) => LayoutDoc | null)) => {
+    _setActiveLayout(prev => {
+      const next = typeof layout === 'function' ? layout(prev) : layout;
+      activeLayoutRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const activeLayout = activeLayoutState;
 
   const fetchLayouts = useCallback(async () => {
     try {
@@ -39,26 +50,21 @@ export function useLayoutStore() {
       console.error('Failed to load layout:', err);
       return null;
     }
-  }, []);
+  }, [setActiveLayout]);
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
-    if (!activeLayout) return;
-    const merged = { ...activeLayout, ...updates, baseUpdatedAt: activeLayout.updatedAt, updatedAt: Date.now() };
+    savePromiseRef.current = savePromiseRef.current.then(async () => {
+      const currentLayout = activeLayoutRef.current;
+      if (!currentLayout) return;
 
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    const ac = new AbortController();
-    abortControllerRef.current = ac;
+      const merged = { ...currentLayout, ...updates, baseUpdatedAt: currentLayout.updatedAt, updatedAt: Date.now() };
 
-    try {
-      const response = await fetch(`${API_BASE}/layouts/${merged.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(merged),
-        signal: ac.signal,
-      });
-      if (!ac.signal.aborted) {
+      try {
+        const response = await fetch(`${API_BASE}/layouts/${merged.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged),
+        });
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
           console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
@@ -67,13 +73,12 @@ export function useLayoutStore() {
         const data = await response.json().catch(() => null);
         setActiveLayout(data?.layout ?? merged);
         fetchLayouts();
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
+      } catch (err: any) {
         console.error('Failed to save layout:', err);
       }
-    }
-  }, [activeLayout, fetchLayouts]);
+    });
+    return savePromiseRef.current;
+  }, [fetchLayouts, setActiveLayout]);
 
   const createLayout = useCallback(async (name: string) => {
     try {

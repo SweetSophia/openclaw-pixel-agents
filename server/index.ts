@@ -991,7 +991,7 @@ app.put("/api/layouts/:id", (req, res) => {
   const existing = loadLayout(id);
 
   // Server-side conflict detection: reject stale writes using baseUpdatedAt
-  const baseUpdatedAt = req.body.baseUpdatedAt;
+  const { baseUpdatedAt, ...body } = req.body;
   if (existing && baseUpdatedAt != null && existing.updatedAt != null) {
     if (baseUpdatedAt < existing.updatedAt) {
       return res.status(409).json({
@@ -1003,7 +1003,7 @@ app.put("/api/layouts/:id", (req, res) => {
 
   const layout: OfficeLayoutDoc = {
     ...(existing || { id, name: id, width: 24, height: 16 }),
-    ...req.body,
+    ...body,
     id, // prevent id overwrite
   };
   saveLayout(layout);
