@@ -43,7 +43,7 @@ export function useLayoutStore() {
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     if (!activeLayout) return;
-    const merged = { ...activeLayout, ...updates, updatedAt: Date.now() };
+    const merged = { ...activeLayout, ...updates, baseUpdatedAt: activeLayout.updatedAt, updatedAt: Date.now() };
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -64,7 +64,8 @@ export function useLayoutStore() {
           console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
           return;
         }
-        setActiveLayout(merged);
+        const data = await response.json().catch(() => null);
+        setActiveLayout(data?.layout ?? merged);
         fetchLayouts();
       }
     } catch (err: any) {

@@ -923,9 +923,24 @@ export class GameEngine {
       this.floorCacheValid = true;
     }
     
-    if (this.floorCacheCanvas) {
+    if (this.floorCacheCanvas && this.floorCacheValid) {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(this.floorCacheCanvas, 0, 0);
+    } else if (!this.floorCacheCtx) {
+      // Fallback: render floor directly when OffscreenCanvas context unavailable
+      for (let row = 0; row < gridH; row++) {
+        for (let col = 0; col < gridW; col++) {
+          const px = col * tileSize, py = row * tileSize;
+          if (hasFloor) {
+            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
+          } else {
+            ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ctx.fillRect(px, py, tileSize, tileSize);
+          }
+        }
+      }
     }
   }
 

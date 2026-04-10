@@ -636,8 +636,14 @@ app.post("/api/ingest/agents", (req, res) => {
     return;
   }
 
-  // Rate limiting: track requests per token
-  const rateKey = req.headers.authorization || req.ip || "unknown";
+  // Rate limiting: track requests per derived key (avoid storing raw token)
+  const rawKey = req.headers.authorization || req.ip || "unknown";
+  // Simple hash to avoid keeping sensitive tokens in memory
+  let hash = 0;
+  for (let i = 0; i < rawKey.length; i++) {
+    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
+  }
+  const rateKey = `ingest:${hash}`;
   const now = Date.now();
   const bucket = ingestRateBuckets.get(rateKey) || [];
   const windowStart = now - RATE_LIMIT_WINDOW_MS;
@@ -984,9 +990,10 @@ app.put("/api/layouts/:id", (req, res) => {
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const existing = loadLayout(id);
 
-  // Server-side conflict detection: reject stale writes
-  if (existing && req.body.updatedAt != null && existing.updatedAt != null) {
-    if (req.body.updatedAt < existing.updatedAt) {
+  // Server-side conflict detection: reject stale writes using baseUpdatedAt
+  const baseUpdatedAt = req.body.baseUpdatedAt;
+  if (existing && baseUpdatedAt != null && existing.updatedAt != null) {
+    if (baseUpdatedAt < existing.updatedAt) {
       return res.status(409).json({
         error: "Conflict: your data is stale. Reload and try again.",
         serverUpdatedAt: existing.updatedAt,

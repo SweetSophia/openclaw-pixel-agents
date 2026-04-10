@@ -38,7 +38,7 @@ export const PixelOffice: React.FC<Props> = ({
     });
     engineRef.current = engine;
 
-    engine.init(ac.signal).then(() => {
+    engine.init(ac.signal, import.meta.env.DEV).then(() => {
       if (ac.signal.aborted) return;
       engine.start();
       setLoaded(true);
