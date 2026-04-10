@@ -34,8 +34,8 @@ app.use((_req, res, next) => {
 
 app.use(express.json());
 
-// Serve built frontend in production (Vite output is in dist/client, server is in dist/server/server)
-const FRONTEND_DIR = join(__dirname, "..", "..", "client");
+// Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
+const FRONTEND_DIR = join(__dirname, "..", "client");
 if (existsSync(FRONTEND_DIR)) {
   app.use(express.static(FRONTEND_DIR));
 }
