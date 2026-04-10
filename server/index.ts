@@ -28,7 +28,7 @@ const io = new SocketIOServer(server, {
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'");
   next();
 });
 
@@ -98,6 +98,7 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
     const map = new Map<string, PersistedPrefs>();
+
     for (const [k, v] of Object.entries(data)) {
       if (v && typeof v === 'object' && !Array.isArray(v)) {
         map.set(k, v as PersistedPrefs);
@@ -249,6 +250,7 @@ function inferActivity(session: CliSession): AgentActivity {
 
   if (ageMin < 2 && hasOutput) return "typing";
   if (ageMin < 2 && hasInput) return "reading";
+
   if (ageMin < 5) return "thinking";
 
   return "idle";
@@ -660,14 +662,10 @@ let lastIngestAt = 0;
 app.use((req, res, next) => {
   if (req.method === "GET") return next();
   if (req.path === "/api/ingest/agents") return next(); // Handles its own auth
-  
-  const ip = req.ip || req.socket.remoteAddress || "";
-  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
-  if (isLocal) return next();
-  
+
   if (authenticateIngest(req, res)) return next();
-  
-  res.status(403).json({ error: "Modifications from remote IPs require INGEST_API_TOKEN Authorization header" });
+
+  res.status(403).json({ error: "Modifications require a valid INGEST_API_TOKEN Authorization header" });
 });
 
 app.get("/api/agents", (_req, res) => {
@@ -958,6 +956,7 @@ app.get("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const layout = loadLayout(id);
+
   if (!layout) {
     // Auto-create default
     if (id === "default") {
