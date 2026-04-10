@@ -28,7 +28,7 @@ const io = new SocketIOServer(server, {
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:");
   next();
 });
 
@@ -659,13 +659,19 @@ let lastIngestAt = 0;
 // ---- REST API ----
 
 // General authorization middleware for state-modifying REST endpoints
-app.use((req, res, next) => {
+// Scoped to /api to avoid blocking Socket.IO polling transport POSTs
+app.use("/api", (req, res, next) => {
   if (req.method === "GET") return next();
-  if (req.path === "/api/ingest/agents") return next(); // Handles its own auth
+  if (req.path === "/ingest/agents") return next(); // Handles its own auth
+
+  // Allow unauthenticated modifications from localhost
+  const remoteAddr = req.socket.remoteAddress;
+  const isLocal = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
+  if (isLocal) return next();
 
   if (authenticateIngest(req, res)) return next();
 
-  res.status(403).json({ error: "Modifications require a valid INGEST_API_TOKEN Authorization header" });
+  res.status(401).json({ error: "Authentication required: provide 'Authorization: Bearer <INGEST_API_TOKEN>' header" });
 });
 
 app.get("/api/agents", (_req, res) => {
