@@ -34,8 +34,8 @@ app.use((_req, res, next) => {
 
 app.use(express.json());
 
-// Serve built frontend in production (Vite output is in dist/client, server is in dist/server)
-const FRONTEND_DIR = join(__dirname, "..", "client");
+// Serve built frontend in production (Vite output is in dist/client, server is in dist/server/server)
+const FRONTEND_DIR = join(__dirname, "..", "..", "client");
 if (existsSync(FRONTEND_DIR)) {
   app.use(express.static(FRONTEND_DIR));
 }
@@ -664,10 +664,12 @@ app.use("/api", (req, res, next) => {
   if (req.method === "GET") return next();
   if (req.path === "/ingest/agents") return next(); // Handles its own auth
 
-  // Allow unauthenticated modifications from localhost
-  const remoteAddr = req.socket.remoteAddress;
-  const isLocal = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
-  if (isLocal) return next();
+  // Allow unauthenticated modifications from localhost only when explicitly opted in
+  if (process.env.ALLOW_LOCAL_AUTH_BYPASS === "true") {
+    const remoteAddr = req.socket.remoteAddress;
+    const isLocal = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
+    if (isLocal) return next();
+  }
 
   if (authenticateIngest(req, res)) return next();
 
