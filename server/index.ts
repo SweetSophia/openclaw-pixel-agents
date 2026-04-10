@@ -13,7 +13,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
@@ -35,7 +35,7 @@ app.use((_req, res, next) => {
 app.use(express.json());
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
-const FRONTEND_DIR = join(__dirname, "..", "client");
+const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
 if (existsSync(FRONTEND_DIR)) {
   app.use(express.static(FRONTEND_DIR));
 }
@@ -663,13 +663,6 @@ let lastIngestAt = 0;
 app.use("/api", (req, res, next) => {
   if (req.method === "GET") return next();
   if (req.path === "/ingest/agents") return next(); // Handles its own auth
-
-  // Allow unauthenticated modifications from localhost only when explicitly opted in
-  if (process.env.ALLOW_LOCAL_AUTH_BYPASS === "true") {
-    const remoteAddr = req.socket.remoteAddress;
-    const isLocal = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
-    if (isLocal) return next();
-  }
 
   if (authenticateIngest(req, res)) return next();
 
