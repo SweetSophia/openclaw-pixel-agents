@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PlacedFurniture, OfficeLayout } from '../../shared/types';
 
 const API_BASE = '/api';
@@ -17,6 +17,7 @@ export function useLayoutStore() {
   const [layouts, setLayouts] = useState<LayoutDoc[]>([]);
   const [activeLayout, setActiveLayout] = useState<LayoutDoc | null>(null);
   const [catalog, setCatalog] = useState<string[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchLayouts = useCallback(async () => {
     try {
@@ -43,16 +44,28 @@ export function useLayoutStore() {
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     if (!activeLayout) return;
     const merged = { ...activeLayout, ...updates, updatedAt: Date.now() };
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
     try {
       await fetch(`${API_BASE}/layouts/${merged.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(merged),
+        signal: ac.signal,
       });
-      setActiveLayout(merged);
-      fetchLayouts();
-    } catch (err) {
-      console.error('Failed to save layout:', err);
+      if (!ac.signal.aborted) {
+        setActiveLayout(merged);
+        fetchLayouts();
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Failed to save layout:', err);
+      }
     }
   }, [activeLayout, fetchLayouts]);
 

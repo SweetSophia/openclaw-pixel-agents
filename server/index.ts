@@ -24,7 +24,7 @@ const io = new SocketIOServer(server, {
   cors: { origin: "*" },
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "100kb" }));
 
 // Serve built frontend in production (Vite output is in dist/ at project root)
 const FRONTEND_DIR = join(__dirname, "..", "..");
@@ -623,6 +623,10 @@ app.post("/api/ingest/agents", (req, res) => {
   const { sessions } = req.body;
   if (!Array.isArray(sessions)) {
     res.status(400).json({ error: "Missing or invalid 'sessions' array" });
+    return;
+  }
+  if (sessions.length > 50) {
+    res.status(413).json({ error: "Payload too large: maximum 50 sessions allowed" });
     return;
   }
 
