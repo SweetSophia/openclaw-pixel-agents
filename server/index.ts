@@ -21,14 +21,24 @@ import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivit
 const app = express();
 const server = createServer(app);
 const io = new SocketIOServer(server, {
-  cors: { origin: "*" },
+  cors: { origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*") },
+});
+
+// Basic security headers
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  next();
 });
 
 app.use(express.json());
 
-// Serve built frontend in production (Vite output is in dist/ at project root)
-const FRONTEND_DIR = join(__dirname, "..", "..");
-app.use(express.static(FRONTEND_DIR));
+// Serve built frontend in production (Vite output is in dist/client, server is in dist/server)
+const FRONTEND_DIR = join(__dirname, "..", "client");
+if (existsSync(FRONTEND_DIR)) {
+  app.use(express.static(FRONTEND_DIR));
+}
 
 // ---- Configuration ----
 
@@ -645,6 +655,20 @@ app.post("/api/ingest/agents", (req, res) => {
 let lastIngestAt = 0;
 
 // ---- REST API ----
+
+// General authorization middleware for state-modifying REST endpoints
+app.use((req, res, next) => {
+  if (req.method === "GET") return next();
+  if (req.path === "/api/ingest/agents") return next(); // Handles its own auth
+  
+  const ip = req.ip || req.socket.remoteAddress || "";
+  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+  if (isLocal) return next();
+  
+  if (authenticateIngest(req, res)) return next();
+  
+  res.status(403).json({ error: "Modifications from remote IPs require INGEST_API_TOKEN Authorization header" });
+});
 
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });

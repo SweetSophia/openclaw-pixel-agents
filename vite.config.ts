@@ -4,6 +4,9 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    outDir: 'dist/client',
+  },
   resolve: {
     alias: {
       '@shared': path.resolve(__dirname, 'shared'),
