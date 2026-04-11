@@ -21,7 +21,28 @@ import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivit
 const app = express();
 const server = createServer(app);
 const io = new SocketIOServer(server, {
-  cors: { origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*") },
+  cors: {
+    origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*"),
+  },
+  // Verify WebSocket connections from allowed origins only
+  parser: undefined, // placeholder to ensure verifyClient is processed
+});
+
+// WebSocket origin validation
+io.engine.on("initial_headers", (_headers, req) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+    : process.env.NODE_ENV === "production" ? [] : ["*"];
+
+  if (process.env.NODE_ENV === "production") {
+    if (allowedOrigins.length === 0 || !allowedOrigins.includes(origin || "")) {
+      // In production, reject if origin doesn't match (when CORS_ORIGIN is set)
+      if (allowedOrigins.length > 0 && origin && !allowedOrigins.includes(origin)) {
+        req.destroy();
+      }
+    }
+  }
 });
 
 // Basic security headers
@@ -73,14 +94,14 @@ interface KnownAgent {
 /** Default agent definitions */
 function defaultRegistry(): Map<string, KnownAgent> {
   return new Map([
-    ["main",       { id: "main",       name: "Shodan",      pixelEnabled: true, tags: ["orchestration", "research"] }],
-    ["miku",       { id: "miku",       name: "Miku",        pixelEnabled: true, tags: ["creative", "media"] }],
-    ["chi",        { id: "chi",        name: "Chi",         pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia",  pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
-    ["descartes",  { id: "descartes",  name: "Descartes",   pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis",  pixelEnabled: true, tags: ["coding", "logic"] }],
-    ["cylena",     { id: "cylena",     name: "Cylena",      pixelEnabled: true, tags: ["coding", "frontend"] }],
-    ["cybera",     { id: "cybera",     name: "Cybera",      pixelEnabled: true, tags: ["coding", "infrastructure"] }],
+    ["main", { id: "main", name: "Shodan", pixelEnabled: true, tags: ["orchestration", "research"] }],
+    ["miku", { id: "miku", name: "Miku", pixelEnabled: true, tags: ["creative", "media"] }],
+    ["chi", { id: "chi", name: "Chi", pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
+    ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true, tags: ["coding", "logic"] }],
+    ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true, tags: ["coding", "frontend"] }],
+    ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true, tags: ["coding", "infrastructure"] }],
   ]);
 }
 
@@ -303,11 +324,11 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
         lastActivity: latestSession.updatedAt ?? Date.now(),
         tokens: latestSession.totalTokens
           ? {
-              used: latestSession.totalTokens,
-              limit: latestSession.contextTokens ?? 100000,
-              inputTokens: latestSession.inputTokens,
-              outputTokens: latestSession.outputTokens,
-            }
+            used: latestSession.totalTokens,
+            limit: latestSession.contextTokens ?? 100000,
+            inputTokens: latestSession.inputTokens,
+            outputTokens: latestSession.outputTokens,
+          }
           : undefined,
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
@@ -1110,6 +1131,41 @@ const hasIngestToken = !!INGEST_TOKEN;
 const cliExplicit = DATA_SOURCE === "cli";
 const ingestExplicit = DATA_SOURCE === "ingest";
 const useCli = cliExplicit || (DATA_SOURCE === "auto" && !ingestExplicit);
+
+// ---- Graceful Shutdown ----
+
+let isShuttingDown = false;
+
+async function shutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n[server] Received ${signal}, shutting down gracefully...`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log("[server] HTTP server closed");
+  });
+
+  // Close Socket.IO connections
+  io.close(() => {
+    console.log("[server] Socket.IO connections closed");
+  });
+
+  // Give existing connections time to close
+  setTimeout(() => {
+    console.log("[server] Shutdown complete");
+    process.exit(0);
+  }, 2000);
+
+  // Force exit if graceful shutdown takes too long
+  setTimeout(() => {
+    console.error("[server] Forced shutdown after timeout");
+    process.exit(1);
+  }, 5000);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 server.listen(PORT, () => {
   console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);

@@ -379,7 +379,9 @@ export class GameEngine {
   private loop = () => {
     if (!this.running) return;
     this.nowMs = performance.now();
-    const dt = (this.nowMs - this.lastTime) / 1000;
+    const rawDt = (this.nowMs - this.lastTime) / 1000;
+    // Clamp delta time to prevent teleportation when tab is backgrounded
+    const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
     this.lastTime = this.nowMs;
     this.update(dt);
     this.render();

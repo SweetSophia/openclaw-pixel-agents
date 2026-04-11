@@ -24,4 +24,4 @@ RUN mkdir -p /app/data && chown -R appuser:appuser /app/data /app
 
 USER appuser
 
-CMD ["node", "dist/server/server/index.js"]
+CMD ["node", "dist/server/index.js"]
