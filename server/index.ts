@@ -35,16 +35,12 @@ const io = new SocketIOServer(server, {
 });
 
 // WebSocket origin validation
-io.engine.on("initial_headers", (_headers, req) => {
+io.engine.on("initial_headers", (_headers, req: any) => {
   if (allowAllOrigins) return; // Dev mode: allow all
-  if (allowedOrigins.length === 0) {
-    // Production with no CORS_ORIGIN configured: reject all WebSocket upgrades
-    req.destroy();
-    return;
-  }
-  const origin = req.headers.origin;
-  if (!origin || !allowedOrigins.includes(origin)) {
-    req.destroy();
+  if (allowedOrigins.length === 0 || !allowedOrigins.includes(req.headers.origin)) {
+    // Send explicit 403 before destroying to avoid noisy engine.io error logs
+    req.socket?.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    req.socket?.destroy();
   }
 });
 
