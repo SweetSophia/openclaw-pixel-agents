@@ -1352,9 +1352,9 @@ export class GameEngine {
 
   // ── Mouse handlers ───────────────────────────────────
 
-  private screenToGrid(e: MouseEvent): { gridX: number; gridY: number };
-  private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number };
-  private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } {
+  private screenToGrid(e: MouseEvent): { gridX: number; gridY: number } | null;
+  private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number } | null;
+  private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } | null {
     const rect = this.canvas.getBoundingClientRect();
     const canvas = this.canvas;
 
@@ -1386,6 +1386,12 @@ export class GameEngine {
     const clientX = typeof eOrX === 'number' ? eOrX : eOrX.clientX;
     const clientY = typeof eOrX === 'number' ? maybeY! : eOrX.clientY;
 
+    // Check if click falls within the rendered canvas area (not in letterbox/pillarbox)
+    if (clientX < offsetX || clientX > offsetX + renderedWidth ||
+      clientY < offsetY || clientY > offsetY + renderedHeight) {
+      return null;
+    }
+
     return {
       gridX: Math.floor((clientX - offsetX) * scale / this.config.tileSize),
       gridY: Math.floor((clientY - offsetY) * scale / this.config.tileSize),
@@ -1415,7 +1421,9 @@ export class GameEngine {
   }
 
   private handleMouseMove = (e: MouseEvent) => {
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     this.mouseGridX = gridX;
     this.mouseGridY = gridY;
     if (this.dragging) {
@@ -1446,7 +1454,9 @@ export class GameEngine {
 
   private handleMouseDown = (e: MouseEvent) => {
     if (!this.editorMode) return;
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     if (e.button === 0) {
       if (this.selectedFurnitureType) {
         this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
@@ -1474,7 +1484,9 @@ export class GameEngine {
   private handleMouseUp = (e: MouseEvent) => {
     if (!this.editorMode) return;
     if (this.dragging) {
-      const { gridX, gridY } = this.screenToGrid(e);
+      const result = this.screenToGrid(e);
+      if (!result) return;
+      const { gridX, gridY } = result;
       this.editorCallbacks?.onMoveFurniture(
         this.dragging.id,
         Math.max(1, Math.min(this.config.gridWidth - 3, gridX)),
@@ -1493,14 +1505,18 @@ export class GameEngine {
   private handleContextMenu = (e: MouseEvent) => {
     if (!this.editorMode) return;
     e.preventDefault();
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     const hit = this.findFurnitureAt(gridX, gridY);
     if (hit) hit.rotation = ((hit.rotation || 0) + 90) % 360;
   };
 
   private handleClick = (e: MouseEvent) => {
     if (this.editorMode) return;
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     const charId = this.findCharacterAt(gridX, gridY);
 
     if (charId && !charId.startsWith('sub-')) {
@@ -1564,22 +1580,24 @@ export class GameEngine {
     this.touchCurrentPos = { x: t.clientX, y: t.clientY };
     this.touchMoved = false;
 
-    const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
-    this.mouseGridX = gridX;
-    this.mouseGridY = gridY;
+    const result1 = this.screenToGrid(t.clientX, t.clientY);
+    if (!result1) return;
+    const { gridX: gridX1, gridY: gridY1 } = result1;
+    this.mouseGridX = gridX1;
+    this.mouseGridY = gridY1;
 
     // Editor mode: start dragging furniture immediately on touch
     if (this.editorMode && e.touches.length === 1) {
       if (this.selectedFurnitureType) {
         // Will place on touchend if not moved
       } else {
-        const hit = this.findFurnitureAt(gridX, gridY);
+        const hit = this.findFurnitureAt(gridX1, gridY1);
         if (hit) {
           if (this.deleteMode) {
             // In delete mode: just notify React, skip drag
             this.editorCallbacks?.onSelectFurniture(hit.id);
           } else {
-            this.touchDragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
+            this.touchDragging = { id: hit.id, offsetX: gridX1 - hit.x, offsetY: gridY1 - hit.y };
             this.selectedFurnitureId = hit.id;
             this.editorCallbacks?.onSelectFurniture(hit.id);
           }
@@ -1623,16 +1641,18 @@ export class GameEngine {
     // Track the latest finger position so handleTouchEnd can use the drop location
     this.touchCurrentPos = { x: t.clientX, y: t.clientY };
 
-    const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
-    this.mouseGridX = gridX;
-    this.mouseGridY = gridY;
+    const result2 = this.screenToGrid(t.clientX, t.clientY);
+    if (!result2) return;
+    const { gridX: gridX2, gridY: gridY2 } = result2;
+    this.mouseGridX = gridX2;
+    this.mouseGridY = gridY2;
 
     // Editor mode: drag furniture (subtract grab offset to keep furniture under finger)
     if (this.editorMode && this.touchDragging) {
       const item = this.placedFurniture.find(f => f.id === this.touchDragging!.id);
       if (item) {
-        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX));
-        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY));
+        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX2 - this.touchDragging.offsetX));
+        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY2 - this.touchDragging.offsetY));
       }
     }
   };
@@ -1649,16 +1669,24 @@ export class GameEngine {
         // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
         // up-to-date in handleTouchMove, so it reliably reflects the finger's final position.
         // Subtract the grab offset so the drop position matches what was shown during the drag.
-        const { gridX, gridY } = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
-        this.editorCallbacks?.onMoveFurniture(
-          this.touchDragging.id,
-          Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX)),
-          Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY)),
-        );
-        sfx.place();
+        const resultDrag = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
+        if (resultDrag) {
+          this.editorCallbacks?.onMoveFurniture(
+            this.touchDragging.id,
+            Math.max(1, Math.min(this.config.gridWidth - 3, resultDrag.gridX - this.touchDragging.offsetX)),
+            Math.max(1, Math.min(this.config.gridHeight - 3, resultDrag.gridY - this.touchDragging.offsetY)),
+          );
+          sfx.place();
+        }
         this.touchDragging = null;
       } else if (!this.touchMoved && this.touchStartPos) {
-        const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+        const resultTap = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+        if (!resultTap) {
+          this.touchStartPos = null;
+          this.touchCurrentPos = null;
+          return;
+        }
+        const { gridX, gridY } = resultTap;
         const now = Date.now();
 
         // Double-tap furniture → rotate (mirrors desktop right-click in editor mode)
@@ -1693,7 +1721,13 @@ export class GameEngine {
       return; // was a drag or pinch, not a tap
     }
 
-    const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+    const resultTap2 = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+    if (!resultTap2) {
+      this.touchStartPos = null;
+      this.touchCurrentPos = null;
+      return;
+    }
+    const { gridX, gridY } = resultTap2;
 
     const charId = this.findCharacterAt(gridX, gridY);
 
