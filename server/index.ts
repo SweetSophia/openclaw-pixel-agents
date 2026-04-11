@@ -13,7 +13,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
@@ -21,14 +21,24 @@ import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivit
 const app = express();
 const server = createServer(app);
 const io = new SocketIOServer(server, {
-  cors: { origin: "*" },
+  cors: { origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*") },
+});
+
+// Basic security headers
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:");
+  next();
 });
 
 app.use(express.json({ limit: "100kb" }));
 
-// Serve built frontend in production (Vite output is in dist/ at project root)
-const FRONTEND_DIR = join(__dirname, "..", "..");
-app.use(express.static(FRONTEND_DIR));
+// Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
+const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
+if (existsSync(FRONTEND_DIR)) {
+  app.use(express.static(FRONTEND_DIR));
+}
 
 // ---- Configuration ----
 
@@ -88,6 +98,7 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
     const map = new Map<string, PersistedPrefs>();
+
     for (const [k, v] of Object.entries(data)) {
       if (v && typeof v === 'object' && !Array.isArray(v)) {
         map.set(k, v as PersistedPrefs);
@@ -239,6 +250,7 @@ function inferActivity(session: CliSession): AgentActivity {
 
   if (ageMin < 2 && hasOutput) return "typing";
   if (ageMin < 2 && hasInput) return "reading";
+
   if (ageMin < 5) return "thinking";
 
   return "idle";
@@ -452,7 +464,7 @@ async function tailTranscript(
 
     rl.on("close", () => {
       // On stream error, rl.close() is called which fires this handler.
-      // Guard against advancing the offset or resolving with partial data
+      // Guard against advancing the cursor or resolving with partial data
       // when the read was interrupted by an I/O error.
       if (errored) return;
 
@@ -684,6 +696,17 @@ app.post("/api/ingest/agents", (req, res) => {
 let lastIngestAt = 0;
 
 // ---- REST API ----
+
+// General authorization middleware for state-modifying REST endpoints
+// Scoped to /api to avoid blocking Socket.IO polling transport POSTs
+app.use("/api", (req, res, next) => {
+  if (req.method === "GET") return next();
+  if (req.path === "/ingest/agents") return next(); // Handles its own auth
+
+  if (authenticateIngest(req, res)) return next();
+
+  res.status(401).json({ error: "Authentication required: provide 'Authorization: Bearer <INGEST_API_TOKEN>' header" });
+});
 
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });
@@ -973,6 +996,7 @@ app.get("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const layout = loadLayout(id);
+
   if (!layout) {
     // Auto-create default
     if (id === "default") {
