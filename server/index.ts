@@ -32,7 +32,7 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "100kb" }));
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
 const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
@@ -622,6 +622,22 @@ function authenticateIngest(req: express.Request, _res: express.Response): boole
  *
  * When valid ingest data arrives, it replaces the CLI-poll result and broadcasts.
  */
+
+// In-process rate limiter: max RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS per token
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 10;
+const ingestRateBuckets = new Map<string, number[]>();
+
+// Periodically prune expired rate-limit entries to prevent memory leak
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [key, timestamps] of ingestRateBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) ingestRateBuckets.delete(key);
+    else ingestRateBuckets.set(key, pruned);
+  }
+}, RATE_LIMIT_WINDOW_MS);
+
 app.post("/api/ingest/agents", (req, res) => {
   if (!INGEST_TOKEN) {
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
@@ -632,9 +648,32 @@ app.post("/api/ingest/agents", (req, res) => {
     return;
   }
 
+  // Rate limiting: track requests per derived key (avoid storing raw token)
+  const rawKey = req.headers.authorization || req.ip || "unknown";
+  // Simple hash to avoid keeping sensitive tokens in memory
+  let hash = 0;
+  for (let i = 0; i < rawKey.length; i++) {
+    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
+  }
+  const rateKey = `ingest:${hash}`;
+  const now = Date.now();
+  const bucket = ingestRateBuckets.get(rateKey) || [];
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recentRequests = bucket.filter(t => t > windowStart);
+  if (recentRequests.length >= RATE_LIMIT_MAX) {
+    res.status(429).json({ error: "Too many requests" });
+    return;
+  }
+  recentRequests.push(now);
+  ingestRateBuckets.set(rateKey, recentRequests);
+
   const { sessions } = req.body;
   if (!Array.isArray(sessions)) {
     res.status(400).json({ error: "Missing or invalid 'sessions' array" });
+    return;
+  }
+  if (sessions.length > 50) {
+    res.status(413).json({ error: "Payload too large: maximum 50 sessions allowed" });
     return;
   }
 
@@ -974,9 +1013,21 @@ app.put("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const existing = loadLayout(id);
+
+  // Server-side conflict detection: reject stale writes using baseUpdatedAt
+  const { baseUpdatedAt, ...body } = req.body;
+  if (existing && baseUpdatedAt != null && existing.updatedAt != null) {
+    if (baseUpdatedAt < existing.updatedAt) {
+      return res.status(409).json({
+        error: "Conflict: your data is stale. Reload and try again.",
+        serverUpdatedAt: existing.updatedAt,
+      });
+    }
+  }
+
   const layout: OfficeLayoutDoc = {
     ...(existing || { id, name: id, width: 24, height: 16 }),
-    ...req.body,
+    ...body,
     id, // prevent id overwrite
   };
   saveLayout(layout);

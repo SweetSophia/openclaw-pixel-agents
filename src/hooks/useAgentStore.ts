@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { io as socketIO } from 'socket.io-client';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
 
@@ -132,9 +133,27 @@ export function useAgentStore() {
   }, []);
 
   useEffect(() => {
-    fetchAgents();
-    const interval = setInterval(fetchAgents, 2000);
-    return () => clearInterval(interval);
+    fetchAgents(); // Initial fetch
+    
+    const socket = socketIO({ transports: ['websocket', 'polling'] });
+
+    const handleConnect = () => setConnected(true);
+    const handleDisconnect = () => setConnected(false);
+    const handleUpdate = (updatedAgents: AgentState[]) => {
+      setAgents(updatedAgents);
+      setError(null);
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('agents:update', handleUpdate);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('agents:update', handleUpdate);
+      socket.disconnect();
+    };
   }, [fetchAgents]);
 
   return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };

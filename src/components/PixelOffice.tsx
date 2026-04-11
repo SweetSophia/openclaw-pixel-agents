@@ -38,7 +38,7 @@ export const PixelOffice: React.FC<Props> = ({
     });
     engineRef.current = engine;
 
-    engine.init(ac.signal).then(() => {
+    engine.init(ac.signal, import.meta.env.DEV).then(() => {
       if (ac.signal.aborted) return;
       engine.start();
       setLoaded(true);
@@ -111,20 +111,25 @@ export const PixelOffice: React.FC<Props> = ({
     if (!engineRef.current || !loaded) return;
     const engine = engineRef.current;
 
-    const currentIds = engine.getCharacterIds();
-    const agentIds = agents.map(a => a.id);
-    const activeIds = agents.filter(a => a.pixelEnabled).map(a => a.id);
+    const currentIdsArray = engine.getCharacterIds();
+    const currentIds = new Set(currentIdsArray);
+    const agentIds = new Set(agents.map(a => a.id));
+    const activeIds = new Set(agents.filter(a => a.pixelEnabled).map(a => a.id));
 
     // Remove characters no longer in this room's agent list (handles room switches)
-    for (const id of currentIds) {
-      if (!agentIds.includes(id) || !activeIds.includes(id)) {
+    // Skip sub-agent IDs — they are managed by the dedicated sub-agent cleanup loop below
+    for (const id of currentIdsArray) {
+      if (id.startsWith('sub-')) continue;
+      if (!agentIds.has(id) || !activeIds.has(id)) {
         engine.removeCharacter(id);
       }
     }
 
+    const allActiveSubIds = new Set<string>();
+
     for (const agent of agents) {
       if (!agent.pixelEnabled) continue;
-      if (!currentIds.includes(agent.id)) {
+      if (!currentIds.has(agent.id)) {
         const seat = engine.assignSeat(agent.id);
         engine.addCharacter({
           id: agent.id, name: agent.name,
@@ -141,21 +146,29 @@ export const PixelOffice: React.FC<Props> = ({
 
       // Sync sub-agents
       if (agent.subAgents) {
-        const activeSubIds = new Set(agent.subAgents.map(s => s.id));
         // Spawn new sub-agents
         for (const sub of agent.subAgents) {
-          if (sub.status === 'running' && !engine.getCharacterIds().includes(sub.id)) {
-            engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
-          } else if (sub.status !== 'running') {
+          if (sub.status === 'running') {
+            allActiveSubIds.add(sub.id);
+            if (!currentIds.has(sub.id)) {
+              engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
+              currentIds.add(sub.id); // Prevent re-spawning
+            } else {
+              // Resurrect if it was previously marked as dying
+              engine.removeCharacter(sub.id);
+              engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
+            }
+          } else {
             engine.killSubAgent(sub.id);
           }
         }
-        // Kill sub-agents no longer in the list
-        for (const cid of engine.getCharacterIds()) {
-          if (cid.startsWith('sub-') && !activeSubIds.has(cid)) {
-            engine.killSubAgent(cid);
-          }
-        }
+      }
+    }
+
+    // Kill sub-agents no longer in the list (across all parents)
+    for (const cid of engine.getCharacterIds()) {
+      if (cid.startsWith('sub-') && !allActiveSubIds.has(cid)) {
+        engine.killSubAgent(cid);
       }
     }
   }, [agents, loaded]);

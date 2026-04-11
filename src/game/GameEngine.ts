@@ -200,6 +200,10 @@ export class GameEngine {
   private running = false;
   private animFrameId = 0;
   private lastTime = 0;
+  private nowMs = 0;
+  private floorCacheCanvas: HTMLCanvasElement | null = null;
+  private floorCacheCtx: CanvasRenderingContext2D | null = null;
+  private floorCacheValid = false;
   private assetsLoaded = false;
   private _renderDiagLogged = false;
   private _furnitureDiagLogged = false;
@@ -291,10 +295,12 @@ export class GameEngine {
     this.canvas.addEventListener('touchcancel', this.handleTouchCancel, { passive: false });
   }
 
-  async init(signal?: AbortSignal) {
+  async init(signal?: AbortSignal, debugDemo: boolean = false) {
     await this.loadAssets(signal);
     this.rebuildObstacles();
-    this.spawnDemoAgents();
+    if (debugDemo) {
+      this.spawnDemoAgents();
+    }
   }
 
   private spawnDemoAgents() {
@@ -327,6 +333,7 @@ export class GameEngine {
       this.floors = floors;
       this.furniture = furniture;
       this.assetsLoaded = true;
+      this.floorCacheValid = false;
       console.log(`[GameEngine] Assets loaded: ${furniture.size} furniture types, ${characters.length} characters, ${floors.length} floors`);
     } catch (err) {
       console.error('[GameEngine] Asset load failed:', err);
@@ -340,7 +347,8 @@ export class GameEngine {
 
   start() {
     this.running = true;
-    this.lastTime = performance.now();
+    this.nowMs = performance.now();
+    this.lastTime = this.nowMs;
     this.loop();
   }
 
@@ -370,10 +378,10 @@ export class GameEngine {
 
   private loop = () => {
     if (!this.running) return;
-    const now = performance.now();
-    const dt = (now - this.lastTime) / 1000;
-    this.lastTime = now;
-    this.update(dt, now);
+    this.nowMs = performance.now();
+    const dt = (this.nowMs - this.lastTime) / 1000;
+    this.lastTime = this.nowMs;
+    this.update(dt);
     this.render();
     this.animFrameId = requestAnimationFrame(this.loop);
   };
@@ -425,11 +433,11 @@ export class GameEngine {
 
   // ── Update ───────────────────────────────────────────
 
-  private update(dt: number, now: number) {
+  private update(dt: number) {
     for (const char of this.characters.values()) {
       // Sub-agent lifecycle
       if (char.isSubAgent) {
-        const age = now - char.spawnTime;
+        const age = this.nowMs - char.spawnTime;
         if (age > SUBAGENT_LIFETIME && !char.dying) {
           char.dying = true;
           sfx.despawn();
@@ -531,9 +539,8 @@ export class GameEngine {
     }
 
     // Update state transition effects
-    const nowMs = performance.now();
     for (const fx of this.stateEffects) {
-      const elapsed = nowMs - fx.startTime;
+      const elapsed = this.nowMs - fx.startTime;
       for (const p of fx.particles) {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
@@ -543,7 +550,7 @@ export class GameEngine {
       fx.particles = fx.particles.filter(p => p.life > 0);
     }
     this.stateEffects = this.stateEffects.filter(fx =>
-      nowMs - fx.startTime < fx.duration || fx.particles.length > 0
+      this.nowMs - fx.startTime < fx.duration || fx.particles.length > 0
     );
 
     // ── Day/night cycle update ──
@@ -745,7 +752,7 @@ export class GameEngine {
 
   private renderAmbientParticles(tileSize: number) {
     const { ctx } = this;
-    const now = performance.now() / 1000;
+    const now = this.nowMs / 1000;
 
     for (const p of this.ambientParticles) {
       const px = p.x * tileSize;
@@ -884,16 +891,54 @@ export class GameEngine {
   private renderFloor(gridW: number, gridH: number, tileSize: number, zoom: number) {
     const { ctx, floors } = this;
     const hasFloor = floors.length > 0 && this.assetsLoaded;
-    for (let row = 0; row < gridH; row++) {
-      for (let col = 0; col < gridW; col++) {
-        const px = col * tileSize, py = row * tileSize;
-        if (hasFloor) {
-          const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
-        } else {
-          ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
-          ctx.fillRect(px, py, tileSize, tileSize);
+    const reqWidth = gridW * tileSize;
+    const reqHeight = gridH * tileSize;
+    
+    if (!this.floorCacheCanvas) {
+      this.floorCacheCanvas = document.createElement('canvas');
+      this.floorCacheCtx = this.floorCacheCanvas.getContext('2d');
+    }
+    
+    if (this.floorCacheCanvas.width !== reqWidth || this.floorCacheCanvas.height !== reqHeight) {
+      this.floorCacheCanvas.width = reqWidth;
+      this.floorCacheCanvas.height = reqHeight;
+      this.floorCacheValid = false;
+    }
+    
+    if (!this.floorCacheValid && this.floorCacheCtx) {
+      const ftx = this.floorCacheCtx;
+      for (let row = 0; row < gridH; row++) {
+        for (let col = 0; col < gridW; col++) {
+          const px = col * tileSize, py = row * tileSize;
+          if (hasFloor) {
+            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
+            ftx.imageSmoothingEnabled = false;
+            ftx.drawImage(floor.canvas, px, py, tileSize, tileSize);
+          } else {
+            ftx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ftx.fillRect(px, py, tileSize, tileSize);
+          }
+        }
+      }
+      this.floorCacheValid = true;
+    }
+    
+    if (this.floorCacheCanvas && this.floorCacheValid) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(this.floorCacheCanvas, 0, 0);
+    } else if (!this.floorCacheCtx) {
+      // Fallback: render floor directly when OffscreenCanvas context unavailable
+      for (let row = 0; row < gridH; row++) {
+        for (let col = 0; col < gridW; col++) {
+          const px = col * tileSize, py = row * tileSize;
+          if (hasFloor) {
+            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
+          } else {
+            ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ctx.fillRect(px, py, tileSize, tileSize);
+          }
         }
       }
     }
@@ -1036,7 +1081,7 @@ export class GameEngine {
 
     // Idle breathing: subtle Y bob when stationary and idle
     const isIdle = !isWalking && (char.state === 'idle' || char.state === 'waiting_input' || char.state === 'error');
-    const breathOffset = isIdle ? Math.sin(performance.now() / 800) * tileSize * 0.04 : 0;
+    const breathOffset = isIdle ? Math.sin(this.nowMs / 800) * tileSize * 0.04 : 0;
 
     // Idle behavior animation offset
     const idleOff = this.getIdleOffset(char.id);
@@ -1058,8 +1103,8 @@ export class GameEngine {
     }
 
     // Spawn glow effect for new sub-agents
-    if (char.isSubAgent && (performance.now() - char.spawnTime) < 1000) {
-      const glowAlpha = 1 - (performance.now() - char.spawnTime) / 1000;
+    if (char.isSubAgent && (this.nowMs - char.spawnTime) < 1000) {
+      const glowAlpha = 1 - (this.nowMs - char.spawnTime) / 1000;
       ctx.fillStyle = `rgba(78, 204, 163, ${glowAlpha * 0.4})`;
       ctx.beginPath();
       ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize, 0, Math.PI * 2);
@@ -1127,7 +1172,7 @@ export class GameEngine {
     const vfx = STATE_VFX[char.state];
     if (!vfx) return;
 
-    const now = performance.now();
+    const now = this.nowMs;
     const iconSize = tileSize * 0.45;
 
     // Thinking: 3 bouncing dots
@@ -1762,7 +1807,7 @@ export class GameEngine {
     this.stateEffects.push({
       agentId: char.id,
       state: char.state,
-      startTime: performance.now(),
+      startTime: this.nowMs,
       particles,
       duration: vfx.glowDuration,
     });
@@ -1771,7 +1816,7 @@ export class GameEngine {
   /** Show a small fading target marker on walking agents' destinations */
   private renderMoveTargets(tileSize: number) {
     const { ctx } = this;
-    const now = performance.now();
+    const now = this.nowMs;
 
     for (const char of this.characters.values()) {
       const isWalking = Math.abs(char.targetX - char.x) > 0.05 || Math.abs(char.targetY - char.y) > 0.05;
@@ -1807,7 +1852,7 @@ export class GameEngine {
 
   private renderStateEffects(tileSize: number) {
     const { ctx } = this;
-    const nowMs = performance.now();
+    const nowMs = this.nowMs;
 
     for (const fx of this.stateEffects) {
       const char = this.characters.get(fx.agentId);
@@ -1876,7 +1921,7 @@ export class GameEngine {
       ...data, targetX: data.x, targetY: data.y,
       animFrame: 0, animTimer: 0, direction: 'down', paletteIndex,
       path: [], pathIndex: 0,
-      spawnTime: performance.now(), fadeAlpha: 1, dying: false,
+      spawnTime: this.nowMs, fadeAlpha: 1, dying: false,
       lastFootstepTile: -1, typingSoundTimer: 0, stateJustChanged: false,
     });
 
@@ -1958,7 +2003,7 @@ export class GameEngine {
       direction: 'down',
       paletteIndex: parent.paletteIndex,
       path: [], pathIndex: 0,
-      spawnTime: performance.now(),
+      spawnTime: this.nowMs,
       fadeAlpha: 1,
       dying: false,
       isSubAgent: true,
