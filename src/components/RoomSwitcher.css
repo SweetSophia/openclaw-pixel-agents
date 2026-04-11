@@ -74,6 +74,8 @@
 
 @media (max-width: 768px) {
   .room-switcher {
+    top: 64px;
+    /* below the mobile header which is ~48px tall */
     padding: 4px 8px;
     gap: 3px;
   }
@@ -84,6 +86,7 @@
   }
 
   .room-name {
-    display: none; /* show only icon + count on mobile */
+    display: none;
+    /* show only icon + count on mobile */
   }
 }
