@@ -20,28 +20,31 @@ import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivit
 
 const app = express();
 const server = createServer(app);
+// Pre-compute allowed origins once (not per-request)
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+  : [];
+const allowAllOrigins = !process.env.CORS_ORIGIN && process.env.NODE_ENV !== "production";
+
 const io = new SocketIOServer(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*"),
+    origin: allowedOrigins.length > 0
+      ? allowedOrigins
+      : process.env.NODE_ENV === "production" ? false : "*",
   },
-  // Verify WebSocket connections from allowed origins only
-  parser: undefined, // placeholder to ensure verifyClient is processed
 });
 
 // WebSocket origin validation
 io.engine.on("initial_headers", (_headers, req) => {
+  if (allowAllOrigins) return; // Dev mode: allow all
+  if (allowedOrigins.length === 0) {
+    // Production with no CORS_ORIGIN configured: reject all WebSocket upgrades
+    req.destroy();
+    return;
+  }
   const origin = req.headers.origin;
-  const allowedOrigins = process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
-    : process.env.NODE_ENV === "production" ? [] : ["*"];
-
-  if (process.env.NODE_ENV === "production") {
-    if (allowedOrigins.length === 0 || !allowedOrigins.includes(origin || "")) {
-      // In production, reject if origin doesn't match (when CORS_ORIGIN is set)
-      if (allowedOrigins.length > 0 && origin && !allowedOrigins.includes(origin)) {
-        req.destroy();
-      }
-    }
+  if (!origin || !allowedOrigins.includes(origin)) {
+    req.destroy();
   }
 });
 
