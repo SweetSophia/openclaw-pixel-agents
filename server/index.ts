@@ -32,16 +32,18 @@ const io = new SocketIOServer(server, {
       ? allowedOrigins
       : process.env.NODE_ENV === "production" ? false : "*",
   },
-});
-
-// WebSocket origin validation
-io.engine.on("initial_headers", (_headers, req: any) => {
-  if (allowAllOrigins) return; // Dev mode: allow all
-  if (allowedOrigins.length === 0 || !allowedOrigins.includes(req.headers.origin)) {
-    // Send explicit 403 before destroying to avoid noisy engine.io error logs
-    req.socket?.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-    req.socket?.destroy();
-  }
+  allowRequest: (req, callback) => {
+    if (allowAllOrigins) {
+      callback(null, true);
+      return;
+    }
+    // Only reject if an allowlist is configured AND origin doesn't match
+    if (allowedOrigins.length > 0 && !allowedOrigins.includes(req.headers.origin || "")) {
+      callback("Origin not allowed", false);
+      return;
+    }
+    callback(null, true);
+  },
 });
 
 // Basic security headers
@@ -1148,18 +1150,21 @@ async function shutdown(signal: string) {
   if (pollTimer) clearInterval(pollTimer);
 
   // Race: graceful close vs. hard timeout
-  const gracefulClose = new Promise<void>((resolve) => {
-    // Close HTTP server (stops accepting new connections)
-    server.close(() => {
-      console.log("[server] HTTP server closed");
-      resolve();
-    });
-
-    // Close Socket.IO connections
-    io.close(() => {
-      console.log("[server] Socket.IO connections closed");
-    });
-  });
+  // Await both server.close() AND io.close() before resolving
+  const gracefulClose = Promise.all([
+    new Promise<void>((resolve) => {
+      server.close(() => {
+        console.log("[server] HTTP server closed");
+        resolve();
+      });
+    }),
+    new Promise<void>((resolve) => {
+      io.close(() => {
+        console.log("[server] Socket.IO connections closed");
+        resolve();
+      });
+    }),
+  ]).then(() => undefined);
 
   const hardTimeout = new Promise<void>((resolve) => {
     setTimeout(() => {
