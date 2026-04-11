@@ -871,8 +871,7 @@ export class GameEngine {
       console.log(`[GameEngine] ${gridWidth}x${gridHeight} grid, ts=${tileSize}, zoom=${zoom.toFixed(2)}`);
     }
 
-    ctx.fillStyle = '#0f0f23';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.renderFloor(gridWidth, gridHeight, tileSize, zoom);
     this.renderWalls(gridWidth, gridHeight, tileSize);
@@ -915,7 +914,7 @@ export class GameEngine {
             ftx.imageSmoothingEnabled = false;
             ftx.drawImage(floor.canvas, px, py, tileSize, tileSize);
           } else {
-            ftx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ftx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
             ftx.fillRect(px, py, tileSize, tileSize);
           }
         }
@@ -936,7 +935,7 @@ export class GameEngine {
             ctx.imageSmoothingEnabled = false;
             ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
           } else {
-            ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ctx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
             ctx.fillRect(px, py, tileSize, tileSize);
           }
         }
@@ -946,7 +945,7 @@ export class GameEngine {
 
   private renderWalls(gridW: number, gridH: number, tileSize: number) {
     const { ctx } = this;
-    ctx.fillStyle = '#0f3460';
+    ctx.fillStyle = 'rgba(0, 240, 255, 0.15)'; // use glowing cyan translucent color for boundaries
     for (let col = 0; col < gridW; col++) {
       ctx.fillRect(col * tileSize, 0, tileSize, tileSize);
       ctx.fillRect(col * tileSize, (gridH - 1) * tileSize, tileSize, tileSize);

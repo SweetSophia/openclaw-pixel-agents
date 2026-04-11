@@ -176,9 +176,6 @@ export const PixelOffice: React.FC<Props> = ({
   return (
     <div className="pixel-office" style={{ position: 'relative' }}>
       <canvas ref={canvasRef} className="office-canvas" />
-      {editorMode && (
-        <div className="editor-badge">✏️ EDIT MODE</div>
-      )}
     </div>
   );
 };

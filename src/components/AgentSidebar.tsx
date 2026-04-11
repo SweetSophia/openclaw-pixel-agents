@@ -111,20 +111,22 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                       {tag}
                     </span>
                   ))}
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
-                    title="Edit tags"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
-                    title="Customize appearance"
-                  >
-                    🎨
-                  </button>
+                  <div className="card-actions">
+                    <button
+                      className="tag-edit-btn"
+                      onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
+                      title="Edit tags"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      className="tag-edit-btn"
+                      onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
+                      title="Customize appearance"
+                    >
+                      🎨
+                    </button>
+                  </div>
                 </div>
               )}
               {(!agent.tags || agent.tags.length === 0) && (
@@ -136,13 +138,15 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                   >
                     + tags
                   </button>
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
-                    title="Customize appearance"
-                  >
-                    🎨
-                  </button>
+                  <div className="card-actions">
+                    <button
+                      className="tag-edit-btn"
+                      onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
+                      title="Customize appearance"
+                    >
+                      🎨
+                    </button>
+                  </div>
                 </div>
               )}
                 </div>
