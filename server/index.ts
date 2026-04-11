@@ -653,7 +653,7 @@ const RATE_LIMIT_MAX = 10;
 const ingestRateBuckets = new Map<string, number[]>();
 
 // Periodically prune expired rate-limit entries to prevent memory leak
-setInterval(() => {
+const ingestPruneTimer = setInterval(() => {
   const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
   for (const [key, timestamps] of ingestRateBuckets) {
     const pruned = timestamps.filter(t => t > cutoff);
@@ -1138,33 +1138,43 @@ const useCli = cliExplicit || (DATA_SOURCE === "auto" && !ingestExplicit);
 // ---- Graceful Shutdown ----
 
 let isShuttingDown = false;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+const GRACEFUL_SHUTDOWN_MS = 5000;
 
 async function shutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`\n[server] Received ${signal}, shutting down gracefully...`);
 
-  // Stop accepting new connections
-  server.close(() => {
-    console.log("[server] HTTP server closed");
+  // Clear periodic timers to prevent new work during shutdown
+  clearInterval(ingestPruneTimer);
+  if (pollTimer) clearInterval(pollTimer);
+
+  // Race: graceful close vs. hard timeout
+  const gracefulClose = new Promise<void>((resolve) => {
+    // Close HTTP server (stops accepting new connections)
+    server.close(() => {
+      console.log("[server] HTTP server closed");
+      resolve();
+    });
+
+    // Close Socket.IO connections
+    io.close(() => {
+      console.log("[server] Socket.IO connections closed");
+    });
   });
 
-  // Close Socket.IO connections
-  io.close(() => {
-    console.log("[server] Socket.IO connections closed");
+  const hardTimeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      console.error("[server] Forced shutdown after timeout");
+      resolve();
+    }, GRACEFUL_SHUTDOWN_MS);
   });
 
-  // Give existing connections time to close
-  setTimeout(() => {
-    console.log("[server] Shutdown complete");
-    process.exit(0);
-  }, 2000);
-
-  // Force exit if graceful shutdown takes too long
-  setTimeout(() => {
-    console.error("[server] Forced shutdown after timeout");
-    process.exit(1);
-  }, 5000);
+  await Promise.race([gracefulClose, hardTimeout]);
+  console.log("[server] Shutdown complete");
+  process.exit(0);
 }
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -1177,7 +1187,7 @@ server.listen(PORT, () => {
   if (useCli && !ingestExplicit) {
     console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
     pollAndBroadcast();
-    setInterval(pollAndBroadcast, POLL_INTERVAL);
+    pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
   } else {
     console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
   }
