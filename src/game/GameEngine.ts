@@ -1356,13 +1356,39 @@ export class GameEngine {
   private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number };
   private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } {
     const rect = this.canvas.getBoundingClientRect();
-    const scaleX = this.canvas.width / rect.width;
-    const scaleY = this.canvas.height / rect.height;
+    const canvas = this.canvas;
+
+    // When object-fit: contain is used, the CSS box (rect) may be larger than
+    // the actual rendered canvas area due to pillarboxing/letterboxing.
+    // We need to compute the actual rendered dimensions to get correct scales.
+    const cssRatio = rect.width / rect.height;
+    const canvasRatio = canvas.width / canvas.height;
+
+    let renderedWidth: number, renderedHeight: number, offsetX: number, offsetY: number;
+
+    if (cssRatio > canvasRatio) {
+      // Pillarboxing: bars on left/right
+      renderedWidth = (canvas.width / canvas.height) * rect.height;
+      renderedHeight = rect.height;
+      offsetX = rect.left + (rect.width - renderedWidth) / 2;
+      offsetY = rect.top;
+    } else {
+      // Letterboxing: bars on top/bottom
+      renderedWidth = rect.width;
+      renderedHeight = (canvas.height / canvas.width) * rect.width;
+      offsetX = rect.left;
+      offsetY = rect.top + (rect.height - renderedHeight) / 2;
+    }
+
+    // Use unified scale - both dimensions should have the same ratio with object-fit: contain
+    const scale = canvas.width / renderedWidth;
+
     const clientX = typeof eOrX === 'number' ? eOrX : eOrX.clientX;
     const clientY = typeof eOrX === 'number' ? maybeY! : eOrX.clientY;
+
     return {
-      gridX: Math.floor((clientX - rect.left) * scaleX / this.config.tileSize),
-      gridY: Math.floor((clientY - rect.top) * scaleY / this.config.tileSize),
+      gridX: Math.floor((clientX - offsetX) * scale / this.config.tileSize),
+      gridY: Math.floor((clientY - offsetY) * scale / this.config.tileSize),
     };
   }
 
