@@ -153,8 +153,8 @@ export const PixelOffice: React.FC<Props> = ({
             if (!currentIds.has(sub.id)) {
               engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
               currentIds.add(sub.id); // Prevent re-spawning
-            } else {
-              // Resurrect if it was previously marked as dying
+            } else if (engine.isCharacterDying(sub.id)) {
+              // Only respawn if the sub-agent is in dying/fading state
               engine.removeCharacter(sub.id);
               engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
             }
@@ -176,9 +176,6 @@ export const PixelOffice: React.FC<Props> = ({
   return (
     <div className="pixel-office" style={{ position: 'relative' }}>
       <canvas ref={canvasRef} className="office-canvas" />
-      {editorMode && (
-        <div className="editor-badge">✏️ EDIT MODE</div>
-      )}
     </div>
   );
 };

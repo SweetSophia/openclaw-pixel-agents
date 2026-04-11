@@ -106,14 +106,14 @@ const STATE_VFX: Record<string, {
   glowColor: string;
   glowDuration: number; // ms
 }> = {
-  idle:            { color: '#6688aa', particleCount: 0,  particleSpeed: 0,   glowColor: 'transparent',   glowDuration: 0 },
-  thinking:        { color: '#a78bfa', icon: '💭', particleCount: 6,  particleSpeed: 25,  glowColor: 'rgba(167,139,250,0.15)', glowDuration: 800 },
-  typing:          { color: '#4ecca3', icon: '⌨',  particleCount: 4,  particleSpeed: 15,  glowColor: 'rgba(78,204,163,0.12)',  glowDuration: 500 },
-  running_command: { color: '#fbbf24', icon: '⚡', particleCount: 5,  particleSpeed: 30,  glowColor: 'rgba(251,191,36,0.15)',  glowDuration: 600 },
-  waiting_input:   { color: '#60a5fa', icon: '💬', particleCount: 8,  particleSpeed: 20,  glowColor: 'rgba(96,165,250,0.15)',  glowDuration: 1000 },
-  sleeping:        { color: '#94a3b8', icon: '💤', particleCount: 0,  particleSpeed: 0,   glowColor: 'transparent',           glowDuration: 0 },
-  error:           { color: '#ef4444', icon: '❌', particleCount: 10, particleSpeed: 40,  glowColor: 'rgba(239,68,68,0.2)',    glowDuration: 800 },
-  reading:         { color: '#34d399', icon: '📖', particleCount: 3,  particleSpeed: 10,  glowColor: 'rgba(52,211,153,0.1)',   glowDuration: 400 },
+  idle: { color: '#6688aa', particleCount: 0, particleSpeed: 0, glowColor: 'transparent', glowDuration: 0 },
+  thinking: { color: '#a78bfa', icon: '💭', particleCount: 6, particleSpeed: 25, glowColor: 'rgba(167,139,250,0.15)', glowDuration: 800 },
+  typing: { color: '#4ecca3', icon: '⌨', particleCount: 4, particleSpeed: 15, glowColor: 'rgba(78,204,163,0.12)', glowDuration: 500 },
+  running_command: { color: '#fbbf24', icon: '⚡', particleCount: 5, particleSpeed: 30, glowColor: 'rgba(251,191,36,0.15)', glowDuration: 600 },
+  waiting_input: { color: '#60a5fa', icon: '💬', particleCount: 8, particleSpeed: 20, glowColor: 'rgba(96,165,250,0.15)', glowDuration: 1000 },
+  sleeping: { color: '#94a3b8', icon: '💤', particleCount: 0, particleSpeed: 0, glowColor: 'transparent', glowDuration: 0 },
+  error: { color: '#ef4444', icon: '❌', particleCount: 10, particleSpeed: 40, glowColor: 'rgba(239,68,68,0.2)', glowDuration: 800 },
+  reading: { color: '#34d399', icon: '📖', particleCount: 3, particleSpeed: 10, glowColor: 'rgba(52,211,153,0.1)', glowDuration: 400 },
 };
 
 // ── Day/Night Cycle ────────────────────────────────────
@@ -341,7 +341,7 @@ export class GameEngine {
         this.characters_sprites = await loadCharacters(undefined, signal);
         this.assetsLoaded = true;
         console.warn('[GameEngine] Fell back to characters-only; furniture sprites unavailable');
-      } catch {}
+      } catch { }
     }
   }
 
@@ -379,7 +379,9 @@ export class GameEngine {
   private loop = () => {
     if (!this.running) return;
     this.nowMs = performance.now();
-    const dt = (this.nowMs - this.lastTime) / 1000;
+    const rawDt = (this.nowMs - this.lastTime) / 1000;
+    // Clamp delta time to prevent teleportation when tab is backgrounded
+    const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
     this.lastTime = this.nowMs;
     this.update(dt);
     this.render();
@@ -871,8 +873,7 @@ export class GameEngine {
       console.log(`[GameEngine] ${gridWidth}x${gridHeight} grid, ts=${tileSize}, zoom=${zoom.toFixed(2)}`);
     }
 
-    ctx.fillStyle = '#0f0f23';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.renderFloor(gridWidth, gridHeight, tileSize, zoom);
     this.renderWalls(gridWidth, gridHeight, tileSize);
@@ -893,18 +894,18 @@ export class GameEngine {
     const hasFloor = floors.length > 0 && this.assetsLoaded;
     const reqWidth = gridW * tileSize;
     const reqHeight = gridH * tileSize;
-    
+
     if (!this.floorCacheCanvas) {
       this.floorCacheCanvas = document.createElement('canvas');
       this.floorCacheCtx = this.floorCacheCanvas.getContext('2d');
     }
-    
+
     if (this.floorCacheCanvas.width !== reqWidth || this.floorCacheCanvas.height !== reqHeight) {
       this.floorCacheCanvas.width = reqWidth;
       this.floorCacheCanvas.height = reqHeight;
       this.floorCacheValid = false;
     }
-    
+
     if (!this.floorCacheValid && this.floorCacheCtx) {
       const ftx = this.floorCacheCtx;
       for (let row = 0; row < gridH; row++) {
@@ -915,14 +916,14 @@ export class GameEngine {
             ftx.imageSmoothingEnabled = false;
             ftx.drawImage(floor.canvas, px, py, tileSize, tileSize);
           } else {
-            ftx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ftx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
             ftx.fillRect(px, py, tileSize, tileSize);
           }
         }
       }
       this.floorCacheValid = true;
     }
-    
+
     if (this.floorCacheCanvas && this.floorCacheValid) {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(this.floorCacheCanvas, 0, 0);
@@ -936,7 +937,7 @@ export class GameEngine {
             ctx.imageSmoothingEnabled = false;
             ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
           } else {
-            ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
+            ctx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
             ctx.fillRect(px, py, tileSize, tileSize);
           }
         }
@@ -946,7 +947,7 @@ export class GameEngine {
 
   private renderWalls(gridW: number, gridH: number, tileSize: number) {
     const { ctx } = this;
-    ctx.fillStyle = '#0f3460';
+    ctx.fillStyle = 'rgba(0, 240, 255, 0.15)'; // use glowing cyan translucent color for boundaries
     for (let col = 0; col < gridW; col++) {
       ctx.fillRect(col * tileSize, 0, tileSize, tileSize);
       ctx.fillRect(col * tileSize, (gridH - 1) * tileSize, tileSize, tileSize);
@@ -1682,8 +1683,8 @@ export class GameEngine {
       if (char) {
         this.ensureObstacles();
         if (this.obstacleGrid && gridY >= 0 && gridY < this.config.gridHeight
-            && gridX >= 0 && gridX < this.config.gridWidth
-            && !this.obstacleGrid[gridY][gridX]) {
+          && gridX >= 0 && gridX < this.config.gridWidth
+          && !this.obstacleGrid[gridY][gridX]) {
           char.targetX = gridX;
           char.targetY = gridY;
           char.path = this.computePath(char);
@@ -2021,6 +2022,11 @@ export class GameEngine {
   killSubAgent(subId: string) {
     const sub = this.characters.get(subId);
     if (sub?.isSubAgent) sub.dying = true;
+  }
+
+  /** Check if a character (typically a sub-agent) is in dying state */
+  isCharacterDying(id: string): boolean {
+    return this.characters.get(id)?.dying === true;
   }
 
   getCharacterIds(): string[] { return Array.from(this.characters.keys()); }

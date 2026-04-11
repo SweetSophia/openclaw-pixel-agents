@@ -1,78 +1,45 @@
+/* PixelOffice.css - HUD Aesthetic */
 .pixel-office {
-  flex: 1;
+  width: 100vw;
+  height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   overflow: hidden;
-  /* Prevent native touch scrolling/gestures in this container (canvas handles them) */
+  /* Prevent native touch scrolling in this container */
   touch-action: none;
+  z-index: 1; /* Below HUD elements */
 }
 
 .office-canvas {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  border: 2px solid #0f3460;
-  border-radius: 4px;
-  background: #0f0f23;
-  max-width: 100%;
-  max-height: 100%;
-  /* Prevent browser touch gestures on canvas (we handle our own) */
+  /* Instead of a harsh border, we use a subtle box shadow to give it depth over the background */
+  border: none;
+  background: transparent; /* Let background shine through empty spaces */
+  
+  /* Make canvas scale beautifully */
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+
+  /* Prevent browser touch gestures on canvas */
   touch-action: none;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.editor-badge {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #e94560;
-  color: white;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: bold;
-  letter-spacing: 1px;
-  animation: pulse-badge 2s infinite;
-  pointer-events: none;
-}
 
-@keyframes pulse-badge {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
 
 /* ── Mobile ─────────────────────────────────────── */
-
 @media (max-width: 768px) {
-  .pixel-office {
-    padding: 8px;
-  }
-
-  .office-canvas {
-    /* Scale canvas to fit viewport width */
-    max-width: calc(100vw - 16px);
-    max-height: calc(60vh - 16px);
-  }
-
   .editor-badge {
-    bottom: 10px;
+    bottom: 60px;
     font-size: 10px;
-    padding: 3px 8px;
-  }
-}
-
-@media (max-width: 480px) {
-  .pixel-office {
-    padding: 4px;
-  }
-
-  .office-canvas {
-    max-width: calc(100vw - 8px);
-    max-height: calc(55vh - 8px);
+    padding: 6px 12px;
   }
 }
