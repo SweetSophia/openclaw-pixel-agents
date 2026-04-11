@@ -153,8 +153,8 @@ export const PixelOffice: React.FC<Props> = ({
             if (!currentIds.has(sub.id)) {
               engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
               currentIds.add(sub.id); // Prevent re-spawning
-            } else if (engine.isCharacterDying(sub.id)) {
-              // Only respawn if the sub-agent is in dying/fading state
+            } else {
+              // Resurrect if it was previously marked as dying
               engine.removeCharacter(sub.id);
               engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
             }
