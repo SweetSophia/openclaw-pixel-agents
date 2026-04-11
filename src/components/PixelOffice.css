@@ -11,8 +11,7 @@
   overflow: hidden;
   /* Prevent native touch scrolling in this container */
   touch-action: none;
-  z-index: 1;
-  /* Below HUD elements */
+  z-index: 1; /* Below HUD elements */
 }
 
 .office-canvas {
@@ -20,9 +19,8 @@
   image-rendering: crisp-edges;
   /* Instead of a harsh border, we use a subtle box shadow to give it depth over the background */
   border: none;
-  background: transparent;
-  /* Let background shine through empty spaces */
-
+  background: transparent; /* Let background shine through empty spaces */
+  
   /* Make canvas scale beautifully */
   width: 100vw;
   height: 100vh;
@@ -39,5 +37,9 @@
 
 /* ── Mobile ─────────────────────────────────────── */
 @media (max-width: 768px) {
-  /* Mobile responsive styles */
+  .editor-badge {
+    bottom: 60px;
+    font-size: 10px;
+    padding: 6px 12px;
+  }
 }
