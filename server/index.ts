@@ -20,15 +20,37 @@ import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivit
 
 const app = express();
 const server = createServer(app);
+// Pre-compute allowed origins once (not per-request)
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+  : [];
+const allowAllOrigins = !process.env.CORS_ORIGIN && process.env.NODE_ENV !== "production";
+
 const io = new SocketIOServer(server, {
-  cors: { origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*") },
+  cors: {
+    origin: allowedOrigins.length > 0
+      ? allowedOrigins
+      : process.env.NODE_ENV === "production" ? false : "*",
+  },
+  allowRequest: (req, callback) => {
+    if (allowAllOrigins) {
+      callback(null, true);
+      return;
+    }
+    // Only reject if an allowlist is configured AND origin doesn't match
+    if (allowedOrigins.length > 0 && !allowedOrigins.includes(req.headers.origin || "")) {
+      callback("Origin not allowed", false);
+      return;
+    }
+    callback(null, true);
+  },
 });
 
 // Basic security headers
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:");
   next();
 });
 
@@ -73,14 +95,14 @@ interface KnownAgent {
 /** Default agent definitions */
 function defaultRegistry(): Map<string, KnownAgent> {
   return new Map([
-    ["main",       { id: "main",       name: "Shodan",      pixelEnabled: true, tags: ["orchestration", "research"] }],
-    ["miku",       { id: "miku",       name: "Miku",        pixelEnabled: true, tags: ["creative", "media"] }],
-    ["chi",        { id: "chi",        name: "Chi",         pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia",  pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
-    ["descartes",  { id: "descartes",  name: "Descartes",   pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis",  pixelEnabled: true, tags: ["coding", "logic"] }],
-    ["cylena",     { id: "cylena",     name: "Cylena",      pixelEnabled: true, tags: ["coding", "frontend"] }],
-    ["cybera",     { id: "cybera",     name: "Cybera",      pixelEnabled: true, tags: ["coding", "infrastructure"] }],
+    ["main", { id: "main", name: "Shodan", pixelEnabled: true, tags: ["orchestration", "research"] }],
+    ["miku", { id: "miku", name: "Miku", pixelEnabled: true, tags: ["creative", "media"] }],
+    ["chi", { id: "chi", name: "Chi", pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
+    ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true, tags: ["coding", "logic"] }],
+    ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true, tags: ["coding", "frontend"] }],
+    ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true, tags: ["coding", "infrastructure"] }],
   ]);
 }
 
@@ -303,11 +325,11 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
         lastActivity: latestSession.updatedAt ?? Date.now(),
         tokens: latestSession.totalTokens
           ? {
-              used: latestSession.totalTokens,
-              limit: latestSession.contextTokens ?? 100000,
-              inputTokens: latestSession.inputTokens,
-              outputTokens: latestSession.outputTokens,
-            }
+            used: latestSession.totalTokens,
+            limit: latestSession.contextTokens ?? 100000,
+            inputTokens: latestSession.inputTokens,
+            outputTokens: latestSession.outputTokens,
+          }
           : undefined,
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
@@ -629,7 +651,7 @@ const RATE_LIMIT_MAX = 10;
 const ingestRateBuckets = new Map<string, number[]>();
 
 // Periodically prune expired rate-limit entries to prevent memory leak
-setInterval(() => {
+const ingestPruneTimer = setInterval(() => {
   const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
   for (const [key, timestamps] of ingestRateBuckets) {
     const pruned = timestamps.filter(t => t > cutoff);
@@ -1111,6 +1133,54 @@ const cliExplicit = DATA_SOURCE === "cli";
 const ingestExplicit = DATA_SOURCE === "ingest";
 const useCli = cliExplicit || (DATA_SOURCE === "auto" && !ingestExplicit);
 
+// ---- Graceful Shutdown ----
+
+let isShuttingDown = false;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+const GRACEFUL_SHUTDOWN_MS = 5000;
+
+async function shutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n[server] Received ${signal}, shutting down gracefully...`);
+
+  // Clear periodic timers to prevent new work during shutdown
+  clearInterval(ingestPruneTimer);
+  if (pollTimer) clearInterval(pollTimer);
+
+  // Race: graceful close vs. hard timeout
+  // Await both server.close() AND io.close() before resolving
+  const gracefulClose = Promise.all([
+    new Promise<void>((resolve) => {
+      server.close(() => {
+        console.log("[server] HTTP server closed");
+        resolve();
+      });
+    }),
+    new Promise<void>((resolve) => {
+      io.close(() => {
+        console.log("[server] Socket.IO connections closed");
+        resolve();
+      });
+    }),
+  ]).then(() => undefined);
+
+  const hardTimeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      console.error("[server] Forced shutdown after timeout");
+      resolve();
+    }, GRACEFUL_SHUTDOWN_MS);
+  });
+
+  await Promise.race([gracefulClose, hardTimeout]);
+  console.log("[server] Shutdown complete");
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 server.listen(PORT, () => {
   console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);
   console.log(`📊 Data source: ${DATA_SOURCE} (effective: ${useCli && !ingestExplicit ? "cli-poll" : "ingest-only"})`);
@@ -1118,7 +1188,7 @@ server.listen(PORT, () => {
   if (useCli && !ingestExplicit) {
     console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
     pollAndBroadcast();
-    setInterval(pollAndBroadcast, POLL_INTERVAL);
+    pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
   } else {
     console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
   }

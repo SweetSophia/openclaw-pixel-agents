@@ -3,7 +3,8 @@
   position: absolute;
   top: 16px;
   right: 16px;
-  bottom: 80px; /* Leave room for marquee */
+  bottom: 80px;
+  /* Leave room for marquee */
   width: 300px;
   background: var(--bg-panel);
   backdrop-filter: var(--glass-blur);
@@ -18,15 +19,17 @@
   transition: all 0.3s ease;
 }
 
-/* Custom Scrollbar for HUD */
-.agent-sidebar::-webkit-scrollbar {
+/* Custom Scrollbar for HUD - target .agent-list which is the actual scroll container */
+.agent-list::-webkit-scrollbar {
   width: 6px;
 }
-.agent-sidebar::-webkit-scrollbar-track {
+
+.agent-list::-webkit-scrollbar-track {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
 }
-.agent-sidebar::-webkit-scrollbar-thumb {
+
+.agent-list::-webkit-scrollbar-thumb {
   background: rgba(0, 240, 255, 0.5);
   border-radius: 4px;
 }
@@ -65,9 +68,11 @@
   border-color: var(--acc-green);
   box-shadow: 0 0 10px rgba(0, 255, 170, 0.15), inset 0 0 5px rgba(0, 255, 170, 0.1);
 }
+
 .agent-card.inactive {
   opacity: 0.6;
 }
+
 .agent-card.disabled {
   opacity: 0.3;
   border-style: dashed;
@@ -131,9 +136,19 @@
   transition: transform 0.15s, filter 0.15s;
   position: relative;
 }
-.toggle-btn:hover { transform: scale(1.2); }
-.toggle-btn.on { filter: drop-shadow(0 0 4px var(--acc-green)); }
-.toggle-btn.off { opacity: 0.5; filter: grayscale(100%); }
+
+.toggle-btn:hover {
+  transform: scale(1.2);
+}
+
+.toggle-btn.on {
+  filter: drop-shadow(0 0 4px var(--acc-green));
+}
+
+.toggle-btn.off {
+  opacity: 0.5;
+  filter: grayscale(100%);
+}
 
 .agent-details {
   display: flex;
@@ -216,12 +231,16 @@
   opacity: 0.5;
   transition: opacity 0.15s;
 }
-.tag-edit-btn:hover { opacity: 1; text-shadow: 0 0 5px #fff; }
+
+.tag-edit-btn:hover {
+  opacity: 1;
+  text-shadow: 0 0 5px #fff;
+}
 
 .tag-add-btn {
   margin-top: 8px;
-  background: rgba(0,0,0,0.2);
-  border: 1px dashed rgba(255,255,255,0.2);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
   color: var(--text-muted);
   font-size: 10px;
   padding: 4px 8px;
@@ -230,6 +249,7 @@
   transition: all 0.2s;
   width: 100%;
 }
+
 .tag-add-btn:hover {
   border-color: var(--acc-cyan);
   color: var(--acc-cyan);
@@ -246,7 +266,7 @@
 .sidebar-footer {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid rgba(255,255,255,0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   gap: 12px;
 }
@@ -264,15 +284,18 @@
   transition: all 0.2s;
   text-transform: uppercase;
 }
+
 .sidebar-footer button:hover {
   background: rgba(0, 240, 255, 0.2);
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
+
 .sidebar-footer button.danger {
   color: var(--acc-pink);
   border-color: var(--acc-pink);
   background: rgba(255, 0, 85, 0.1);
 }
+
 .sidebar-footer button.danger:hover {
   background: rgba(255, 0, 85, 0.2);
   box-shadow: 0 0 8px rgba(255, 0, 85, 0.4);
@@ -282,10 +305,12 @@
 @media (max-width: 768px) {
   .agent-sidebar {
     width: auto;
-    left: 16px; /* Span across on small screens */
+    left: 16px;
+    /* Span across on small screens */
     top: auto;
     bottom: 16px;
-    height: 35vh; /* Take bottom 1/3 */
+    height: 35vh;
+    /* Take bottom 1/3 */
     max-height: none;
     border-radius: 12px;
   }
@@ -293,7 +318,9 @@
 
 @media (max-width: 480px) {
   .agent-sidebar {
-    left: 8px; right: 8px; bottom: 8px;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
     height: 30vh;
     padding: 10px;
   }
