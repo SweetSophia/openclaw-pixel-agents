@@ -151,11 +151,6 @@ export async function loadSourceSheets(
   bodySheet = body;
   hairSheet = hair;
   outfitSheets = outfits.filter((o): o is ImageBitmap => o !== null);
-
-  console.log(
-    `[CharacterComposer] Source sheets loaded: body=${bodySheet ? 'ok' : 'MISSING'}, ` +
-    `hair=${hairSheet ? 'ok' : 'MISSING'}, outfits=${outfitSheets.length}/6`
-  );
 }
 
 /**

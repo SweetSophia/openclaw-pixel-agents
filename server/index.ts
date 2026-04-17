@@ -13,7 +13,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
-import { join, dirname } from "node:path";
+import { join, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
@@ -118,6 +118,7 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
     const map = new Map<string, PersistedPrefs>();
+
     for (const [k, v] of Object.entries(data)) {
       if (v && typeof v === 'object' && !Array.isArray(v)) {
         map.set(k, v as PersistedPrefs);
@@ -1015,6 +1016,7 @@ app.get("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const layout = loadLayout(id);
+
   if (!layout) {
     // Auto-create default
     if (id === "default") {
