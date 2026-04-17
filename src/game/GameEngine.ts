@@ -71,8 +71,8 @@ export interface GameCallbacks {
   onCharacterClick: (agentId: string) => void;
 }
 
-const AGENT_PALETTES: Record<string, number> = {
-  cybera: 0, shodan: 1, cyberlogis: 2, descartes: 3,
+const AGENT_PALETTES: Record<'cybera' | 'main' | 'shodan' | 'cyberlogis' | 'descartes' | 'chi' | 'cylena' | 'sysauxilia' | 'miku', number> = {
+  cybera: 0, main: 1, shodan: 1, cyberlogis: 2, descartes: 3,
   chi: 4, cylena: 5, sysauxilia: 3, miku: 0,
 };
 
@@ -1977,7 +1977,7 @@ export class GameEngine {
   }
 
   addCharacter(data: CharacterData) {
-    const paletteIndex = AGENT_PALETTES[data.id] ?? Math.floor(Math.random() * 6);
+    const paletteIndex = AGENT_PALETTES[data.id as keyof typeof AGENT_PALETTES] ?? Math.floor(Math.random() * 6);
     this.characters.set(data.id, {
       ...data, targetX: data.x, targetY: data.y,
       animFrame: 0, animTimer: 0, direction: 'down', paletteIndex,
