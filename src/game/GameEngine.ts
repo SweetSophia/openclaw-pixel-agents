@@ -106,13 +106,14 @@ const STATE_VFX: Record<string, {
   glowColor: string;
   glowDuration: number; // ms
 }> = {
-  idle:            { color: '#6688aa', particleCount: 0,  particleSpeed: 0,   glowColor: 'transparent',   glowDuration: 0 },
-  thinking:        { color: '#a78bfa', icon: '💭', particleCount: 6,  particleSpeed: 25,  glowColor: 'rgba(167,139,250,0.15)', glowDuration: 800 },
-  typing:          { color: '#4ecca3', icon: '⌨',  particleCount: 4,  particleSpeed: 15,  glowColor: 'rgba(78,204,163,0.12)',  glowDuration: 500 },
-  running_command: { color: '#fbbf24', icon: '⚡', particleCount: 5,  particleSpeed: 30,  glowColor: 'rgba(251,191,36,0.15)',  glowDuration: 600 },
-  waiting_input:   { color: '#60a5fa', icon: '💬', particleCount: 8,  particleSpeed: 20,  glowColor: 'rgba(96,165,250,0.15)',  glowDuration: 1000 },
-  error:           { color: '#ef4444', icon: '❌', particleCount: 10, particleSpeed: 40,  glowColor: 'rgba(239,68,68,0.2)',    glowDuration: 800 },
-  reading:         { color: '#34d399', icon: '📖', particleCount: 3,  particleSpeed: 10,  glowColor: 'rgba(52,211,153,0.1)',   glowDuration: 400 },
+  idle: { color: '#6688aa', particleCount: 0, particleSpeed: 0, glowColor: 'transparent', glowDuration: 0 },
+  thinking: { color: '#a78bfa', icon: '💭', particleCount: 6, particleSpeed: 25, glowColor: 'rgba(167,139,250,0.15)', glowDuration: 800 },
+  typing: { color: '#4ecca3', icon: '⌨', particleCount: 4, particleSpeed: 15, glowColor: 'rgba(78,204,163,0.12)', glowDuration: 500 },
+  running_command: { color: '#fbbf24', icon: '⚡', particleCount: 5, particleSpeed: 30, glowColor: 'rgba(251,191,36,0.15)', glowDuration: 600 },
+  waiting_input: { color: '#60a5fa', icon: '💬', particleCount: 8, particleSpeed: 20, glowColor: 'rgba(96,165,250,0.15)', glowDuration: 1000 },
+  sleeping: { color: '#94a3b8', icon: '💤', particleCount: 0, particleSpeed: 0, glowColor: 'transparent', glowDuration: 0 },
+  error: { color: '#ef4444', icon: '❌', particleCount: 10, particleSpeed: 40, glowColor: 'rgba(239,68,68,0.2)', glowDuration: 800 },
+  reading: { color: '#34d399', icon: '📖', particleCount: 3, particleSpeed: 10, glowColor: 'rgba(52,211,153,0.1)', glowDuration: 400 },
 };
 
 // ── Day/Night Cycle ────────────────────────────────────
@@ -126,22 +127,32 @@ interface DayPhase {
   label: string;
 }
 
+interface ParsedDayPhase {
+  r: number; g: number; b: number; a: number;
+  light: number;
+  label: string;
+}
+
+function parseRgbaStatic(s: string): [number, number, number, number] {
+  const m = s.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
+  if (!m) return [0, 0, 0, 0];
+  return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
+}
+
 const DAY_PHASES: DayPhase[] = [
-  // 0.00-0.15: Morning (warm amber)
   { overlay: 'rgba(255, 200, 100, 0.06)', light: 0.95, label: 'Morning' },
-  // 0.15-0.35: Midday (bright, neutral)
   { overlay: 'rgba(255, 255, 240, 0.02)', light: 1.0, label: 'Midday' },
-  // 0.35-0.50: Afternoon (warm orange)
   { overlay: 'rgba(255, 160, 60, 0.08)', light: 0.9, label: 'Afternoon' },
-  // 0.50-0.60: Sunset (deep orange/red)
   { overlay: 'rgba(255, 100, 30, 0.12)', light: 0.75, label: 'Sunset' },
-  // 0.60-0.75: Dusk (blue-purple)
   { overlay: 'rgba(60, 40, 120, 0.15)', light: 0.55, label: 'Dusk' },
-  // 0.75-0.90: Night (deep blue)
   { overlay: 'rgba(10, 10, 50, 0.25)', light: 0.35, label: 'Night' },
-  // 0.90-1.00: Late night (dark, slight warm)
   { overlay: 'rgba(15, 10, 40, 0.3)', light: 0.25, label: 'Late Night' },
 ];
+
+const PARSED_PHASES: ParsedDayPhase[] = DAY_PHASES.map(p => {
+  const [r, g, b, a] = parseRgbaStatic(p.overlay);
+  return { r, g, b, a, light: p.light, label: p.label };
+});
 
 // ── Ambient Particles ──────────────────────────────────
 
@@ -189,10 +200,15 @@ export class GameEngine {
   private running = false;
   private animFrameId = 0;
   private lastTime = 0;
+  private nowMs = 0;
+  private floorCacheCanvas: HTMLCanvasElement | null = null;
+  private floorCacheCtx: CanvasRenderingContext2D | null = null;
+  private floorCacheValid = false;
   private assetsLoaded = false;
   private _renderDiagLogged = false;
   private _furnitureDiagLogged = false;
   private characters_sprites: LoadedCharacter[] = [];
+  private characterSpriteOverrides: Map<string, LoadedCharacter> = new Map();
   private floors: LoadedFloor[] = [];
   private furniture: Map<string, LoadedFurnitureItem> = new Map();
   private zoom: number;
@@ -240,6 +256,11 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
+  private _currentPhase: DayPhase = {
+    overlay: 'rgba(255, 255, 240, 0.02)',
+    light: 1.0,
+    label: 'Midday',
+  };
 
   // Ambient particles (dust motes, steam)
   private ambientParticles: AmbientParticle[] = [];
@@ -274,10 +295,12 @@ export class GameEngine {
     this.canvas.addEventListener('touchcancel', this.handleTouchCancel, { passive: false });
   }
 
-  async init(signal?: AbortSignal) {
+  async init(signal?: AbortSignal, debugDemo: boolean = false) {
     await this.loadAssets(signal);
     this.rebuildObstacles();
-    this.spawnDemoAgents();
+    if (debugDemo) {
+      this.spawnDemoAgents();
+    }
   }
 
   private spawnDemoAgents() {
@@ -286,7 +309,7 @@ export class GameEngine {
       { id: 'shodan', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
       { id: 'descartes', name: 'Descartes', state: 'idle' },
-      { id: 'chi', name: 'Chi', state: 'waiting', lastMessage: 'Need input on the deploy config...' },
+      { id: 'chi', name: 'Chi', state: 'waiting_input', lastMessage: 'Need input on the deploy config...' },
       { id: 'cylena', name: 'Cylena', state: 'sleeping' },
       { id: 'sysauxilia', name: 'Sysauxilia', state: 'idle' },
       { id: 'miku', name: 'Miku', state: 'reading' },
@@ -310,6 +333,7 @@ export class GameEngine {
       this.floors = floors;
       this.furniture = furniture;
       this.assetsLoaded = true;
+      this.floorCacheValid = false;
       console.log(`[GameEngine] Assets loaded: ${furniture.size} furniture types, ${characters.length} characters, ${floors.length} floors`);
     } catch (err) {
       console.error('[GameEngine] Asset load failed:', err);
@@ -317,19 +341,23 @@ export class GameEngine {
         this.characters_sprites = await loadCharacters(undefined, signal);
         this.assetsLoaded = true;
         console.warn('[GameEngine] Fell back to characters-only; furniture sprites unavailable');
-      } catch {}
+      } catch { }
     }
   }
 
   start() {
     this.running = true;
-    this.lastTime = performance.now();
+    this.nowMs = performance.now();
+    this.lastTime = this.nowMs;
     this.loop();
   }
 
   stop() {
     this.running = false;
-    if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+    if (this.animFrameId) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = 0;
+    }
     if (this._obstacleRebuildRafId !== null) {
       cancelAnimationFrame(this._obstacleRebuildRafId);
       this._obstacleRebuildRafId = null;
@@ -350,10 +378,12 @@ export class GameEngine {
 
   private loop = () => {
     if (!this.running) return;
-    const now = performance.now();
-    const dt = (now - this.lastTime) / 1000;
-    this.lastTime = now;
-    this.update(dt, now);
+    this.nowMs = performance.now();
+    const rawDt = (this.nowMs - this.lastTime) / 1000;
+    // Clamp delta time to prevent teleportation when tab is backgrounded
+    const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
+    this.lastTime = this.nowMs;
+    this.update(dt);
     this.render();
     this.animFrameId = requestAnimationFrame(this.loop);
   };
@@ -405,11 +435,11 @@ export class GameEngine {
 
   // ── Update ───────────────────────────────────────────
 
-  private update(dt: number, now: number) {
+  private update(dt: number) {
     for (const char of this.characters.values()) {
       // Sub-agent lifecycle
       if (char.isSubAgent) {
-        const age = now - char.spawnTime;
+        const age = this.nowMs - char.spawnTime;
         if (age > SUBAGENT_LIFETIME && !char.dying) {
           char.dying = true;
           sfx.despawn();
@@ -511,9 +541,8 @@ export class GameEngine {
     }
 
     // Update state transition effects
-    const nowMs = performance.now();
     for (const fx of this.stateEffects) {
-      const elapsed = nowMs - fx.startTime;
+      const elapsed = this.nowMs - fx.startTime;
       for (const p of fx.particles) {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
@@ -523,11 +552,12 @@ export class GameEngine {
       fx.particles = fx.particles.filter(p => p.life > 0);
     }
     this.stateEffects = this.stateEffects.filter(fx =>
-      performance.now() - fx.startTime < fx.duration || fx.particles.length > 0
+      this.nowMs - fx.startTime < fx.duration || fx.particles.length > 0
     );
 
     // ── Day/night cycle update ──
     this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
+    this._currentPhase = this.getDayPhase();
 
     // ── Ambient particles update ──
     this.updateAmbientParticles(dt);
@@ -538,36 +568,23 @@ export class GameEngine {
 
   // ── Day/Night Cycle ──────────────────────────────────
 
-  /** Parse 'rgba(R, G, B, A)' into [r, g, b, a] */
-  private parseRgba(s: string): [number, number, number, number] {
-    const m = s.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
-    if (!m) return [0, 0, 0, 0];
-    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
-  }
-
-  /** Linearly interpolate two rgba overlay strings */
-  private lerpOverlay(colorA: string, colorB: string, t: number): string {
-    const [r1, g1, b1, a1] = this.parseRgba(colorA);
-    const [r2, g2, b2, a2] = this.parseRgba(colorB);
-    const r = Math.round(r1 + (r2 - r1) * t);
-    const g = Math.round(g1 + (g2 - g1) * t);
-    const b = Math.round(b1 + (b2 - b1) * t);
-    const a = +(a1 + (a2 - a1) * t).toFixed(3);
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
-  }
-
   /** Get interpolated day phase data */
   private getDayPhase(): DayPhase {
-    const idx = this.dayPhase * DAY_PHASES.length;
-    const i = Math.floor(idx) % DAY_PHASES.length;
-    const j = (i + 1) % DAY_PHASES.length;
+    const idx = this.dayPhase * PARSED_PHASES.length;
+    const i = Math.floor(idx) % PARSED_PHASES.length;
+    const j = (i + 1) % PARSED_PHASES.length;
     const t = idx - Math.floor(idx);
 
-    const a = DAY_PHASES[i];
-    const b = DAY_PHASES[j];
+    const a = PARSED_PHASES[i];
+    const b = PARSED_PHASES[j];
+
+    const r = Math.round(a.r + (b.r - a.r) * t);
+    const g = Math.round(a.g + (b.g - a.g) * t);
+    const blue = Math.round(a.b + (b.b - a.b) * t);
+    const alpha = +(a.a + (b.a - a.a) * t).toFixed(3);
 
     return {
-      overlay: this.lerpOverlay(a.overlay, b.overlay, t),
+      overlay: `rgba(${r}, ${g}, ${blue}, ${alpha})`,
       light: a.light + (b.light - a.light) * t,
       label: t < 0.5 ? a.label : b.label,
     };
@@ -576,7 +593,7 @@ export class GameEngine {
   /** Render day/night color overlay and monitor glow */
   private renderDayNight(tileSize: number) {
     const { ctx, config } = this;
-    const phase = this.getDayPhase();
+    const phase = this._currentPhase;
 
     // Color overlay
     ctx.fillStyle = phase.overlay;
@@ -621,8 +638,13 @@ export class GameEngine {
     const w = config.gridWidth;
     const h = config.gridHeight;
 
+    // Count dust particles
+    let dustCount = 0;
+    for (const p of this.ambientParticles) {
+      if (p.type === 'dust') dustCount++;
+    }
+
     // Spawn new dust motes
-    const dustCount = this.ambientParticles.filter(p => p.type === 'dust').length;
     let dustToAdd = AMBIENT_DUST_COUNT - dustCount;
     while (dustToAdd-- > 0) {
       const life = 8 + Math.random() * 12;
@@ -646,9 +668,10 @@ export class GameEngine {
     // Spawn steam near coffee cup furniture items
     for (const item of this.placedFurniture) {
       if (item.type.toLowerCase().includes('coffee') || item.type.toLowerCase().includes('cup')) {
-        const steamCount = this.ambientParticles.filter(
-          p => p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1
-        ).length;
+        let steamCount = 0;
+        for (const p of this.ambientParticles) {
+          if (p.type === 'steam' && Math.abs(p.x - (item.x + 0.5)) < 1) steamCount++;
+        }
         if (steamCount < 3 && Math.random() < dt * 0.5) {
           this.ambientParticles.push({
             x: item.x + 0.3 + Math.random() * 0.4,
@@ -670,7 +693,7 @@ export class GameEngine {
     }
 
     // Spawn sparkles near monitors (at night)
-    const phase = this.getDayPhase();
+    const phase = this._currentPhase;
     if (phase.light < 0.5 && Math.random() < dt * 2) {
       const typingAgents = Array.from(this.characters.values()).filter(
         c => c.state === 'typing' || c.state === 'running_command'
@@ -719,13 +742,19 @@ export class GameEngine {
       if (p.x > config.gridWidth) p.x = 0;
     }
 
-    // Remove dead particles
-    this.ambientParticles = this.ambientParticles.filter(p => p.life > 0);
+    // Remove dead particles (in-place to avoid GC pressure)
+    let writeIdx = 0;
+    for (let i = 0; i < this.ambientParticles.length; i++) {
+      if (this.ambientParticles[i].life > 0) {
+        this.ambientParticles[writeIdx++] = this.ambientParticles[i];
+      }
+    }
+    this.ambientParticles.length = writeIdx;
   }
 
   private renderAmbientParticles(tileSize: number) {
     const { ctx } = this;
-    const now = performance.now() / 1000;
+    const now = this.nowMs / 1000;
 
     for (const p of this.ambientParticles) {
       const px = p.x * tileSize;
@@ -844,8 +873,7 @@ export class GameEngine {
       console.log(`[GameEngine] ${gridWidth}x${gridHeight} grid, ts=${tileSize}, zoom=${zoom.toFixed(2)}`);
     }
 
-    ctx.fillStyle = '#0f0f23';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.renderFloor(gridWidth, gridHeight, tileSize, zoom);
     this.renderWalls(gridWidth, gridHeight, tileSize);
@@ -864,16 +892,54 @@ export class GameEngine {
   private renderFloor(gridW: number, gridH: number, tileSize: number, zoom: number) {
     const { ctx, floors } = this;
     const hasFloor = floors.length > 0 && this.assetsLoaded;
-    for (let row = 0; row < gridH; row++) {
-      for (let col = 0; col < gridW; col++) {
-        const px = col * tileSize, py = row * tileSize;
-        if (hasFloor) {
-          const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
-        } else {
-          ctx.fillStyle = (col + row) % 2 === 0 ? '#1a1a2e' : '#1e1e3a';
-          ctx.fillRect(px, py, tileSize, tileSize);
+    const reqWidth = gridW * tileSize;
+    const reqHeight = gridH * tileSize;
+
+    if (!this.floorCacheCanvas) {
+      this.floorCacheCanvas = document.createElement('canvas');
+      this.floorCacheCtx = this.floorCacheCanvas.getContext('2d');
+    }
+
+    if (this.floorCacheCanvas.width !== reqWidth || this.floorCacheCanvas.height !== reqHeight) {
+      this.floorCacheCanvas.width = reqWidth;
+      this.floorCacheCanvas.height = reqHeight;
+      this.floorCacheValid = false;
+    }
+
+    if (!this.floorCacheValid && this.floorCacheCtx) {
+      const ftx = this.floorCacheCtx;
+      for (let row = 0; row < gridH; row++) {
+        for (let col = 0; col < gridW; col++) {
+          const px = col * tileSize, py = row * tileSize;
+          if (hasFloor) {
+            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
+            ftx.imageSmoothingEnabled = false;
+            ftx.drawImage(floor.canvas, px, py, tileSize, tileSize);
+          } else {
+            ftx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
+            ftx.fillRect(px, py, tileSize, tileSize);
+          }
+        }
+      }
+      this.floorCacheValid = true;
+    }
+
+    if (this.floorCacheCanvas && this.floorCacheValid) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(this.floorCacheCanvas, 0, 0);
+    } else if (!this.floorCacheCtx) {
+      // Fallback: render floor directly when OffscreenCanvas context unavailable
+      for (let row = 0; row < gridH; row++) {
+        for (let col = 0; col < gridW; col++) {
+          const px = col * tileSize, py = row * tileSize;
+          if (hasFloor) {
+            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
+          } else {
+            ctx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
+            ctx.fillRect(px, py, tileSize, tileSize);
+          }
         }
       }
     }
@@ -881,7 +947,7 @@ export class GameEngine {
 
   private renderWalls(gridW: number, gridH: number, tileSize: number) {
     const { ctx } = this;
-    ctx.fillStyle = '#0f3460';
+    ctx.fillStyle = 'rgba(0, 240, 255, 0.15)'; // use glowing cyan translucent color for boundaries
     for (let col = 0; col < gridW; col++) {
       ctx.fillRect(col * tileSize, 0, tileSize, tileSize);
       ctx.fillRect(col * tileSize, (gridH - 1) * tileSize, tileSize, tileSize);
@@ -1002,7 +1068,6 @@ export class GameEngine {
   }
 
   private renderCharacters(tileSize: number, zoom: number) {
-    // Sort by Y for depth (characters lower on screen render on top)
     const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
     for (const char of sorted) {
       this.renderCharacter(char, tileSize, zoom);
@@ -1017,7 +1082,7 @@ export class GameEngine {
 
     // Idle breathing: subtle Y bob when stationary and idle
     const isIdle = !isWalking && (char.state === 'idle' || char.state === 'waiting_input' || char.state === 'error');
-    const breathOffset = isIdle ? Math.sin(performance.now() / 800) * tileSize * 0.04 : 0;
+    const breathOffset = isIdle ? Math.sin(this.nowMs / 800) * tileSize * 0.04 : 0;
 
     // Idle behavior animation offset
     const idleOff = this.getIdleOffset(char.id);
@@ -1039,8 +1104,8 @@ export class GameEngine {
     }
 
     // Spawn glow effect for new sub-agents
-    if (char.isSubAgent && (performance.now() - char.spawnTime) < 1000) {
-      const glowAlpha = 1 - (performance.now() - char.spawnTime) / 1000;
+    if (char.isSubAgent && (this.nowMs - char.spawnTime) < 1000) {
+      const glowAlpha = 1 - (this.nowMs - char.spawnTime) / 1000;
       ctx.fillStyle = `rgba(78, 204, 163, ${glowAlpha * 0.4})`;
       ctx.beginPath();
       ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize, 0, Math.PI * 2);
@@ -1051,7 +1116,8 @@ export class GameEngine {
     if (sprites == null || sprites.length === 0) {
       this.renderPlaceholderCharacter(char, px, py, tileSize);
     } else {
-      const sprite = sprites[char.paletteIndex % sprites.length];
+      const override = this.characterSpriteOverrides.get(char.id);
+      const sprite = override ?? sprites[char.paletteIndex % sprites.length];
       if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
       else {
         const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
@@ -1107,7 +1173,7 @@ export class GameEngine {
     const vfx = STATE_VFX[char.state];
     if (!vfx) return;
 
-    const now = performance.now();
+    const now = this.nowMs;
     const iconSize = tileSize * 0.45;
 
     // Thinking: 3 bouncing dots
@@ -1179,7 +1245,7 @@ export class GameEngine {
 
     for (const [agentId, bubble] of this.speechBubbles) {
       const char = this.characters.get(agentId);
-      if (!char || char.state !== 'waiting') continue;
+      if (!char || char.state !== 'waiting_input') continue;
 
       const px = char.x * tileSize + tileSize / 2;
       const py = char.y * tileSize - tileSize * 0.8;
@@ -1286,17 +1352,49 @@ export class GameEngine {
 
   // ── Mouse handlers ───────────────────────────────────
 
-  private screenToGrid(e: MouseEvent): { gridX: number; gridY: number };
-  private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number };
-  private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } {
+  private screenToGrid(e: MouseEvent): { gridX: number; gridY: number } | null;
+  private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number } | null;
+  private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } | null {
     const rect = this.canvas.getBoundingClientRect();
-    const scaleX = this.canvas.width / rect.width;
-    const scaleY = this.canvas.height / rect.height;
+    const canvas = this.canvas;
+
+    // When object-fit: contain is used, the CSS box (rect) may be larger than
+    // the actual rendered canvas area due to pillarboxing/letterboxing.
+    // We need to compute the actual rendered dimensions to get correct scales.
+    const cssRatio = rect.width / rect.height;
+    const canvasRatio = canvas.width / canvas.height;
+
+    let renderedWidth: number, renderedHeight: number, offsetX: number, offsetY: number;
+
+    if (cssRatio > canvasRatio) {
+      // Pillarboxing: bars on left/right
+      renderedWidth = (canvas.width / canvas.height) * rect.height;
+      renderedHeight = rect.height;
+      offsetX = rect.left + (rect.width - renderedWidth) / 2;
+      offsetY = rect.top;
+    } else {
+      // Letterboxing: bars on top/bottom
+      renderedWidth = rect.width;
+      renderedHeight = (canvas.height / canvas.width) * rect.width;
+      offsetX = rect.left;
+      offsetY = rect.top + (rect.height - renderedHeight) / 2;
+    }
+
+    // Use unified scale - both dimensions should have the same ratio with object-fit: contain
+    const scale = canvas.width / renderedWidth;
+
     const clientX = typeof eOrX === 'number' ? eOrX : eOrX.clientX;
     const clientY = typeof eOrX === 'number' ? maybeY! : eOrX.clientY;
+
+    // Check if click falls within the rendered canvas area (not in letterbox/pillarbox)
+    if (clientX < offsetX || clientX > offsetX + renderedWidth ||
+      clientY < offsetY || clientY > offsetY + renderedHeight) {
+      return null;
+    }
+
     return {
-      gridX: Math.floor((clientX - rect.left) * scaleX / this.config.tileSize),
-      gridY: Math.floor((clientY - rect.top) * scaleY / this.config.tileSize),
+      gridX: Math.floor((clientX - offsetX) * scale / this.config.tileSize),
+      gridY: Math.floor((clientY - offsetY) * scale / this.config.tileSize),
     };
   }
 
@@ -1323,7 +1421,9 @@ export class GameEngine {
   }
 
   private handleMouseMove = (e: MouseEvent) => {
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     this.mouseGridX = gridX;
     this.mouseGridY = gridY;
     if (this.dragging) {
@@ -1354,7 +1454,9 @@ export class GameEngine {
 
   private handleMouseDown = (e: MouseEvent) => {
     if (!this.editorMode) return;
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     if (e.button === 0) {
       if (this.selectedFurnitureType) {
         this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
@@ -1382,7 +1484,9 @@ export class GameEngine {
   private handleMouseUp = (e: MouseEvent) => {
     if (!this.editorMode) return;
     if (this.dragging) {
-      const { gridX, gridY } = this.screenToGrid(e);
+      const result = this.screenToGrid(e);
+      if (!result) return;
+      const { gridX, gridY } = result;
       this.editorCallbacks?.onMoveFurniture(
         this.dragging.id,
         Math.max(1, Math.min(this.config.gridWidth - 3, gridX)),
@@ -1401,14 +1505,18 @@ export class GameEngine {
   private handleContextMenu = (e: MouseEvent) => {
     if (!this.editorMode) return;
     e.preventDefault();
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     const hit = this.findFurnitureAt(gridX, gridY);
     if (hit) hit.rotation = ((hit.rotation || 0) + 90) % 360;
   };
 
   private handleClick = (e: MouseEvent) => {
     if (this.editorMode) return;
-    const { gridX, gridY } = this.screenToGrid(e);
+    const result = this.screenToGrid(e);
+    if (!result) return;
+    const { gridX, gridY } = result;
     const charId = this.findCharacterAt(gridX, gridY);
 
     if (charId && !charId.startsWith('sub-')) {
@@ -1472,22 +1580,24 @@ export class GameEngine {
     this.touchCurrentPos = { x: t.clientX, y: t.clientY };
     this.touchMoved = false;
 
-    const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
-    this.mouseGridX = gridX;
-    this.mouseGridY = gridY;
+    const result1 = this.screenToGrid(t.clientX, t.clientY);
+    if (!result1) return;
+    const { gridX: gridX1, gridY: gridY1 } = result1;
+    this.mouseGridX = gridX1;
+    this.mouseGridY = gridY1;
 
     // Editor mode: start dragging furniture immediately on touch
     if (this.editorMode && e.touches.length === 1) {
       if (this.selectedFurnitureType) {
         // Will place on touchend if not moved
       } else {
-        const hit = this.findFurnitureAt(gridX, gridY);
+        const hit = this.findFurnitureAt(gridX1, gridY1);
         if (hit) {
           if (this.deleteMode) {
             // In delete mode: just notify React, skip drag
             this.editorCallbacks?.onSelectFurniture(hit.id);
           } else {
-            this.touchDragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
+            this.touchDragging = { id: hit.id, offsetX: gridX1 - hit.x, offsetY: gridY1 - hit.y };
             this.selectedFurnitureId = hit.id;
             this.editorCallbacks?.onSelectFurniture(hit.id);
           }
@@ -1531,16 +1641,18 @@ export class GameEngine {
     // Track the latest finger position so handleTouchEnd can use the drop location
     this.touchCurrentPos = { x: t.clientX, y: t.clientY };
 
-    const { gridX, gridY } = this.screenToGrid(t.clientX, t.clientY);
-    this.mouseGridX = gridX;
-    this.mouseGridY = gridY;
+    const result2 = this.screenToGrid(t.clientX, t.clientY);
+    if (!result2) return;
+    const { gridX: gridX2, gridY: gridY2 } = result2;
+    this.mouseGridX = gridX2;
+    this.mouseGridY = gridY2;
 
     // Editor mode: drag furniture (subtract grab offset to keep furniture under finger)
     if (this.editorMode && this.touchDragging) {
       const item = this.placedFurniture.find(f => f.id === this.touchDragging!.id);
       if (item) {
-        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX));
-        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY));
+        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX2 - this.touchDragging.offsetX));
+        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY2 - this.touchDragging.offsetY));
       }
     }
   };
@@ -1557,16 +1669,24 @@ export class GameEngine {
         // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
         // up-to-date in handleTouchMove, so it reliably reflects the finger's final position.
         // Subtract the grab offset so the drop position matches what was shown during the drag.
-        const { gridX, gridY } = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
-        this.editorCallbacks?.onMoveFurniture(
-          this.touchDragging.id,
-          Math.max(1, Math.min(this.config.gridWidth - 3, gridX - this.touchDragging.offsetX)),
-          Math.max(1, Math.min(this.config.gridHeight - 3, gridY - this.touchDragging.offsetY)),
-        );
-        sfx.place();
+        const resultDrag = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
+        if (resultDrag) {
+          this.editorCallbacks?.onMoveFurniture(
+            this.touchDragging.id,
+            Math.max(1, Math.min(this.config.gridWidth - 3, resultDrag.gridX - this.touchDragging.offsetX)),
+            Math.max(1, Math.min(this.config.gridHeight - 3, resultDrag.gridY - this.touchDragging.offsetY)),
+          );
+          sfx.place();
+        }
         this.touchDragging = null;
       } else if (!this.touchMoved && this.touchStartPos) {
-        const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+        const resultTap = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+        if (!resultTap) {
+          this.touchStartPos = null;
+          this.touchCurrentPos = null;
+          return;
+        }
+        const { gridX, gridY } = resultTap;
         const now = Date.now();
 
         // Double-tap furniture → rotate (mirrors desktop right-click in editor mode)
@@ -1601,7 +1721,13 @@ export class GameEngine {
       return; // was a drag or pinch, not a tap
     }
 
-    const { gridX, gridY } = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+    const resultTap2 = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+    if (!resultTap2) {
+      this.touchStartPos = null;
+      this.touchCurrentPos = null;
+      return;
+    }
+    const { gridX, gridY } = resultTap2;
 
     const charId = this.findCharacterAt(gridX, gridY);
 
@@ -1617,8 +1743,8 @@ export class GameEngine {
       if (char) {
         this.ensureObstacles();
         if (this.obstacleGrid && gridY >= 0 && gridY < this.config.gridHeight
-            && gridX >= 0 && gridX < this.config.gridWidth
-            && !this.obstacleGrid[gridY][gridX]) {
+          && gridX >= 0 && gridX < this.config.gridWidth
+          && !this.obstacleGrid[gridY][gridX]) {
           char.targetX = gridX;
           char.targetY = gridY;
           char.path = this.computePath(char);
@@ -1742,7 +1868,7 @@ export class GameEngine {
     this.stateEffects.push({
       agentId: char.id,
       state: char.state,
-      startTime: performance.now(),
+      startTime: this.nowMs,
       particles,
       duration: vfx.glowDuration,
     });
@@ -1751,7 +1877,7 @@ export class GameEngine {
   /** Show a small fading target marker on walking agents' destinations */
   private renderMoveTargets(tileSize: number) {
     const { ctx } = this;
-    const now = performance.now();
+    const now = this.nowMs;
 
     for (const char of this.characters.values()) {
       const isWalking = Math.abs(char.targetX - char.x) > 0.05 || Math.abs(char.targetY - char.y) > 0.05;
@@ -1787,7 +1913,7 @@ export class GameEngine {
 
   private renderStateEffects(tileSize: number) {
     const { ctx } = this;
-    const nowMs = performance.now();
+    const nowMs = this.nowMs;
 
     for (const fx of this.stateEffects) {
       const char = this.characters.get(fx.agentId);
@@ -1838,12 +1964,17 @@ export class GameEngine {
   private getActivityIcon(state: string): string {
     const icons: Record<string, string> = {
       typing: '⌨', reading: '📖', thinking: '💭',
-      waiting: '💬', error: '❌',
+      waiting_input: '💬', sleeping: '💤', error: '❌',
     };
     return icons[state] || '';
   }
 
   // ── Public API ──────────────────────────────────────────
+
+  /** Replace the sprite for a specific agent (e.g. after recipe change). */
+  setCharacterSprite(agentId: string, sprite: LoadedCharacter) {
+    this.characterSpriteOverrides.set(agentId, sprite);
+  }
 
   addCharacter(data: CharacterData) {
     const paletteIndex = AGENT_PALETTES[data.id] ?? Math.floor(Math.random() * 6);
@@ -1851,12 +1982,12 @@ export class GameEngine {
       ...data, targetX: data.x, targetY: data.y,
       animFrame: 0, animTimer: 0, direction: 'down', paletteIndex,
       path: [], pathIndex: 0,
-      spawnTime: performance.now(), fadeAlpha: 1, dying: false,
+      spawnTime: this.nowMs, fadeAlpha: 1, dying: false,
       lastFootstepTile: -1, typingSoundTimer: 0, stateJustChanged: false,
     });
 
     // Create speech bubble if agent starts in waiting state with a message
-    if (data.state === 'waiting' && data.lastMessage) {
+    if (data.state === 'waiting_input' && data.lastMessage) {
       this.speechBubbles.set(data.id, {
         text: data.lastMessage,
         timer: 30,
@@ -1885,7 +2016,7 @@ export class GameEngine {
     }
 
     // When activity changes to a desk activity, route to seat
-    if (updates.state && ['typing', 'reading'].includes(updates.state)) {
+    if (updates.state && ['typing', 'reading', 'running_command', 'thinking'].includes(updates.state)) {
       const seat = this.seats.get(id);
       if (seat) {
         char.targetX = seat.x;
@@ -1900,7 +2031,7 @@ export class GameEngine {
     }
 
     // Update speech bubble for waiting state
-    if (updates.state === 'waiting' && updates.lastMessage) {
+    if (updates.state === 'waiting_input' && updates.lastMessage) {
       this.speechBubbles.set(id, {
         text: updates.lastMessage,
         timer: 30, // 30 seconds visible
@@ -1933,7 +2064,7 @@ export class GameEngine {
       direction: 'down',
       paletteIndex: parent.paletteIndex,
       path: [], pathIndex: 0,
-      spawnTime: performance.now(),
+      spawnTime: this.nowMs,
       fadeAlpha: 1,
       dying: false,
       isSubAgent: true,
@@ -1951,6 +2082,11 @@ export class GameEngine {
   killSubAgent(subId: string) {
     const sub = this.characters.get(subId);
     if (sub?.isSubAgent) sub.dying = true;
+  }
+
+  /** Check if a character (typically a sub-agent) is in dying state */
+  isCharacterDying(id: string): boolean {
+    return this.characters.get(id)?.dying === true;
   }
 
   getCharacterIds(): string[] { return Array.from(this.characters.keys()); }

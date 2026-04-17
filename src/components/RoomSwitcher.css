@@ -1,42 +1,54 @@
 .room-switcher {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+
   display: flex;
   gap: 4px;
   padding: 6px 12px;
-  background: #0f0f23;
-  border-bottom: 1px solid #1a1a3e;
+  background: var(--bg-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--border-glass);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  border-radius: 20px;
   overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-width: none;
+}
+
+.room-switcher::-webkit-scrollbar {
+  display: none;
 }
 
 .room-tab {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid #2a2a4e;
-  border-radius: 6px;
-  background: #16162e;
-  color: #9ca3af;
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
-  font-family: monospace;
+  font-family: var(--font-pixel);
   white-space: nowrap;
   transition: all 0.2s ease;
-  min-height: 36px; /* touch target */
+  min-height: 36px;
 }
 
 .room-tab:hover {
-  background: #1e1e40;
-  border-color: #4ecca3;
-  color: #e0e0e0;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
 }
 
 .room-tab.active {
-  background: #1a2a4e;
-  border-color: #4ecca3;
-  color: #4ecca3;
-  box-shadow: 0 0 8px rgba(78, 204, 163, 0.15);
+  background: rgba(0, 240, 255, 0.15);
+  border-color: var(--acc-cyan);
+  color: var(--acc-cyan);
+  box-shadow: var(--shadow-neon-cyan);
 }
 
 .room-icon {
@@ -62,6 +74,8 @@
 
 @media (max-width: 768px) {
   .room-switcher {
+    top: 64px;
+    /* below the mobile header which is ~48px tall */
     padding: 4px 8px;
     gap: 3px;
   }
@@ -72,6 +86,7 @@
   }
 
   .room-name {
-    display: none; /* show only icon + count on mobile */
+    display: none;
+    /* show only icon + count on mobile */
   }
 }

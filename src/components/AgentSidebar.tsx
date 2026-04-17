@@ -3,6 +3,7 @@ import type { AgentState, AgentActivity, AgentTag, CharacterRecipe } from '../..
 import { TAG_COLORS } from '../../shared/types';
 import { TagEditor } from './TagEditor';
 import { CharacterCustomizer } from './CharacterCustomizer';
+import { AgentPortrait } from './AgentPortrait';
 import './AgentSidebar.css';
 
 interface Props {
@@ -55,45 +56,50 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
 
           return (
             <div key={agent.id} className={cardClass} onClick={() => onSelectAgent?.(agent.id)} style={{ cursor: onSelectAgent ? 'pointer' : 'default' }}>
-              <div className="agent-header">
-                <span className="agent-icon">
-                  {agent.pixelEnabled ? activityIcons[agent.activity] : '🚫'}
-                </span>
-                <span className="agent-name">{agent.name}</span>
-                <button
-                  className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
-                  onClick={(e) => { e.stopPropagation(); onToggle(agent.id, !agent.pixelEnabled); }}
-                  title={agent.pixelEnabled ? 'Hide from office' : 'Show in office'}
-                >
-                  {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}
-                </button>
-              </div>
-              <div className="agent-details">
-                <span
-                  className="activity-badge"
-                  style={{ backgroundColor: activityColors[agent.activity] }}
-                >
-                  {agent.activity}
-                </span>
-                <span className="agent-model">
-                  {agent.model !== 'unknown' ? agent.model.split('/').pop() : '—'}
-                </span>
-              </div>
-              {agent.tokens && (
-                <div className="agent-tokens">
-                  <div className="token-bar">
-                    <div
-                      className="token-fill"
-                      style={{
-                        width: `${(agent.tokens.used / agent.tokens.limit) * 100}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="token-text">
-                    {((agent.tokens.used / agent.tokens.limit) * 100).toFixed(0)}%
-                  </span>
+              <div className="agent-card-inner">
+                <div className="agent-portrait-wrapper">
+                  <AgentPortrait recipe={agent.recipe} size={44} />
                 </div>
-              )}
+                <div className="agent-content">
+                  <div className="agent-header">
+                    <span className="agent-name">{agent.name}</span>
+                    <button
+                      className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
+                      onClick={(e) => { e.stopPropagation(); onToggle(agent.id, !agent.pixelEnabled); }}
+                      title={agent.pixelEnabled ? 'Hide from office' : 'Show in office'}
+                    >
+                      {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}
+                    </button>
+                  </div>
+                  <div className="agent-details">
+                    <span className="agent-icon">
+                      {agent.pixelEnabled ? activityIcons[agent.activity] : '🚫'}
+                    </span>
+                    <span
+                      className="activity-badge"
+                      style={{ backgroundColor: activityColors[agent.activity] }}
+                    >
+                      {agent.activity}
+                    </span>
+                    <span className="agent-model">
+                      {agent.model !== 'unknown' ? agent.model.split('/').pop() : '—'}
+                    </span>
+                  </div>
+                  {agent.tokens && (
+                    <div className="agent-tokens">
+                      <div className="token-bar">
+                        <div
+                          className="token-fill"
+                          style={{
+                            width: `${(agent.tokens.used / agent.tokens.limit) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="token-text">
+                        {((agent.tokens.used / agent.tokens.limit) * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
               {agent.tags && agent.tags.length > 0 && (
                 <div className="agent-tags">
                   {agent.tags.map(tag => (
@@ -105,20 +111,22 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                       {tag}
                     </span>
                   ))}
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
-                    title="Edit tags"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
-                    title="Customize appearance"
-                  >
-                    🎨
-                  </button>
+                  <div className="card-actions">
+                    <button
+                      className="tag-edit-btn"
+                      onClick={(e) => { e.stopPropagation(); setTagEditorAgent(agent); }}
+                      title="Edit tags"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      className="tag-edit-btn"
+                      onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
+                      title="Customize appearance"
+                    >
+                      🎨
+                    </button>
+                  </div>
                 </div>
               )}
               {(!agent.tags || agent.tags.length === 0) && (
@@ -130,15 +138,19 @@ export const AgentSidebar: React.FC<Props> = ({ agents, onToggle, onToggleAll, o
                   >
                     + tags
                   </button>
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
-                    title="Customize appearance"
-                  >
-                    🎨
-                  </button>
+                  <div className="card-actions">
+                    <button
+                      className="tag-edit-btn"
+                      onClick={(e) => { e.stopPropagation(); setCustomizerAgent(agent); }}
+                      title="Customize appearance"
+                    >
+                      🎨
+                    </button>
+                  </div>
                 </div>
               )}
+                </div>
+              </div>
             </div>
           );
         })}

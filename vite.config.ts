@@ -4,6 +4,9 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    outDir: 'dist/client',
+  },
   resolve: {
     alias: {
       '@shared': path.resolve(__dirname, 'shared'),
@@ -19,6 +22,7 @@ export default defineConfig({
       '/socket.io': {
         target: 'http://localhost:3001',
         ws: true,
+        changeOrigin: true,
       },
     },
   },

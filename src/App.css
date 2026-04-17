@@ -1,132 +1,139 @@
+/* App.css - Aesthetic Overhaul */
+:root {
+  --bg-base: #06080F;
+  --bg-panel: rgba(15, 20, 30, 0.65);
+  --bg-panel-hover: rgba(25, 30, 45, 0.8);
+  
+  --acc-cyan: #00F0FF;
+  --acc-pink: #FF0055;
+  --acc-green: #00FFAA;
+  --acc-purple: #9D00FF;
+  
+  --text-main: #E0E5FF;
+  --text-muted: #8A93B2;
+  
+  /* Fonts */
+  --font-body: 'Space Grotesk', system-ui, sans-serif;
+  --font-pixel: 'Pixelify Sans', 'Courier New', monospace;
+
+  /* Borders / Effects */
+  --border-glass: 1px solid rgba(0, 240, 255, 0.3);
+  --shadow-neon-cyan: 0 0 10px rgba(0, 240, 255, 0.2), inset 0 0 5px rgba(0, 240, 255, 0.1);
+  --shadow-neon-pink: 0 0 10px rgba(255, 0, 85, 0.2), inset 0 0 5px rgba(255, 0, 85, 0.1);
+  --glass-blur: blur(12px);
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-main);
+  font-family: var(--font-body);
+  overflow: hidden; /* Prevent scrolling, full app mode */
+  margin: 0;
+}
+
+/* Base App Wrapper */
 .app {
   width: 100vw;
   height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: #1a1a2e;
-  color: #e0e0e0;
-  font-family: 'Courier New', monospace;
+  position: relative; /* All HUD elements float inside here */
+  /* Cyber Background inserted here */
+  background-image: url('/assets/background.png');
+  background-size: cover;
+  background-position: center;
 }
 
+/* Floating HUD Header */
 .app-header {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 100;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px;
-  background: #16213e;
-  border-bottom: 1px solid #0f3460;
+  padding: 12px 24px;
+  background: var(--bg-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--border-glass);
+  box-shadow: var(--shadow-neon-cyan);
+  border-radius: 8px; /* Slight rounding for modern feel */
+  /* Remove width to let it fit tightly */
+  gap: 32px;
 }
 
 .app-header h1 {
-  font-size: 16px;
-  color: #e94560;
+  font-family: var(--font-pixel);
+  font-size: 18px;
+  color: var(--acc-cyan);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
+  margin: 0;
 }
-
-.connection-status {
-  font-size: 12px;
-}
-
-.connection-status.connected {
-  color: #4ecca3;
-}
-
-.connection-status.disconnected {
-  color: #e94560;
-}
-
-.app-main {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-}
-
-/* ── Mobile Responsive ─────────────────────────────── */
 
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
 }
 
-.editor-toggle {
-  background: #0f3460;
-  color: #e0e0e0;
-  border: none;
-  border-radius: 4px;
-  padding: 6px 12px;
+.connection-status {
+  font-family: var(--font-pixel);
   font-size: 12px;
+  text-transform: uppercase;
+}
+
+.connection-status.connected { color: var(--acc-green); text-shadow: 0 0 5px var(--acc-green); }
+.connection-status.disconnected { color: var(--acc-pink); text-shadow: 0 0 5px var(--acc-pink); }
+
+/* The Editor Toggle */
+.editor-toggle {
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--acc-cyan);
+  border: 1px solid var(--acc-cyan);
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  padding: 8px 16px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.2s;
-  /* Touch-friendly minimum size */
-  min-height: 44px;
-  min-width: 44px;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
 }
-
 .editor-toggle:hover {
-  background: #1a4a7a;
+  background: rgba(0, 240, 255, 0.2);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
-
 .editor-toggle.active {
-  background: #e94560;
-  color: white;
+  background: rgba(255, 0, 85, 0.2);
+  color: var(--acc-pink);
+  border-color: var(--acc-pink);
+  box-shadow: 0 0 8px rgba(255, 0, 85, 0.4);
 }
 
+/* Background Workspace wraps PixelOffice */
+.app-main {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10;
+}
+.office-wrapper {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Mobile Adjustments for Header HUD */
 @media (max-width: 768px) {
   .app-header {
-    padding: 6px 10px;
-  }
-
-  .app-header h1 {
-    font-size: 13px;
-  }
-
-  .header-controls {
-    gap: 6px;
-  }
-
-  .app-main {
-    flex-direction: column;
-  }
-
-  /* Sidebar becomes a collapsible bottom drawer */
-  .app-main > .agent-sidebar {
-    width: 100%;
-    max-height: 40vh;
-    border-left: none;
-    border-top: 1px solid #0f3460;
-    order: 2;
-    padding: 8px;
-  }
-
-  /* Canvas wrapper takes remaining space */
-  .app-main > .office-wrapper {
-    flex: 1;
-    min-height: 0;
-    order: 1;
-  }
-}
-
-@media (max-width: 480px) {
-  .app-header h1 {
-    font-size: 11px;
-  }
-
-  .app-header h1 span {
-    display: none;
-  }
-
-  .header-controls {
+    top: 8px; left: 8px; right: 8px;
+    padding: 8px 12px;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: 8px;
   }
-
-  /* Sidebar collapses to a peek bar, expandable on tap */
-  .app-main > .agent-sidebar {
-    max-height: 35vh;
-    padding: 6px;
-  }
-
-  .agent-card {
-    padding: 8px;
-  }
+  .app-header h1 { font-size: 14px; }
+  .editor-toggle { min-height: 40px; min-width: 40px; font-size: 10px; }
 }

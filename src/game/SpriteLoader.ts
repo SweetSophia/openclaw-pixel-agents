@@ -191,6 +191,8 @@ export async function loadFloors(
   return floors;
 }
 
+type LeafAsset = ManifestNode & { file: string };
+
 interface ManifestNode {
   file?: string;
   width?: number;
@@ -206,8 +208,8 @@ interface ManifestNode {
  * inside a potentially nested manifest member tree (e.g. PC has
  * rotation → state → animation → asset).
  */
-function findLeafAsset(node: ManifestNode): ManifestNode | null {
-  if (node.file) return node;
+function findLeafAsset(node: ManifestNode): LeafAsset | null {
+  if (node.file) return node as LeafAsset;
   if (node.members && node.members.length > 0) {
     for (const child of node.members) {
       const leaf = findLeafAsset(child);
@@ -238,7 +240,7 @@ export async function loadFurniture(
       const manifestRes = await fetch(`${basePath}${type}/manifest.json`, { signal });
       if (!manifestRes.ok) continue;
 
-      const manifest = await manifestRes.json();
+      const manifest = (await manifestRes.json()) as ManifestNode;
 
       // Find the primary (front-facing) sprite from manifest members
       let primaryFile = '';
@@ -257,7 +259,7 @@ export async function loadFurniture(
         // recursively dig to find the first leaf asset with a file
         const leaf = findLeafAsset(member);
         if (leaf) {
-          primaryFile = leaf.file ?? '';
+          primaryFile = leaf.file;
           fw = leaf.width ?? 0;
           fh = leaf.height ?? 0;
           footprintW = leaf.footprintW || 1;
@@ -266,8 +268,8 @@ export async function loadFurniture(
       } else {
         // Simple asset — use explicit file or default to {ID}.png
         primaryFile = manifest.file || `${type}.png`;
-        fw = manifest.width;
-        fh = manifest.height;
+        fw = manifest.width ?? 0;
+        fh = manifest.height ?? 0;
         footprintW = manifest.footprintW || 1;
         footprintH = manifest.footprintH || 1;
       }
@@ -296,6 +298,14 @@ export async function loadFurniture(
   return cachedFurniture;
 }
 
+function withAssetFallback<T>(promise: Promise<T>, label: string, fallback: T): Promise<T> {
+  return promise.catch(err => {
+    if (err.name === 'AbortError') throw err;
+    console.error(`[SpriteLoader] ${label} loading failed:`, err);
+    return fallback;
+  });
+}
+
 /**
  * Load all assets in parallel. Tries the paperdoll compositor first;
  * falls back to legacy pre-composited sprites if source sheets are missing.
@@ -305,22 +315,17 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
   floors: LoadedFloor[];
   furniture: Map<string, LoadedFurnitureItem>;
 }> {
-  // Load floors and furniture independently
-  const floors = await loadFloors(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Floor loading failed:', err);
-    return [] as LoadedFloor[];
-  });
-  const furniture = await loadFurniture(undefined, signal).catch(err => {
-    if (err.name === 'AbortError') throw err;
-    console.error('[SpriteLoader] Furniture loading failed:', err);
-    return new Map<string, LoadedFurnitureItem>();
-  });
+  // Load floors and furniture in parallel
+  const [floors, furniture] = await Promise.all([
+    withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as LoadedFloor[]),
+    withAssetFallback(loadFurniture(undefined, signal), 'Furniture', cachedFurniture),
+  ]);
 
   // Try paperdoll compositor
   let characters: LoadedCharacter[] = [];
   try {
     await loadSourceSheets();
+    for (const prev of cachedComposed.values()) disposeComposed(prev);
     cachedComposed.clear();
 
     // Compose characters for known agents

@@ -245,13 +245,20 @@ export const CharacterCustomizer: React.FC<Props> = ({
   );
 };
 
-/** Load an image from a URL and return an HTMLImageElement */
+/** Load an image from a URL and return an HTMLImageElement (cached, deduped) */
+const SHEET_CACHE = new Map<string, Promise<HTMLImageElement>>();
+
 function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
+  const cached = SHEET_CACHE.get(src);
+  if (cached) return cached;
+
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load ${src}`));
+    img.onerror = () => { SHEET_CACHE.delete(src); reject(new Error(`Failed to load ${src}`)); };
     img.src = src;
   });
+  SHEET_CACHE.set(src, promise);
+  return promise;
 }

@@ -12,11 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "moduleDetection": "force",
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["shared/*"]
-    }
+    "moduleDetection": "force"
   },
   "include": ["src", "shared"]
 }

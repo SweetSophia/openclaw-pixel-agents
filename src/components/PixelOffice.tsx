@@ -1,7 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import type { AgentState, AgentActivity, PlacedFurniture } from '../../shared/types';
+import type { AgentState, PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc } from '../hooks/useLayoutStore';
 import { GameEngine } from '../game/GameEngine';
+import { recomposeAgent } from '../game/SpriteLoader';
+import type { CharacterRecipe } from '../game/CharacterComposer';
 import './PixelOffice.css';
 
 interface Props {
@@ -16,17 +18,6 @@ interface Props {
   onCharacterClick?: (agentId: string) => void;
 }
 
-function activityToAnimState(activity: AgentActivity): string {
-  switch (activity) {
-    case 'typing': case 'running_command': return 'typing';
-    case 'thinking': case 'reading': return 'reading';
-    case 'waiting_input': return 'waiting';
-    case 'sleeping': return 'idle';
-    case 'error': return 'error';
-    default: return 'idle';
-  }
-}
-
 export const PixelOffice: React.FC<Props> = ({
   agents, editorMode, deleteMode, activeLayout,
   selectedFurnitureType,
@@ -36,6 +27,7 @@ export const PixelOffice: React.FC<Props> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const prevRecipesRef = useRef<Record<string, string>>({});
 
   // Initialize engine
   useEffect(() => {
@@ -46,7 +38,7 @@ export const PixelOffice: React.FC<Props> = ({
     });
     engineRef.current = engine;
 
-    engine.init(ac.signal).then(() => {
+    engine.init(ac.signal, import.meta.env.DEV).then(() => {
       if (ac.signal.aborted) return;
       engine.start();
       setLoaded(true);
@@ -97,57 +89,86 @@ export const PixelOffice: React.FC<Props> = ({
     engineRef.current.setLayout(activeLayout.furniture, activeLayout.seats);
   }, [activeLayout?.id, furnitureKey, seatsKey]);
 
+  // Sync agent recipes → recompute sprites
+  useEffect(() => {
+    if (!engineRef.current || !loaded) return;
+    const prev = prevRecipesRef.current;
+    const curr: Record<string, string> = {};
+    for (const agent of agents) {
+      if (!agent.recipe || !agent.pixelEnabled) continue;
+      const key = `${agent.recipe.bodyIndex}-${agent.recipe.hairIndex}-${agent.recipe.outfitIndex}`;
+      curr[agent.id] = key;
+      if (prev[agent.id] !== key) {
+        const sprite = recomposeAgent(agent.id, agent.recipe);
+        if (sprite) engineRef.current!.setCharacterSprite(agent.id, sprite);
+      }
+    }
+    prevRecipesRef.current = curr;
+  }, [agents, loaded]);
+
   // Sync agent states
   useEffect(() => {
     if (!engineRef.current || !loaded) return;
     const engine = engineRef.current;
 
-    const currentIds = engine.getCharacterIds();
-    const agentIds = agents.map(a => a.id);
-    const activeIds = agents.filter(a => a.pixelEnabled).map(a => a.id);
+    const currentIdsArray = engine.getCharacterIds();
+    const currentIds = new Set(currentIdsArray);
+    const agentIds = new Set(agents.map(a => a.id));
+    const activeIds = new Set(agents.filter(a => a.pixelEnabled).map(a => a.id));
 
     // Remove characters no longer in this room's agent list (handles room switches)
-    for (const id of currentIds) {
-      if (!agentIds.includes(id) || !activeIds.includes(id)) {
+    // Skip sub-agent IDs — they are managed by the dedicated sub-agent cleanup loop below
+    for (const id of currentIdsArray) {
+      if (id.startsWith('sub-')) continue;
+      if (!agentIds.has(id) || !activeIds.has(id)) {
         engine.removeCharacter(id);
       }
     }
 
+    const allActiveSubIds = new Set<string>();
+
     for (const agent of agents) {
       if (!agent.pixelEnabled) continue;
-      const animState = activityToAnimState(agent.activity);
-      if (!currentIds.includes(agent.id)) {
+      if (!currentIds.has(agent.id)) {
         const seat = engine.assignSeat(agent.id);
         engine.addCharacter({
           id: agent.id, name: agent.name,
           x: seat.x, y: seat.y,
-          state: animState, model: agent.model, spriteId: agent.characterSpriteId,
+          state: agent.activity, model: agent.model, spriteId: agent.characterSpriteId,
           lastMessage: agent.lastMessage,
         });
       } else {
         engine.updateCharacter(agent.id, {
-          state: animState, model: agent.model, name: agent.name,
+          state: agent.activity, model: agent.model, name: agent.name,
           lastMessage: agent.lastMessage,
         });
       }
 
       // Sync sub-agents
       if (agent.subAgents) {
-        const activeSubIds = new Set(agent.subAgents.map(s => s.id));
         // Spawn new sub-agents
         for (const sub of agent.subAgents) {
-          if (sub.status === 'running' && !engine.getCharacterIds().includes(sub.id)) {
-            engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
-          } else if (sub.status !== 'running') {
+          if (sub.status === 'running') {
+            allActiveSubIds.add(sub.id);
+            if (!currentIds.has(sub.id)) {
+              engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
+              currentIds.add(sub.id); // Prevent re-spawning
+            } else if (engine.isCharacterDying(sub.id)) {
+              // Only respawn if the sub-agent is in dying/fading state
+              engine.removeCharacter(sub.id);
+              engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
+            }
+          } else {
             engine.killSubAgent(sub.id);
           }
         }
-        // Kill sub-agents no longer in the list
-        for (const cid of engine.getCharacterIds()) {
-          if (cid.startsWith('sub-') && !activeSubIds.has(cid)) {
-            engine.killSubAgent(cid);
-          }
-        }
+      }
+    }
+
+    // Kill sub-agents no longer in the list (across all parents)
+    for (const cid of engine.getCharacterIds()) {
+      if (cid.startsWith('sub-') && !allActiveSubIds.has(cid)) {
+        engine.killSubAgent(cid);
       }
     }
   }, [agents, loaded]);
@@ -155,9 +176,6 @@ export const PixelOffice: React.FC<Props> = ({
   return (
     <div className="pixel-office" style={{ position: 'relative' }}>
       <canvas ref={canvasRef} className="office-canvas" />
-      {editorMode && (
-        <div className="editor-badge">✏️ EDIT MODE</div>
-      )}
     </div>
   );
 };

@@ -20,15 +20,45 @@ import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivit
 
 const app = express();
 const server = createServer(app);
+// Pre-compute allowed origins once (not per-request)
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
+  : [];
+const allowAllOrigins = !process.env.CORS_ORIGIN && process.env.NODE_ENV !== "production";
+
 const io = new SocketIOServer(server, {
-  cors: { origin: "*" },
+  cors: {
+    origin: allowedOrigins.length > 0
+      ? allowedOrigins
+      : process.env.NODE_ENV === "production" ? false : "*",
+  },
 });
 
-app.use(express.json());
+// WebSocket origin validation
+io.engine.on("initial_headers", (_headers, req: any) => {
+  if (allowAllOrigins) return; // Dev mode: allow all
+  if (allowedOrigins.length === 0 || !allowedOrigins.includes(req.headers.origin)) {
+    // Send explicit 403 before destroying to avoid noisy engine.io error logs
+    req.socket?.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    req.socket?.destroy();
+  }
+});
 
-// Serve built frontend in production (Vite output is in dist/ at project root)
-const FRONTEND_DIR = join(__dirname, "..", "..");
-app.use(express.static(FRONTEND_DIR));
+// Basic security headers
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:");
+  next();
+});
+
+app.use(express.json({ limit: "100kb" }));
+
+// Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
+const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
+if (existsSync(FRONTEND_DIR)) {
+  app.use(express.static(FRONTEND_DIR));
+}
 
 // ---- Configuration ----
 
@@ -63,14 +93,14 @@ interface KnownAgent {
 /** Default agent definitions */
 function defaultRegistry(): Map<string, KnownAgent> {
   return new Map([
-    ["main",       { id: "main",       name: "Shodan",      pixelEnabled: true, tags: ["orchestration", "research"] }],
-    ["miku",       { id: "miku",       name: "Miku",        pixelEnabled: true, tags: ["creative", "media"] }],
-    ["chi",        { id: "chi",        name: "Chi",         pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia",  pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
-    ["descartes",  { id: "descartes",  name: "Descartes",   pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis",  pixelEnabled: true, tags: ["coding", "logic"] }],
-    ["cylena",     { id: "cylena",     name: "Cylena",      pixelEnabled: true, tags: ["coding", "frontend"] }],
-    ["cybera",     { id: "cybera",     name: "Cybera",      pixelEnabled: true, tags: ["coding", "infrastructure"] }],
+    ["main", { id: "main", name: "Shodan", pixelEnabled: true, tags: ["orchestration", "research"] }],
+    ["miku", { id: "miku", name: "Miku", pixelEnabled: true, tags: ["creative", "media"] }],
+    ["chi", { id: "chi", name: "Chi", pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
+    ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true, tags: ["research", "analysis"] }],
+    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true, tags: ["coding", "logic"] }],
+    ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true, tags: ["coding", "frontend"] }],
+    ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true, tags: ["coding", "infrastructure"] }],
   ]);
 }
 
@@ -89,7 +119,9 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const data = JSON.parse(raw);
     const map = new Map<string, PersistedPrefs>();
     for (const [k, v] of Object.entries(data)) {
-      map.set(k, v as PersistedPrefs);
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        map.set(k, v as PersistedPrefs);
+      }
     }
     return map;
   } catch {
@@ -237,6 +269,7 @@ function inferActivity(session: CliSession): AgentActivity {
 
   if (ageMin < 2 && hasOutput) return "typing";
   if (ageMin < 2 && hasInput) return "reading";
+
   if (ageMin < 5) return "thinking";
 
   return "idle";
@@ -289,15 +322,16 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
         lastActivity: latestSession.updatedAt ?? Date.now(),
         tokens: latestSession.totalTokens
           ? {
-              used: latestSession.totalTokens,
-              limit: latestSession.contextTokens ?? 100000,
-              inputTokens: latestSession.inputTokens,
-              outputTokens: latestSession.outputTokens,
-            }
+            used: latestSession.totalTokens,
+            limit: latestSession.contextTokens ?? 100000,
+            inputTokens: latestSession.inputTokens,
+            outputTokens: latestSession.outputTokens,
+          }
           : undefined,
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
         tags: known.tags,
+        recipe: known.recipe,
         roomId: resolveRoom(known.tags),
         subAgents: sessions
           ?.filter((s) => s.kind === "subagent")
@@ -323,6 +357,7 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
         characterSpriteId: known.characterSpriteId,
         pixelEnabled: known.pixelEnabled,
         tags: known.tags,
+        recipe: known.recipe,
         roomId: resolveRoom(known.tags),
       });
     }
@@ -448,7 +483,7 @@ async function tailTranscript(
 
     rl.on("close", () => {
       // On stream error, rl.close() is called which fires this handler.
-      // Guard against advancing the offset or resolving with partial data
+      // Guard against advancing the cursor or resolving with partial data
       // when the read was interrupted by an I/O error.
       if (errored) return;
 
@@ -519,9 +554,18 @@ async function pollMessages(): Promise<void> {
   if (pruned) tickerMessages.splice(0, i);
 
   if (newMsgs.length > 0) {
-    // Add new messages and sort by timestamp
-    tickerMessages.push(...newMsgs);
-    tickerMessages.sort((a, b) => a.timestamp - b.timestamp);
+    // Insert each new message in sorted order (binary search)
+    // Use <= so equal-timestamp messages insert after existing ones (stable order)
+    for (const msg of newMsgs) {
+      let lo = 0;
+      let hi = tickerMessages.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (tickerMessages[mid].timestamp <= msg.timestamp) lo = mid + 1;
+        else hi = mid;
+      }
+      tickerMessages.splice(lo, 0, msg);
+    }
 
     // Trim to buffer size
     while (tickerMessages.length > TICKER_BUFFER_SIZE) {
@@ -574,21 +618,19 @@ async function pollAndBroadcast(): Promise<void> {
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
 const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
+const INGEST_TOKEN_BUF = INGEST_TOKEN ? Buffer.from(INGEST_TOKEN, "utf-8") : Buffer.alloc(0);
 
 function authenticateIngest(req: express.Request, _res: express.Response): boolean {
-  if (!INGEST_TOKEN) return false;
+  if (!INGEST_TOKEN_BUF.length) return false;
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Bearer ")) return false;
   const token = auth.slice(7);
-  const expected = Buffer.from(INGEST_TOKEN, "utf-8");
   const provided = Buffer.from(token, "utf-8");
-  if (expected.length !== provided.length) {
-    const padded = Buffer.alloc(expected.length);
-    provided.copy(padded, 0, 0, expected.length);
-    timingSafeEqual(expected, padded);
+  if (INGEST_TOKEN_BUF.length !== provided.length) {
+    timingSafeEqual(INGEST_TOKEN_BUF, Buffer.alloc(INGEST_TOKEN_BUF.length));
     return false;
   }
-  return timingSafeEqual(expected, provided);
+  return timingSafeEqual(INGEST_TOKEN_BUF, provided);
 }
 
 /**
@@ -599,6 +641,22 @@ function authenticateIngest(req: express.Request, _res: express.Response): boole
  *
  * When valid ingest data arrives, it replaces the CLI-poll result and broadcasts.
  */
+
+// In-process rate limiter: max RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS per token
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 10;
+const ingestRateBuckets = new Map<string, number[]>();
+
+// Periodically prune expired rate-limit entries to prevent memory leak
+const ingestPruneTimer = setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [key, timestamps] of ingestRateBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) ingestRateBuckets.delete(key);
+    else ingestRateBuckets.set(key, pruned);
+  }
+}, RATE_LIMIT_WINDOW_MS);
+
 app.post("/api/ingest/agents", (req, res) => {
   if (!INGEST_TOKEN) {
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
@@ -609,9 +667,32 @@ app.post("/api/ingest/agents", (req, res) => {
     return;
   }
 
+  // Rate limiting: track requests per derived key (avoid storing raw token)
+  const rawKey = req.headers.authorization || req.ip || "unknown";
+  // Simple hash to avoid keeping sensitive tokens in memory
+  let hash = 0;
+  for (let i = 0; i < rawKey.length; i++) {
+    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
+  }
+  const rateKey = `ingest:${hash}`;
+  const now = Date.now();
+  const bucket = ingestRateBuckets.get(rateKey) || [];
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recentRequests = bucket.filter(t => t > windowStart);
+  if (recentRequests.length >= RATE_LIMIT_MAX) {
+    res.status(429).json({ error: "Too many requests" });
+    return;
+  }
+  recentRequests.push(now);
+  ingestRateBuckets.set(rateKey, recentRequests);
+
   const { sessions } = req.body;
   if (!Array.isArray(sessions)) {
     res.status(400).json({ error: "Missing or invalid 'sessions' array" });
+    return;
+  }
+  if (sessions.length > 50) {
+    res.status(413).json({ error: "Payload too large: maximum 50 sessions allowed" });
     return;
   }
 
@@ -634,6 +715,17 @@ app.post("/api/ingest/agents", (req, res) => {
 let lastIngestAt = 0;
 
 // ---- REST API ----
+
+// General authorization middleware for state-modifying REST endpoints
+// Scoped to /api to avoid blocking Socket.IO polling transport POSTs
+app.use("/api", (req, res, next) => {
+  if (req.method === "GET") return next();
+  if (req.path === "/ingest/agents") return next(); // Handles its own auth
+
+  if (authenticateIngest(req, res)) return next();
+
+  res.status(401).json({ error: "Authentication required: provide 'Authorization: Bearer <INGEST_API_TOKEN>' header" });
+});
 
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });
@@ -939,9 +1031,21 @@ app.put("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const existing = loadLayout(id);
+
+  // Server-side conflict detection: reject stale writes using baseUpdatedAt
+  const { baseUpdatedAt, ...body } = req.body;
+  if (existing && baseUpdatedAt != null && existing.updatedAt != null) {
+    if (baseUpdatedAt < existing.updatedAt) {
+      return res.status(409).json({
+        error: "Conflict: your data is stale. Reload and try again.",
+        serverUpdatedAt: existing.updatedAt,
+      });
+    }
+  }
+
   const layout: OfficeLayoutDoc = {
     ...(existing || { id, name: id, width: 24, height: 16 }),
-    ...req.body,
+    ...body,
     id, // prevent id overwrite
   };
   saveLayout(layout);
@@ -1025,6 +1129,51 @@ const cliExplicit = DATA_SOURCE === "cli";
 const ingestExplicit = DATA_SOURCE === "ingest";
 const useCli = cliExplicit || (DATA_SOURCE === "auto" && !ingestExplicit);
 
+// ---- Graceful Shutdown ----
+
+let isShuttingDown = false;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+const GRACEFUL_SHUTDOWN_MS = 5000;
+
+async function shutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n[server] Received ${signal}, shutting down gracefully...`);
+
+  // Clear periodic timers to prevent new work during shutdown
+  clearInterval(ingestPruneTimer);
+  if (pollTimer) clearInterval(pollTimer);
+
+  // Race: graceful close vs. hard timeout
+  const gracefulClose = new Promise<void>((resolve) => {
+    // Close HTTP server (stops accepting new connections)
+    server.close(() => {
+      console.log("[server] HTTP server closed");
+      resolve();
+    });
+
+    // Close Socket.IO connections
+    io.close(() => {
+      console.log("[server] Socket.IO connections closed");
+    });
+  });
+
+  const hardTimeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      console.error("[server] Forced shutdown after timeout");
+      resolve();
+    }, GRACEFUL_SHUTDOWN_MS);
+  });
+
+  await Promise.race([gracefulClose, hardTimeout]);
+  console.log("[server] Shutdown complete");
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 server.listen(PORT, () => {
   console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);
   console.log(`📊 Data source: ${DATA_SOURCE} (effective: ${useCli && !ingestExplicit ? "cli-poll" : "ingest-only"})`);
@@ -1032,7 +1181,7 @@ server.listen(PORT, () => {
   if (useCli && !ingestExplicit) {
     console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
     pollAndBroadcast();
-    setInterval(pollAndBroadcast, POLL_INTERVAL);
+    pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
   } else {
     console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
   }
