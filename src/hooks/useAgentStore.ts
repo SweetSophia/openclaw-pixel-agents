@@ -156,5 +156,14 @@ export function useAgentStore() {
     };
   }, [fetchAgents]);
 
+  // REST polling fallback — primary update channel is Socket.IO; this degraded-mode
+  // poll kicks in only when the WS connection is down so the UI does not freeze on
+  // stale state. Matches the contract documented in AGENTS.md ("Data Flow").
+  useEffect(() => {
+    if (connected) return;
+    const pollTimer = setInterval(fetchAgents, 2000);
+    return () => clearInterval(pollTimer);
+  }, [connected, fetchAgents]);
+
   return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
 }
