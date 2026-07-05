@@ -15,15 +15,18 @@ export function useAgentStore() {
   const [activeRoomId, setActiveRoomId] = useState<string>('office');
 
   const fetchAgents = useCallback(async () => {
+    // `connected` is a WebSocket-liveness signal and is driven only by the
+    // Socket.IO event handlers below. A successful REST response here is NOT
+    // evidence that the WS is up — flipping `connected` from this function
+    // would create a feedback loop with the REST polling fallback that gates
+    // on `connected` (see useEffect for the fallback).
     try {
       const res = await fetch(`${API_BASE}/agents`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(data.agents || []);
-      setConnected(true);
       setError(null);
     } catch (err) {
-      setConnected(false);
       setError(err instanceof Error ? err.message : 'Connection failed');
     }
   }, []);
@@ -155,6 +158,16 @@ export function useAgentStore() {
       socket.disconnect();
     };
   }, [fetchAgents]);
+
+  // REST polling fallback — primary update channel is Socket.IO; this degraded-mode
+  // poll kicks in only when the WS connection is down so the UI does not freeze on
+  // stale state. Matches the contract documented in AGENTS.md ("Data Flow").
+  useEffect(() => {
+    if (connected) return;
+    fetchAgents(); // immediate first fetch — don't wait the full interval on entry
+    const pollTimer = setInterval(fetchAgents, 2000);
+    return () => clearInterval(pollTimer);
+  }, [connected, fetchAgents]);
 
   return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
 }
