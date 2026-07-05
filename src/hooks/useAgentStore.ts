@@ -15,15 +15,18 @@ export function useAgentStore() {
   const [activeRoomId, setActiveRoomId] = useState<string>('office');
 
   const fetchAgents = useCallback(async () => {
+    // `connected` is a WebSocket-liveness signal and is driven only by the
+    // Socket.IO event handlers below. A successful REST response here is NOT
+    // evidence that the WS is up — flipping `connected` from this function
+    // would create a feedback loop with the REST polling fallback that gates
+    // on `connected` (see useEffect for the fallback).
     try {
       const res = await fetch(`${API_BASE}/agents`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setAgents(data.agents || []);
-      setConnected(true);
       setError(null);
     } catch (err) {
-      setConnected(false);
       setError(err instanceof Error ? err.message : 'Connection failed');
     }
   }, []);
