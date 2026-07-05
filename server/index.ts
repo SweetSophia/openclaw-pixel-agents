@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
-
+import { randomUUID } from "node:crypto";
 const app = express();
 const server = createServer(app);
 // Pre-compute allowed origins once (not per-request)
@@ -1057,7 +1057,7 @@ app.put("/api/layouts/:id", (req, res) => {
 
 app.post("/api/layouts", (req, res) => {
   const { name, width, height, furniture, seats } = req.body;
-  const id = `layout-${Date.now()}`;
+  const id = `layout-${randomUUID()}`;
   const layout: OfficeLayoutDoc = {
     id,
     name: name || "Untitled Layout",
