@@ -164,6 +164,7 @@ export function useAgentStore() {
   // stale state. Matches the contract documented in AGENTS.md ("Data Flow").
   useEffect(() => {
     if (connected) return;
+    fetchAgents(); // immediate first fetch — don't wait the full interval on entry
     const pollTimer = setInterval(fetchAgents, 2000);
     return () => clearInterval(pollTimer);
   }, [connected, fetchAgents]);
