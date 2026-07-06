@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { createCorsConfig, isOriginAllowed } from "./cors";
+import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 
 const app = express();
@@ -1115,6 +1116,8 @@ app.get("*", (_req, res) => {
   }
 });
 
+app.use(apiErrorHandler);
+
 // ---- Start ----
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -1167,20 +1170,27 @@ async function shutdown(signal: string) {
   process.exit(0);
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+function startServer(): void {
+  registerProcessErrorHandlers();
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 
-server.listen(PORT, () => {
-  console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);
-  console.log(`📊 Data source: ${DATA_SOURCE} (effective: ${useCli && !ingestExplicit ? "cli-poll" : "ingest-only"})`);
+  server.listen(PORT, () => {
+    console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);
+    console.log(`📊 Data source: ${DATA_SOURCE} (effective: ${useCli && !ingestExplicit ? "cli-poll" : "ingest-only"})`);
 
-  if (useCli && !ingestExplicit) {
-    console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
-    pollAndBroadcast();
-    pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
-  } else {
-    console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
-  }
-});
+    if (useCli && !ingestExplicit) {
+      console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
+      pollAndBroadcast();
+      pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
+    } else {
+      console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
+    }
+  });
+}
 
-export { app, server, io };
+if (require.main === module) {
+  startServer();
+}
+
+export { app, server, io, startServer };
