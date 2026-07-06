@@ -198,6 +198,8 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `PORT` | `3001` | Backend server port (`3000` in production) |
+| `NODE_ENV` | *(set to `production` by `npm start`)* | Runtime mode; production requires `CORS_ORIGIN` for WebSocket origin checks |
+| `CORS_ORIGIN` | *(none)* | Comma-separated browser origins allowed to open Socket.IO connections in production |
 | `DATA_SOURCE` | `auto` | Data mode: `auto`, `cli` (local polling), or `ingest` (push-based) |
 | `OPENCLAW_CLI` | `openclaw` | Path to OpenClaw CLI binary (cli mode only) |
 | `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
