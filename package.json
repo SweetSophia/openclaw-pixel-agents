@@ -8,7 +8,7 @@
     "dev:client": "vite",
     "dev:server": "npx tsx watch server/index.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
-    "start": "node dist/server/index.js",
+    "start": "NODE_ENV=production node dist/server/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

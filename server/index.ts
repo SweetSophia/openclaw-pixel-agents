@@ -16,28 +16,22 @@ import { timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
+import { createCorsConfig, isOriginAllowed } from "./cors";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 
 const app = express();
 const server = createServer(app);
-// Pre-compute allowed origins once (not per-request)
-const allowedOrigins = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
-  : [];
-const allowAllOrigins = !process.env.CORS_ORIGIN && process.env.NODE_ENV !== "production";
+const corsConfig = createCorsConfig();
 
 const io = new SocketIOServer(server, {
   cors: {
-    origin: allowedOrigins.length > 0
-      ? allowedOrigins
-      : process.env.NODE_ENV === "production" ? false : "*",
+    origin: corsConfig.socketOrigin,
   },
 });
 
 // WebSocket origin validation
 io.engine.on("initial_headers", (_headers, req: any) => {
-  if (allowAllOrigins) return; // Dev mode: allow all
-  if (allowedOrigins.length === 0 || !allowedOrigins.includes(req.headers.origin)) {
+  if (!isOriginAllowed(req.headers.origin, corsConfig)) {
     // Send explicit 403 before destroying to avoid noisy engine.io error logs
     req.socket?.write("HTTP/1.1 403 Forbidden\r\n\r\n");
     req.socket?.destroy();
