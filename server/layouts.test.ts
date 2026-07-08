@@ -13,6 +13,13 @@ describe("isValidLayoutId", () => {
     expect(isValidLayoutId("foo.bar")).toBe(false);
   });
 
+  it("rejects non-string and empty inputs", () => {
+    expect(isValidLayoutId(null)).toBe(false);
+    expect(isValidLayoutId(undefined)).toBe(false);
+    expect(isValidLayoutId(42)).toBe(false);
+    expect(isValidLayoutId("")).toBe(false);
+  });
+
   it("enforces the 64-character limit", () => {
     expect(isValidLayoutId("x".repeat(64))).toBe(true);
     expect(isValidLayoutId("x".repeat(65))).toBe(false);
