@@ -713,6 +713,16 @@ let lastIngestAt = 0;
 
 // ---- REST API ----
 
+const MUTATING_API_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+app.use("/api", (req, res, next) => {
+  if (!MUTATING_API_METHODS.has(req.method)) return next();
+  if (req.path === "/ingest/agents") return next(); // Ingest has bearer-token auth inside the route.
+  if (isOriginAllowed(req.headers.origin, corsConfig)) return next();
+
+  res.status(403).json({ error: "Forbidden origin" });
+});
+
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });
 });
