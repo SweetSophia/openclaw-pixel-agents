@@ -19,6 +19,7 @@ import { applyAgentSnapshot } from "./agentSnapshots";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import { isValidLayoutId } from "./layouts";
+import { parseAgentTags, parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
 const server = createServer(app);
@@ -99,13 +100,6 @@ function defaultRegistry(): Map<string, KnownAgent> {
   ]);
 }
 
-interface PersistedPrefs {
-  pixelEnabled?: boolean;
-  characterSpriteId?: string;
-  tags?: AgentTag[];
-  recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number };
-}
-
 /** Load persisted agent preferences (pixelEnabled, spriteId, tags, recipe) from disk */
 function loadPersistedPrefs(): Map<string, PersistedPrefs> {
   try {
@@ -115,12 +109,16 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const map = new Map<string, PersistedPrefs>();
 
     for (const [k, v] of Object.entries(data)) {
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
-        map.set(k, v as PersistedPrefs);
+      const prefs = parsePersistedPrefs(v);
+      if (prefs) {
+        map.set(k, prefs);
+      } else {
+        console.warn(`[prefs] Skipping invalid persisted prefs for agent ${k}`);
       }
     }
     return map;
-  } catch {
+  } catch (err) {
+    console.warn("[prefs] Failed to load persisted prefs:", err);
     return new Map();
   }
 }
@@ -742,7 +740,10 @@ app.get("/api/messages", (_req, res) => {
 
 app.post("/api/agents/:id/toggle", (req, res) => {
   const { id } = req.params;
-  const { enabled } = req.body;
+  const enabled = parseToggleBody(req.body);
+  if (enabled === null) {
+    return res.status(400).json({ error: "enabled must be a boolean" });
+  }
 
   const known = AGENT_REGISTRY.get(id);
   if (known) {
@@ -760,7 +761,10 @@ app.post("/api/agents/:id/toggle", (req, res) => {
 
 app.post("/api/agents/:id/sprite", (req, res) => {
   const { id } = req.params;
-  const { spriteId } = req.body;
+  const spriteId = parseSpriteBody(req.body);
+  if (spriteId === null) {
+    return res.status(400).json({ error: "spriteId must be a safe string" });
+  }
 
   const known = AGENT_REGISTRY.get(id);
   if (known) {
@@ -778,11 +782,9 @@ app.post("/api/agents/:id/sprite", (req, res) => {
 
 app.put("/api/agents/:id/recipe", (req, res) => {
   const { id } = req.params;
-  const { bodyIndex, hairIndex, outfitIndex } = req.body;
-
-  if (typeof bodyIndex !== 'number' || typeof hairIndex !== 'number' || typeof outfitIndex !== 'number') {
-    res.status(400).json({ error: "bodyIndex, hairIndex, outfitIndex required (numbers)" });
-    return;
+  const recipe = parseRecipe(req.body);
+  if (!recipe) {
+    return res.status(400).json({ error: "bodyIndex, hairIndex, outfitIndex must be valid recipe indices" });
   }
 
   const known = AGENT_REGISTRY.get(id);
@@ -791,13 +793,7 @@ app.put("/api/agents/:id/recipe", (req, res) => {
     return;
   }
 
-  // Validate ranges
-  if (bodyIndex < 0 || bodyIndex > 5 || hairIndex < 0 || hairIndex > 8 || outfitIndex < 0 || outfitIndex > 5) {
-    res.status(400).json({ error: "Indices out of range (body: 0-5, hair: 0-8, outfit: 0-5)" });
-    return;
-  }
-
-  known.recipe = { bodyIndex, hairIndex, outfitIndex };
+  known.recipe = recipe;
   const state = agentStates.get(id);
   if (state) state.recipe = known.recipe;
   savePersistedPrefs();
@@ -827,22 +823,9 @@ app.get("/api/tags", (_req, res) => {
 /** Update tags for an agent */
 app.put("/api/agents/:id/tags", (req, res) => {
   const { id } = req.params;
-  const { tags } = req.body as { tags: AgentTag[] };
-
-  if (!Array.isArray(tags)) {
-    return res.status(400).json({ error: "tags must be an array of strings" });
-  }
-
-  // Validate each tag against the known AgentTag set
-  const validTags = new Set<string>(ALL_TAGS);
-  for (const tag of tags) {
-    if (typeof tag !== "string" || !validTags.has(tag)) {
-      return res.status(400).json({ error: `Invalid tag: "${tag}". Valid tags: ${ALL_TAGS.join(", ")}` });
-    }
-  }
-
-  if (tags.length > 3) {
-    return res.status(400).json({ error: "Maximum 3 tags allowed per agent" });
+  const tags = parseAgentTags((req.body as { tags?: unknown }).tags);
+  if (!tags) {
+    return res.status(400).json({ error: `tags must be an array of up to 3 valid tags: ${ALL_TAGS.join(", ")}` });
   }
 
   const known = AGENT_REGISTRY.get(id);
@@ -887,18 +870,6 @@ app.get("/api/rooms", (_req, res) => {
 
 // ---- Layout persistence ----
 
-import type { PlacedFurniture } from "../shared/types";
-
-interface OfficeLayoutDoc {
-  id: string;
-  name: string;
-  width: number;
-  height: number;
-  furniture: PlacedFurniture[];
-  seats: Record<string, { x: number; y: number }>;
-  updatedAt: number;
-}
-
 const LAYOUTS_DIR = join(DATA_DIR, "layouts");
 
 function ensureLayoutsDir() {
@@ -909,13 +880,18 @@ function listLayouts(): OfficeLayoutDoc[] {
   ensureLayoutsDir();
   try {
     const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
-    return files
-      .map(f => {
-        const raw = readFileSync(join(LAYOUTS_DIR, f), "utf-8");
-        return JSON.parse(raw) as OfficeLayoutDoc;
-      })
-      .filter(layout => isValidLayoutId(layout.id)) // Only return layouts with valid IDs
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+    const layouts: OfficeLayoutDoc[] = [];
+    for (const file of files) {
+      try {
+        const raw = readFileSync(join(LAYOUTS_DIR, file), "utf-8");
+        const layout = parseOfficeLayoutDoc(JSON.parse(raw));
+        if (layout) layouts.push(layout);
+        else console.warn(`[layout] Skipping invalid layout file ${file}`);
+      } catch (err) {
+        console.warn(`[layout] Skipping unreadable layout file ${file}:`, err);
+      }
+    }
+    return layouts.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {
     return [];
   }
@@ -926,8 +902,13 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
   if (!isValidLayoutId(id)) return null;
   try {
     const raw = readFileSync(join(LAYOUTS_DIR, `${id}.json`), "utf-8");
-    return JSON.parse(raw) as OfficeLayoutDoc;
-  } catch {
+    const layout = parseOfficeLayoutDoc(JSON.parse(raw));
+    if (!layout) console.warn(`[layout] Ignoring invalid layout file ${id}.json`);
+    return layout;
+  } catch (err) {
+    if (!(typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT")) {
+      console.warn(`[layout] Failed to load layout ${id}:`, err);
+    }
     return null;
   }
 }
@@ -936,7 +917,9 @@ function saveLayout(layout: OfficeLayoutDoc): void {
   if (!isValidLayoutId(layout.id)) throw new Error(`Invalid layout ID: ${layout.id}`);
   ensureLayoutsDir();
   layout.updatedAt = Date.now();
-  writeFileSync(join(LAYOUTS_DIR, `${layout.id}.json`), JSON.stringify(layout, null, 2));
+  const validated = parseOfficeLayoutDoc(layout);
+  if (!validated) throw new Error(`Invalid layout document: ${layout.id}`);
+  writeFileSync(join(LAYOUTS_DIR, `${validated.id}.json`), JSON.stringify(validated, null, 2));
 }
 
 function deleteLayout(id: string): boolean {
@@ -1020,11 +1003,13 @@ app.put("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const existing = loadLayout(id);
+  const baseLayout: OfficeLayoutDoc = existing || { id, name: id, width: 24, height: 16, furniture: [], seats: {}, updatedAt: Date.now() };
+  const parsed = parseLayoutMutationBody(req.body, { width: baseLayout.width, height: baseLayout.height });
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
 
   // Server-side conflict detection: reject stale writes using baseUpdatedAt
-  const { baseUpdatedAt, ...body } = req.body;
-  if (existing && baseUpdatedAt != null && existing.updatedAt != null) {
-    if (baseUpdatedAt < existing.updatedAt) {
+  if (existing && parsed.baseUpdatedAt != null && existing.updatedAt != null) {
+    if (parsed.baseUpdatedAt < existing.updatedAt) {
       return res.status(409).json({
         error: "Conflict: your data is stale. Reload and try again.",
         serverUpdatedAt: existing.updatedAt,
@@ -1033,27 +1018,31 @@ app.put("/api/layouts/:id", (req, res) => {
   }
 
   const layout: OfficeLayoutDoc = {
-    ...(existing || { id, name: id, width: 24, height: 16 }),
-    ...body,
+    ...baseLayout,
+    ...parsed.body,
     id, // prevent id overwrite
   };
+  if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
   saveLayout(layout);
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });
 
 app.post("/api/layouts", (req, res) => {
-  const { name, width, height, furniture, seats } = req.body;
   const id = `layout-${randomUUID()}`;
+  const parsed = parseLayoutMutationBody(req.body, { width: 24, height: 16 });
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
   const layout: OfficeLayoutDoc = {
     id,
-    name: name || "Untitled Layout",
-    width: width || 24,
-    height: height || 16,
-    furniture: furniture || [],
-    seats: seats || {},
+    name: parsed.body.name || "Untitled Layout",
+    width: parsed.body.width || 24,
+    height: parsed.body.height || 16,
+    furniture: parsed.body.furniture || [],
+    seats: parsed.body.seats || {},
     updatedAt: Date.now(),
   };
+  if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
   saveLayout(layout);
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
