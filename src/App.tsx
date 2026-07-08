@@ -9,6 +9,7 @@ import MessageTicker from './components/MessageTicker';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
 import { sfx } from './audio/SoundFX';
+import { newEntityId } from './util/id';
 import type { PlacedFurniture } from '../shared/types';
 import './App.css';
 
@@ -31,7 +32,7 @@ export const App: React.FC = () => {
     const newFurniture: PlacedFurniture[] = [
       ...activeLayout.furniture,
       {
-        id: type.toLowerCase() + "-" + (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)),
+        id: newEntityId(type.toLowerCase()),
         type,
         x: gridX,
         y: gridY,
