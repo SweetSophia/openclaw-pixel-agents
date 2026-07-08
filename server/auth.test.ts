@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 describe("API auth boundaries", () => {
   let app: Express;
-  let io: SocketIOServer | undefined;
+  let io: SocketIOServer;
   let dataDir: string;
   const appOrigin = "https://pixel.test";
 
@@ -27,8 +27,8 @@ describe("API auth boundaries", () => {
   });
 
   afterAll(() => {
-    io?.close();
-    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+    io.close();
+    rmSync(dataDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.resetModules();
   });
@@ -92,6 +92,16 @@ describe("API auth boundaries", () => {
     await request(app)
       .post("/api/agents/main/toggle")
       .set("Origin", "https://attacker.test")
+      .send({ enabled: true })
+      .expect(403)
+      .expect({ error: "Forbidden origin" });
+  });
+
+  it("rejects UI mutations that omit the Origin header in production", async () => {
+    // A non-browser caller without an Origin header must not bypass the
+    // production Origin allow-list for state-mutating routes.
+    await request(app)
+      .post("/api/agents/main/toggle")
       .send({ enabled: true })
       .expect(403)
       .expect({ error: "Forbidden origin" });

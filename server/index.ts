@@ -717,7 +717,9 @@ const MUTATING_API_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 app.use("/api", (req, res, next) => {
   if (!MUTATING_API_METHODS.has(req.method)) return next();
-  if (req.path === "/ingest/agents") return next(); // Ingest has bearer-token auth inside the route.
+  // Ingest runs above this middleware and ends the chain with a response, so
+  // this exemption is defensive belt-and-suspenders for the future ordering.
+  if (req.path === "/ingest/agents") return next();
   if (isOriginAllowed(req.headers.origin, corsConfig)) return next();
 
   res.status(403).json({ error: "Forbidden origin" });
