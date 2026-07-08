@@ -31,7 +31,7 @@ export const App: React.FC = () => {
     const newFurniture: PlacedFurniture[] = [
       ...activeLayout.furniture,
       {
-        id: `${type.toLowerCase()}-${Date.now()}`,
+        id: type.toLowerCase() + "-" + (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15)),
         type,
         x: gridX,
         y: gridY,
