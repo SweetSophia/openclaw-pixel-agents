@@ -652,6 +652,7 @@ const ingestPruneTimer = setInterval(() => {
     else ingestRateBuckets.set(key, pruned);
   }
 }, RATE_LIMIT_WINDOW_MS);
+ingestPruneTimer.unref?.();
 
 app.post("/api/ingest/agents", (req, res) => {
   if (!INGEST_TOKEN) {
@@ -711,17 +712,6 @@ app.post("/api/ingest/agents", (req, res) => {
 let lastIngestAt = 0;
 
 // ---- REST API ----
-
-// General authorization middleware for state-modifying REST endpoints
-// Scoped to /api to avoid blocking Socket.IO polling transport POSTs
-app.use("/api", (req, res, next) => {
-  if (req.method === "GET") return next();
-  if (req.path === "/ingest/agents") return next(); // Handles its own auth
-
-  if (authenticateIngest(req, res)) return next();
-
-  res.status(401).json({ error: "Authentication required: provide 'Authorization: Bearer <INGEST_API_TOKEN>' header" });
-});
 
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });
