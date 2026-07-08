@@ -15,6 +15,7 @@ import { stat as statAsync } from "node:fs/promises";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { applyAgentSnapshot } from "./agentSnapshots";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import { isValidLayoutId } from "./layouts";
@@ -199,6 +200,7 @@ interface CliSession {
 interface CliSessionsResult {
   sessions: CliSession[];
   count: number;
+  sourceError?: boolean;
 }
 
 /**
@@ -219,7 +221,7 @@ function pollSessions(): Promise<CliSessionsResult> {
     execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
       if (err) {
         console.error("[poll] CLI error:", err.message);
-        resolve({ sessions: [], count: 0 });
+        resolve({ sessions: [], count: 0, sourceError: true });
         return;
       }
 
@@ -231,7 +233,7 @@ function pollSessions(): Promise<CliSessionsResult> {
         });
       } catch (parseErr) {
         console.error("[poll] JSON parse error:", parseErr);
-        resolve({ sessions: [], count: 0 });
+        resolve({ sessions: [], count: 0, sourceError: true });
       }
     });
   });
@@ -587,24 +589,21 @@ async function pollAndBroadcast(): Promise<void> {
   if (isPolling) return;
   isPolling = true;
   try {
-    const { sessions } = await pollSessions();
-    const agentMap = mapToAgentStates(sessions);
-    const agentList = Array.from(agentMap.values());
+    const { sessions, sourceError } = await pollSessions();
+    const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
+    const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
-    // Create immutable snapshot before any async operations
-    const snapshot = agentList.map(a => ({ ...a }));
-
-    // Update global state atomically
-    agentStates.clear();
-    for (const agent of agentMap.values()) {
-      agentStates.set(agent.id, agent);
+    if (!applied) {
+      console.warn("[poll] Keeping previous agent snapshot after source error");
+    } else {
+      // Broadcast only when the visible agent snapshot actually changes.
+      io.emit("agents:update", snapshot);
     }
-
-    // Broadcast the snapshot (not the mutable global state)
-    io.emit("agents:update", snapshot);
 
     // Poll messages from transcripts
     await pollMessages();
+  } catch (err) {
+    console.error("[poll] Poll cycle failed:", err);
   } finally {
     isPolling = false;
   }
@@ -694,18 +693,12 @@ app.post("/api/ingest/agents", (req, res) => {
 
   // Map and broadcast
   const agentMap = mapToAgentStates(sessions as CliSession[]);
-  const agentList = Array.from(agentMap.values());
-
-  // Update global state
-  agentStates.clear();
-  for (const agent of agentMap.values()) {
-    agentStates.set(agent.id, agent);
-  }
+  const { snapshot } = applyAgentSnapshot(agentStates, agentMap);
 
   lastIngestAt = Date.now();
-  console.log(`[ingest] ${agentList.length} agents updated (${sessions.length} sessions)`);
-  io.emit("agents:update", agentList);
-  res.json({ ok: true, agents: agentList.length, received: sessions.length });
+  console.log(`[ingest] ${snapshot.length} agents updated (${sessions.length} sessions)`);
+  io.emit("agents:update", snapshot);
+  res.json({ ok: true, agents: snapshot.length, received: sessions.length });
 });
 
 let lastIngestAt = 0;
@@ -805,6 +798,8 @@ app.put("/api/agents/:id/recipe", (req, res) => {
   }
 
   known.recipe = { bodyIndex, hairIndex, outfitIndex };
+  const state = agentStates.get(id);
+  if (state) state.recipe = known.recipe;
   savePersistedPrefs();
 
   // Broadcast recipe change to connected Socket.IO clients
