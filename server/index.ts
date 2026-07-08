@@ -12,14 +12,14 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
+import { isValidLayoutId } from "./layouts";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
-import { randomUUID } from "node:crypto";
 const app = express();
 const server = createServer(app);
 const corsConfig = createCorsConfig();
@@ -465,7 +465,7 @@ async function tailTranscript(
         // Skip heartbeat messages
         if (text.startsWith("HEARTBEAT_OK") || text.includes("HEARTBEAT.md")) return;
 
-        const id = msg.__openclaw?.id || `${agentId}-${msg.__openclaw?.seq ?? Date.now()}`;
+        const id = msg.__openclaw?.id || `${agentId}-${msg.__openclaw?.seq ?? randomUUID()}`;
         const timestamp = msg.timestamp || msg.__openclaw?.ts || Date.now();
 
         // Age check
@@ -927,10 +927,6 @@ function listLayouts(): OfficeLayoutDoc[] {
   }
 }
 
-/** Validate layout ID to prevent path traversal attacks */
-function isValidLayoutId(id: unknown): boolean {
-  return typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && id.length <= 64;
-}
 
 function loadLayout(id: string): OfficeLayoutDoc | null {
   if (!isValidLayoutId(id)) return null;
