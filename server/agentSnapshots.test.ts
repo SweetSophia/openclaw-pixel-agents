@@ -29,6 +29,16 @@ describe("applyAgentSnapshot", () => {
     expect(result.snapshot).toEqual([{ ...agent("new", "typing") }]);
   });
 
+  it("returns deep-cloned snapshots", () => {
+    const current = new Map<string, AgentState>();
+    const next = new Map([["old", { ...agent("old"), tags: ["coding" as const] }]]);
+    const result = applyAgentSnapshot(current, next);
+
+    result.snapshot[0].tags.push("logic");
+
+    expect(current.get("old")?.tags).toEqual(["coding"]);
+  });
+
   it("applies an empty snapshot when the source succeeds", () => {
     const current = new Map([["old", agent("old", "typing")]]);
     const next = new Map<string, AgentState>();
@@ -54,9 +64,8 @@ describe("applyAgentSnapshot", () => {
 
   it("allows an empty first snapshot when there is no previous data to preserve", () => {
     const current = new Map<string, AgentState>();
-    const next = new Map<string, AgentState>();
 
-    const result = applyAgentSnapshot(current, next, { sourceError: true });
+    const result = applyAgentSnapshot(current, undefined, { sourceError: true });
 
     expect(result.applied).toBe(true);
     expect(result.snapshot).toEqual([]);

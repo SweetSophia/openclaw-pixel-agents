@@ -6,7 +6,7 @@ export interface AgentSnapshotApplyResult {
 }
 
 function snapshotAgents(agentStates: Map<string, AgentState>): AgentState[] {
-  return Array.from(agentStates.values()).map((agent) => ({ ...agent }));
+  return Array.from(agentStates.values()).map((agent) => structuredClone(agent));
 }
 
 /**
@@ -17,7 +17,7 @@ function snapshotAgents(agentStates: Map<string, AgentState>): AgentState[] {
  */
 export function applyAgentSnapshot(
   agentStates: Map<string, AgentState>,
-  nextAgents: Map<string, AgentState>,
+  nextAgents?: Map<string, AgentState>,
   options: { sourceError?: boolean } = {},
 ): AgentSnapshotApplyResult {
   if (options.sourceError && agentStates.size > 0) {
@@ -25,7 +25,7 @@ export function applyAgentSnapshot(
   }
 
   agentStates.clear();
-  for (const agent of nextAgents.values()) {
+  for (const agent of nextAgents?.values() ?? []) {
     agentStates.set(agent.id, agent);
   }
 

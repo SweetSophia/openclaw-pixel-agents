@@ -590,18 +590,20 @@ async function pollAndBroadcast(): Promise<void> {
   isPolling = true;
   try {
     const { sessions, sourceError } = await pollSessions();
-    const agentMap = sourceError ? new Map<string, AgentState>() : mapToAgentStates(sessions);
+    const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
     if (!applied) {
       console.warn("[poll] Keeping previous agent snapshot after source error");
+    } else {
+      // Broadcast only when the visible agent snapshot actually changes.
+      io.emit("agents:update", snapshot);
     }
-
-    // Broadcast an immutable snapshot, preserving the previous one on source errors.
-    io.emit("agents:update", snapshot);
 
     // Poll messages from transcripts
     await pollMessages();
+  } catch (err) {
+    console.error("[poll] Poll cycle failed:", err);
   } finally {
     isPolling = false;
   }
@@ -796,6 +798,8 @@ app.put("/api/agents/:id/recipe", (req, res) => {
   }
 
   known.recipe = { bodyIndex, hairIndex, outfitIndex };
+  const state = agentStates.get(id);
+  if (state) state.recipe = known.recipe;
   savePersistedPrefs();
 
   // Broadcast recipe change to connected Socket.IO clients
