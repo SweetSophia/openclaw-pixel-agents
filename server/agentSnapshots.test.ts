@@ -39,6 +39,15 @@ describe("applyAgentSnapshot", () => {
     expect(current.get("old")?.tags).toEqual(["coding"]);
   });
 
+  it("returns deep-cloned snapshots when preserving on source error", () => {
+    const current = new Map([["old", { ...agent("old", "typing"), tags: ["coding" as const] }]]);
+    const result = applyAgentSnapshot(current, undefined, { sourceError: true });
+
+    result.snapshot[0].tags.push("logic");
+
+    expect(current.get("old")?.tags).toEqual(["coding"]);
+  });
+
   it("applies an empty snapshot when the source succeeds", () => {
     const current = new Map([["old", agent("old", "typing")]]);
     const next = new Map<string, AgentState>();
