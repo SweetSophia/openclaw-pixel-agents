@@ -652,6 +652,7 @@ const ingestPruneTimer = setInterval(() => {
     else ingestRateBuckets.set(key, pruned);
   }
 }, RATE_LIMIT_WINDOW_MS);
+ingestPruneTimer.unref?.();
 
 app.post("/api/ingest/agents", (req, res) => {
   if (!INGEST_TOKEN) {
@@ -712,15 +713,16 @@ let lastIngestAt = 0;
 
 // ---- REST API ----
 
-// General authorization middleware for state-modifying REST endpoints
-// Scoped to /api to avoid blocking Socket.IO polling transport POSTs
+const MUTATING_API_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
 app.use("/api", (req, res, next) => {
-  if (req.method === "GET") return next();
-  if (req.path === "/ingest/agents") return next(); // Handles its own auth
+  if (!MUTATING_API_METHODS.has(req.method)) return next();
+  // Ingest runs above this middleware and ends the chain with a response, so
+  // this exemption is defensive belt-and-suspenders for the future ordering.
+  if (req.path === "/ingest/agents") return next();
+  if (isOriginAllowed(req.headers.origin, corsConfig)) return next();
 
-  if (authenticateIngest(req, res)) return next();
-
-  res.status(401).json({ error: "Authentication required: provide 'Authorization: Bearer <INGEST_API_TOKEN>' header" });
+  res.status(403).json({ error: "Forbidden origin" });
 });
 
 app.get("/api/agents", (_req, res) => {

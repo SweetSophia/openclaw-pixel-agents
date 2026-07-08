@@ -199,7 +199,7 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 |---------------------|---------|-------------|
 | `PORT` | `3001` | Backend server port (`3000` in production) |
 | `NODE_ENV` | *(set to `production` by `npm start`)* | Runtime mode; production requires `CORS_ORIGIN` for WebSocket origin checks |
-| `CORS_ORIGIN` | *(none)* | Comma-separated browser origins allowed to open Socket.IO connections in production |
+| `CORS_ORIGIN` | *(none)* | Comma-separated browser origins allowed to open Socket.IO connections and to send state-mutating REST requests in production |
 | `DATA_SOURCE` | `auto` | Data mode: `auto`, `cli` (local polling), or `ingest` (push-based) |
 | `OPENCLAW_CLI` | `openclaw` | Path to OpenClaw CLI binary (cli mode only) |
 | `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
@@ -207,6 +207,10 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `INGEST_API_TOKEN` | *(none)* | Shared secret for ingest API auth (required for ingest mode) |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
+
+### Reverse-proxy deployments
+
+If you terminate TLS or rewrite requests in a reverse proxy in front of the Node server, make sure the `Origin` header from the browser is forwarded unchanged. State-mutating REST routes (`POST/PUT/PATCH/DELETE /api/*`) require an allowed `Origin` in production; stripping or rewriting it will cause legitimate browser mutations to fail with `403 Forbidden origin`.
 
 ## Scripts
 
