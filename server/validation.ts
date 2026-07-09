@@ -28,6 +28,9 @@ const VALID_ROTATIONS = new Set([0, 90, 180, 270]);
 const PREF_KEYS = new Set(["pixelEnabled", "characterSpriteId", "tags", "recipe"]);
 const LAYOUT_KEYS = new Set(["id", "name", "width", "height", "furniture", "seats", "updatedAt"]);
 const LAYOUT_MUTATION_KEYS = new Set([...LAYOUT_KEYS, "baseUpdatedAt"]);
+const TAGS_BODY_KEYS = new Set(["tags"]);
+const RESERVED_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_SEATS = 200;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,7 +41,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: Set<string>): bool
 }
 
 function isIntInRange(value: unknown, min: number, max: number): value is number {
-  return typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value >= min && value <= max;
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 }
 
 function isSafeString(value: unknown, maxLength: number): value is string {
@@ -61,11 +64,18 @@ export function parseRecipe(value: unknown): CharacterRecipe | null {
 export function parseAgentTags(value: unknown): AgentTag[] | null {
   if (!Array.isArray(value) || value.length > 3) return null;
   const tags: AgentTag[] = [];
+  const seen = new Set<AgentTag>();
   for (const tag of value) {
-    if (!isAgentTag(tag)) return null;
+    if (!isAgentTag(tag) || seen.has(tag)) return null;
+    seen.add(tag);
     tags.push(tag);
   }
   return tags;
+}
+
+export function parseTagsBody(value: unknown): AgentTag[] | null {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, TAGS_BODY_KEYS)) return null;
+  return parseAgentTags(value.tags);
 }
 
 export function parsePersistedPrefs(value: unknown): PersistedPrefs | null {
@@ -124,8 +134,12 @@ function parseFurnitureArray(value: unknown, width: number, height: number): Pla
 
 function parseSeats(value: unknown, width: number, height: number): Record<string, { x: number; y: number }> | null {
   if (!isPlainObject(value)) return null;
-  const seats: Record<string, { x: number; y: number }> = {};
-  for (const [agentId, seat] of Object.entries(value)) {
+  const entries = Object.entries(value);
+  if (entries.length > MAX_SEATS) return null;
+
+  const seats: Record<string, { x: number; y: number }> = Object.create(null);
+  for (const [agentId, seat] of entries) {
+    if (RESERVED_OBJECT_KEYS.has(agentId)) return null;
     if (!isSafeString(agentId, 64) || !isPlainObject(seat) || !hasOnlyKeys(seat, new Set(["x", "y"]))) return null;
     const { x, y } = seat;
     if (!isIntInRange(x, 0, width - 1) || !isIntInRange(y, 0, height - 1)) return null;
@@ -138,7 +152,7 @@ export function parseOfficeLayoutDoc(value: unknown): OfficeLayoutDoc | null {
   if (!isPlainObject(value) || !hasOnlyKeys(value, LAYOUT_KEYS)) return null;
   const { id, name, width, height, furniture, seats, updatedAt } = value;
   if (typeof id !== "string" || !isValidLayoutId(id)) return null;
-  if (typeof name !== "string" || name.length < 1 || name.length > 128) return null;
+  if (typeof name !== "string" || name.trim().length < 1 || name.length > 128) return null;
   if (!isIntInRange(width, 1, 128) || !isIntInRange(height, 1, 128)) return null;
   const parsedFurniture = parseFurnitureArray(furniture, width, height);
   if (!parsedFurniture) return null;
@@ -169,7 +183,7 @@ export function parseLayoutMutationBody(
   if ("id" in value && !isValidLayoutId(value.id)) return { ok: false, error: "id must be a valid layout ID" };
   if ("updatedAt" in value && !isIntInRange(value.updatedAt, 0, Number.MAX_SAFE_INTEGER)) return { ok: false, error: "updatedAt must be a non-negative integer" };
   if ("name" in value) {
-    if (typeof value.name !== "string" || value.name.length < 1 || value.name.length > 128) return { ok: false, error: "name must be a non-empty string up to 128 characters" };
+    if (typeof value.name !== "string" || value.name.trim().length < 1 || value.name.length > 128) return { ok: false, error: "name must be a non-empty string up to 128 characters" };
     body.name = value.name;
   }
   if ("width" in value) {

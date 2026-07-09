@@ -19,7 +19,7 @@ import { applyAgentSnapshot } from "./agentSnapshots";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import { isValidLayoutId } from "./layouts";
-import { parseAgentTags, parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
+import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
 const server = createServer(app);
@@ -823,7 +823,7 @@ app.get("/api/tags", (_req, res) => {
 /** Update tags for an agent */
 app.put("/api/agents/:id/tags", (req, res) => {
   const { id } = req.params;
-  const tags = parseAgentTags((req.body as { tags?: unknown }).tags);
+  const tags = parseTagsBody(req.body);
   if (!tags) {
     return res.status(400).json({ error: `tags must be an array of up to 3 valid tags: ${ALL_TAGS.join(", ")}` });
   }

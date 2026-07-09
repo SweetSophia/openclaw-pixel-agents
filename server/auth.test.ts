@@ -102,6 +102,12 @@ describe("API auth boundaries", () => {
       .send({ spriteId: "../char_1" })
       .expect(400)
       .expect({ error: "spriteId must be a safe string" });
+
+    await request(app)
+      .put("/api/agents/main/tags")
+      .set("Origin", appOrigin)
+      .send({ tags: ["coding"], extra: true })
+      .expect(400);
   });
 
   it("rejects malformed layout mutation bodies", async () => {

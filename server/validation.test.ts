@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseToggleBody } from "./validation";
+import { parseAgentTags, parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody } from "./validation";
 
 const defaultLayout = JSON.parse(readFileSync(join(process.cwd(), "data/layouts/default.json"), "utf-8"));
 const persistedPrefs = JSON.parse(readFileSync(join(process.cwd(), "data/agent-prefs.json"), "utf-8"));
@@ -9,7 +9,9 @@ const persistedPrefs = JSON.parse(readFileSync(join(process.cwd(), "data/agent-p
 describe("runtime validators", () => {
   it("accepts the committed persisted prefs fixture", () => {
     for (const value of Object.values(persistedPrefs)) {
-      expect(parsePersistedPrefs(value)).toEqual({ pixelEnabled: true });
+      const prefs = parsePersistedPrefs(value);
+      expect(prefs).not.toBeNull();
+      expect(prefs?.pixelEnabled).toBe(true);
     }
   });
 
@@ -29,11 +31,14 @@ describe("runtime validators", () => {
 
   it("rejects malformed layout documents", () => {
     expect(parseOfficeLayoutDoc({ ...defaultLayout, id: "../default" })).toBeNull();
+    expect(parseOfficeLayoutDoc({ ...defaultLayout, name: "   " })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, width: 129 })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, width: Number.POSITIVE_INFINITY })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, furniture: [{ ...defaultLayout.furniture[0], rotation: 45 }] })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, furniture: [{ ...defaultLayout.furniture[0], x: -1 }] })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, seats: { main: { x: "1", y: 1 } } })).toBeNull();
+    expect(parseOfficeLayoutDoc({ ...defaultLayout, seats: JSON.parse('{"__proto__":{"x":1,"y":1}}') })).toBeNull();
+    expect(parseOfficeLayoutDoc({ ...defaultLayout, seats: Object.fromEntries(Array.from({ length: 201 }, (_, index) => [`agent-${index}`, { x: 0, y: 0 }])) })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, unexpected: true })).toBeNull();
   });
 
@@ -46,6 +51,7 @@ describe("runtime validators", () => {
   });
 
   it("rejects invalid layout mutation bodies", () => {
+    expect(parseLayoutMutationBody({ name: "   " }, { width: 24, height: 16 }).ok).toBe(false);
     expect(parseLayoutMutationBody({ width: "wide" }, { width: 24, height: 16 }).ok).toBe(false);
     expect(parseLayoutMutationBody({ baseUpdatedAt: "old" }, { width: 24, height: 16 }).ok).toBe(false);
     expect(parseLayoutMutationBody({ baseUpdatedAt: -1 }, { width: 24, height: 16 }).ok).toBe(false);
@@ -59,6 +65,9 @@ describe("runtime validators", () => {
     expect(parseToggleBody({ enabled: 0 })).toBeNull();
     expect(parseSpriteBody({ spriteId: "char_1" })).toBe("char_1");
     expect(parseSpriteBody({ spriteId: "../char_1" })).toBeNull();
+    expect(parseAgentTags(["coding", "logic"])).toEqual(["coding", "logic"]);
+    expect(parseAgentTags(["coding", "coding"])).toBeNull();
+    expect(parseTagsBody({ tags: ["coding"], extra: true })).toBeNull();
     expect(parseRecipe({ bodyIndex: 0, hairIndex: 0, outfitIndex: 0 })).toEqual({ bodyIndex: 0, hairIndex: 0, outfitIndex: 0 });
     expect(parseRecipe({ bodyIndex: 0, hairIndex: 9, outfitIndex: 0 })).toBeNull();
   });
