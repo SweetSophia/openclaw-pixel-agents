@@ -16,9 +16,11 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
+import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import { isValidLayoutId } from "./layouts";
+import { logger } from "./logger";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -49,6 +51,8 @@ app.use((_req, res, next) => {
 });
 
 app.use(express.json({ limit: "100kb" }));
+app.use(correlationMiddleware);
+app.use(httpRequestLogMiddleware);
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
 const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
@@ -113,12 +117,12 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
       if (prefs) {
         map.set(k, prefs);
       } else {
-        console.warn(`[prefs] Skipping invalid persisted prefs for agent ${k}`);
+        logger.warn({ agentId: k, subsystem: "prefs" }, "skipping invalid persisted prefs");
       }
     }
     return map;
   } catch (err) {
-    console.warn("[prefs] Failed to load persisted prefs:", err);
+    logger.warn({ err, subsystem: "prefs" }, "failed to load persisted prefs");
     return new Map();
   }
 }
@@ -133,7 +137,7 @@ function savePersistedPrefs() {
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(PERSIST_PATH, JSON.stringify(prefs, null, 2));
   } catch (err) {
-    console.error("[persist] Failed to save prefs:", err);
+    logger.error({ err, subsystem: "persist" }, "failed to save prefs");
   }
 }
 
@@ -218,7 +222,7 @@ function pollSessions(): Promise<CliSessionsResult> {
 
     execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
       if (err) {
-        console.error("[poll] CLI error:", err.message);
+        logger.error({ err: err.message, subsystem: "poll" }, "cli error");
         resolve({ sessions: [], count: 0, sourceError: true });
         return;
       }
@@ -230,7 +234,7 @@ function pollSessions(): Promise<CliSessionsResult> {
           count: data.count || 0,
         });
       } catch (parseErr) {
-        console.error("[poll] JSON parse error:", parseErr);
+        logger.error({ err: parseErr, subsystem: "poll" }, "json parse error");
         resolve({ sessions: [], count: 0, sourceError: true });
       }
     });
@@ -586,13 +590,14 @@ let isPolling = false;
 async function pollAndBroadcast(): Promise<void> {
   if (isPolling) return;
   isPolling = true;
+  const cycleLog = logger.child({ cycleId: randomUUID(), subsystem: "poll" });
   try {
     const { sessions, sourceError } = await pollSessions();
     const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
     if (!applied) {
-      console.warn("[poll] Keeping previous agent snapshot after source error");
+      cycleLog.warn("keeping previous agent snapshot after source error");
     } else {
       // Broadcast only when the visible agent snapshot actually changes.
       io.emit("agents:update", snapshot);
@@ -601,7 +606,7 @@ async function pollAndBroadcast(): Promise<void> {
     // Poll messages from transcripts
     await pollMessages();
   } catch (err) {
-    console.error("[poll] Poll cycle failed:", err);
+    cycleLog.error({ err }, "poll cycle failed");
   } finally {
     isPolling = false;
   }
@@ -694,7 +699,7 @@ app.post("/api/ingest/agents", (req, res) => {
   const { snapshot } = applyAgentSnapshot(agentStates, agentMap);
 
   lastIngestAt = Date.now();
-  console.log(`[ingest] ${snapshot.length} agents updated (${sessions.length} sessions)`);
+  logger.info({ sessionCount: sessions.length, agentCount: snapshot.length, subsystem: "ingest" }, "ingest applied");
   io.emit("agents:update", snapshot);
   res.json({ ok: true, agents: snapshot.length, received: sessions.length });
 });
@@ -886,9 +891,9 @@ function listLayouts(): OfficeLayoutDoc[] {
         const raw = readFileSync(join(LAYOUTS_DIR, file), "utf-8");
         const layout = parseOfficeLayoutDoc(JSON.parse(raw));
         if (layout) layouts.push(layout);
-        else console.warn(`[layout] Skipping invalid layout file ${file}`);
+        else logger.warn({ file, subsystem: "layout" }, "skipping invalid layout file");
       } catch (err) {
-        console.warn(`[layout] Skipping unreadable layout file ${file}:`, err);
+        logger.warn({ err, file, subsystem: "layout" }, "skipping unreadable layout file");
       }
     }
     return layouts.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -903,11 +908,11 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
   try {
     const raw = readFileSync(join(LAYOUTS_DIR, `${id}.json`), "utf-8");
     const layout = parseOfficeLayoutDoc(JSON.parse(raw));
-    if (!layout) console.warn(`[layout] Ignoring invalid layout file ${id}.json`);
+    if (!layout) logger.warn({ layoutId: id, subsystem: "layout" }, "ignoring invalid layout file");
     return layout;
   } catch (err) {
     if (!(typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT")) {
-      console.warn(`[layout] Failed to load layout ${id}:`, err);
+      logger.warn({ err, layoutId: id, subsystem: "layout" }, "failed to load layout");
     }
     return null;
   }
@@ -1076,14 +1081,14 @@ app.get("/api/furniture-catalog", (_req, res) => {
 // ---- WebSocket ----
 
 io.on("connection", (socket) => {
-  console.log("[ws] Client connected:", socket.id);
+  logger.info({ socketId: socket.id, subsystem: "ws" }, "client connected");
 
   // Send current state on connect
   socket.emit("agents:update", Array.from(agentStates.values()));
   socket.emit("ticker:messages", tickerMessages);
 
   socket.on("disconnect", () => {
-    console.log("[ws] Client disconnected:", socket.id);
+    logger.info({ socketId: socket.id, subsystem: "ws" }, "client disconnected");
   });
 });
 
@@ -1119,7 +1124,7 @@ const GRACEFUL_SHUTDOWN_MS = 5000;
 async function shutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`\n[server] Received ${signal}, shutting down gracefully...`);
+  logger.info({ signal, subsystem: "server" }, "received shutdown signal");
 
   // Clear periodic timers to prevent new work during shutdown
   clearInterval(ingestPruneTimer);
@@ -1129,25 +1134,27 @@ async function shutdown(signal: string) {
   const gracefulClose = new Promise<void>((resolve) => {
     // Close HTTP server (stops accepting new connections)
     server.close(() => {
-      console.log("[server] HTTP server closed");
+      logger.info({ subsystem: "server" }, "http server closed");
       resolve();
     });
 
     // Close Socket.IO connections
     io.close(() => {
-      console.log("[server] Socket.IO connections closed");
+      logger.info({ subsystem: "server" }, "socket.io connections closed");
     });
   });
 
   const hardTimeout = new Promise<void>((resolve) => {
     setTimeout(() => {
-      console.error("[server] Forced shutdown after timeout");
+      logger.error({ subsystem: "server" }, "forced shutdown after timeout");
       resolve();
     }, GRACEFUL_SHUTDOWN_MS);
   });
 
   await Promise.race([gracefulClose, hardTimeout]);
-  console.log("[server] Shutdown complete");
+  logger.info({ subsystem: "server" }, "shutdown complete");
+  // Flush buffered log lines before exit so structured output isn't dropped.
+  logger.flush?.();
   process.exit(0);
 }
 
@@ -1157,15 +1164,24 @@ function startServer(): void {
   process.on("SIGINT", () => shutdown("SIGINT"));
 
   server.listen(PORT, () => {
-    console.log(`🖥️  OpenClaw Pixel Agents server running on port ${PORT}`);
-    console.log(`📊 Data source: ${DATA_SOURCE} (effective: ${useCli && !ingestExplicit ? "cli-poll" : "ingest-only"})`);
+    logger.info({
+      port: PORT,
+      dataSource: DATA_SOURCE,
+      effective: useCli && !ingestExplicit ? "cli-poll" : "ingest-only",
+      subsystem: "server",
+    }, "🖥️  OpenClaw Pixel Agents server running");
 
     if (useCli && !ingestExplicit) {
-      console.log(`📡 Polling via: ${OPENCLAW_BIN} sessions --all-agents --json --active ${ACTIVE_THRESHOLD_MIN}`);
+      logger.info({
+        bin: OPENCLAW_BIN,
+        activeThresholdMin: ACTIVE_THRESHOLD_MIN,
+        pollIntervalMs: POLL_INTERVAL,
+        subsystem: "server",
+      }, "📡 Polling via CLI");
       pollAndBroadcast();
       pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
     } else {
-      console.log("📡 Awaiting ingest data from collector (no local CLI polling)");
+      logger.info({ subsystem: "server" }, "📡 Awaiting ingest data from collector (no local CLI polling)");
     }
   });
 }
