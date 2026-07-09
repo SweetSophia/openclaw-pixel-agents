@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Express } from "express";
@@ -86,6 +86,74 @@ describe("API auth boundaries", () => {
     ];
 
     expect(responses.map((response) => response.status)).not.toContain(401);
+  });
+
+  it("rejects malformed agent mutation bodies", async () => {
+    await request(app)
+      .post("/api/agents/main/toggle")
+      .set("Origin", appOrigin)
+      .send({ enabled: "false" })
+      .expect(400)
+      .expect({ error: "enabled must be a boolean" });
+
+    await request(app)
+      .post("/api/agents/main/sprite")
+      .set("Origin", appOrigin)
+      .send({ spriteId: "../char_1" })
+      .expect(400)
+      .expect({ error: "spriteId must be a safe string" });
+
+    await request(app)
+      .put("/api/agents/main/tags")
+      .set("Origin", appOrigin)
+      .send({ tags: ["coding"], extra: true })
+      .expect(400);
+  });
+
+  it("rejects malformed layout mutation bodies", async () => {
+    await request(app)
+      .put("/api/layouts/validation-regression")
+      .set("Origin", appOrigin)
+      .send({ width: "wide" })
+      .expect(400);
+
+    await request(app)
+      .put("/api/layouts/validation-regression")
+      .set("Origin", appOrigin)
+      .send({ baseUpdatedAt: "stale" })
+      .expect(400)
+      .expect({ error: "baseUpdatedAt must be a non-negative integer" });
+
+    await request(app)
+      .put("/api/layouts/validation-regression")
+      .set("Origin", appOrigin)
+      .send({ furniture: [{}] })
+      .expect(400);
+
+    await request(app)
+      .post("/api/layouts")
+      .set("Origin", appOrigin)
+      .send({ width: -1 })
+      .expect(400);
+
+    await request(app)
+      .post("/api/layouts")
+      .set("Origin", appOrigin)
+      .send({ furniture: "nope" })
+      .expect(400);
+  });
+
+  it("skips malformed persisted layout files", async () => {
+    const layoutsDir = join(dataDir, "layouts");
+    mkdirSync(layoutsDir, { recursive: true });
+    writeFileSync(join(layoutsDir, "bad.json"), JSON.stringify({ id: "bad", name: "Bad", width: "wide" }));
+
+    await request(app)
+      .get("/api/layouts")
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.layouts.every((layout: { id: string }) => layout.id !== "bad")).toBe(true);
+      });
   });
 
   it("rejects UI mutations from origins outside the configured app allow-list", async () => {
