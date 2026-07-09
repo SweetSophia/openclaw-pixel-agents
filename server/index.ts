@@ -50,9 +50,9 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "100kb" }));
 app.use(correlationMiddleware);
 app.use(httpRequestLogMiddleware);
+app.use(express.json({ limit: "100kb" }));
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
 const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
@@ -222,7 +222,7 @@ function pollSessions(): Promise<CliSessionsResult> {
 
     execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
       if (err) {
-        logger.error({ err: err.message, subsystem: "poll" }, "cli error");
+        logger.error({ err, subsystem: "poll" }, "cli error");
         resolve({ sessions: [], count: 0, sourceError: true });
         return;
       }
@@ -1131,11 +1131,11 @@ async function shutdown(signal: string) {
   if (pollTimer) clearInterval(pollTimer);
 
   // Race: graceful close vs. hard timeout
-  const gracefulClose = new Promise<void>((resolve) => {
+  const gracefulClose = new Promise<false>((resolve) => {
     // Close HTTP server (stops accepting new connections)
     server.close(() => {
       logger.info({ subsystem: "server" }, "http server closed");
-      resolve();
+      resolve(false);
     });
 
     // Close Socket.IO connections
@@ -1144,14 +1144,20 @@ async function shutdown(signal: string) {
     });
   });
 
-  const hardTimeout = new Promise<void>((resolve) => {
+  const hardTimeout = new Promise<true>((resolve) => {
     setTimeout(() => {
       logger.error({ subsystem: "server" }, "forced shutdown after timeout");
-      resolve();
+      resolve(true);
     }, GRACEFUL_SHUTDOWN_MS);
   });
 
-  await Promise.race([gracefulClose, hardTimeout]);
+  const timedOut = await Promise.race([gracefulClose, hardTimeout]);
+  if (timedOut) {
+    logger.error({ subsystem: "server" }, "shutdown complete (forced)");
+    logger.flush?.();
+    process.exit(1);
+  }
+
   logger.info({ subsystem: "server" }, "shutdown complete");
   // Flush buffered log lines before exit so structured output isn't dropped.
   logger.flush?.();

@@ -41,9 +41,7 @@ describe("logger", () => {
     expect(logger.level).toBe("warn");
   });
 
-  it("redacts authorization headers via the redact option", async () => {
-    // Sanity check that the redact config is wired up at construction time
-    // by exercising the child logger API used by per-subsystem logging.
+  it("supports child loggers used by structured subsystem logging", async () => {
     const { logger } = await import("./logger");
     const child = logger.child({ subsystem: "auth" });
     expect(typeof child.info).toBe("function");

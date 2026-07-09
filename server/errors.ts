@@ -15,9 +15,8 @@ export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
     return;
   }
 
-  // pino-http populates req.log with a per-request child logger when mounted;
-  // fall back to the base logger so unit tests that don't wire pino-http still work.
-  const log = (req as Request & { log?: typeof logger }).log ?? logger;
+  // Use the per-request child logger if available, otherwise fall back to the base logger.
+  const log = req.log ?? logger;
   log.error({ err, reqId: req.id }, "[api error]");
   res.status(500).json({ error: "Internal server error" });
 };
@@ -34,6 +33,7 @@ export function registerProcessErrorHandlers(): void {
 
   process.on("uncaughtException", (err) => {
     logger.fatal({ err }, "[uncaughtException]");
+    logger.flush?.();
     process.exit(1);
   });
 }

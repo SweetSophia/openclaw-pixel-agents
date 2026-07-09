@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { correlationMiddleware, pickRequestId } from "./correlation";
+import { correlationMiddleware, httpRequestLogMiddleware, pickRequestId } from "./correlation";
 
 describe("correlation middleware", () => {
   beforeEach(() => {
@@ -66,5 +66,42 @@ describe("correlation middleware", () => {
   it("handles array-valued headers by inspecting the first element", () => {
     const generated = pickRequestId({ "x-request-id": ["req-array-1", "req-array-2"] });
     expect(generated).toBe("req-array-1");
+  });
+
+  it("attaches a request-scoped child logger", async () => {
+    const app = express();
+    app.use(correlationMiddleware);
+    app.use(httpRequestLogMiddleware);
+    app.get("/probe", (req, res) => {
+      res.json({ hasLog: typeof req.log?.info === "function" });
+    });
+
+    await request(app)
+      .get("/probe")
+      .set("X-Request-Id", "req-with-log")
+      .expect(200)
+      .expect({ hasLog: true });
+  });
+
+  it("can correlate JSON parse errors because it runs before express.json", async () => {
+    const app = express();
+    app.use(correlationMiddleware);
+    app.use(httpRequestLogMiddleware);
+    app.use(express.json());
+    app.post("/probe", (_req, res) => res.json({ ok: true }));
+    app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      expect(err).toBeDefined();
+      res.status(400).json({ id: req.id, hasLog: typeof req.log?.warn === "function" });
+    });
+
+    const response = await request(app)
+      .post("/probe")
+      .set("X-Request-Id", "parse-error-1")
+      .set("Content-Type", "application/json")
+      .send('{"bad"')
+      .expect(400);
+
+    expect(response.headers["x-request-id"]).toBe("parse-error-1");
+    expect(response.body).toEqual({ id: "parse-error-1", hasLog: true });
   });
 });

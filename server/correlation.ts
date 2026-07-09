@@ -1,8 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
-import { logger } from "./logger";
+import { logger, type Logger } from "./logger";
 
-const REQUEST_ID_HEADER = "x-request-id";
+const REQUEST_ID_HEADER = "X-Request-Id";
+const REQUEST_ID_HEADER_KEY = REQUEST_ID_HEADER.toLowerCase();
 const SAFE_ID = /^[a-zA-Z0-9_.\-]{1,128}$/;
 
 /**
@@ -15,7 +16,7 @@ const SAFE_ID = /^[a-zA-Z0-9_.\-]{1,128}$/;
  * can correlate logs across the system.
  */
 export function pickRequestId(headers: NodeJS.Dict<string | string[]>): string {
-  const raw = headers[REQUEST_ID_HEADER];
+  const raw = headers[REQUEST_ID_HEADER_KEY];
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value === "string" && SAFE_ID.test(value)) return value;
   return randomUUID();
@@ -24,13 +25,14 @@ export function pickRequestId(headers: NodeJS.Dict<string | string[]>): string {
 declare module "express-serve-static-core" {
   interface Request {
     id?: string;
+    log?: Logger;
   }
 }
 
 export function correlationMiddleware(req: Request, res: Response, next: NextFunction): void {
   const id = pickRequestId(req.headers);
   req.id = id;
-  res.setHeader("X-Request-Id", id);
+  res.setHeader(REQUEST_ID_HEADER, id);
   next();
 }
 
@@ -46,12 +48,14 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
 export function httpRequestLogMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startedAt = process.hrtime.bigint();
   const child = logger.child({ reqId: req.id, method: req.method, url: req.originalUrl ?? req.url });
+  req.log = child;
 
-  res.on("finish", () => {
+  res.once("close", () => {
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
     const status = res.statusCode;
     const fields = { status, durationMs: Number(durationMs.toFixed(2)) };
-    if (status >= 500) child.error(fields, "request failed");
+    if (!res.writableFinished) child.warn(fields, "request aborted");
+    else if (status >= 500) child.error(fields, "request failed");
     else if (status >= 400) child.warn(fields, "request rejected");
     else child.info(fields, "request completed");
   });
