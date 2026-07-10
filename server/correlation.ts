@@ -44,10 +44,26 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
  * overload resolution. This middleware keeps the same operational contract
  * (one structured log line per request, with `reqId`/`method`/`url`/`status`
  * and response time) without disturbing the wider middleware chain.
+ *
+ * The middleware is self-sufficient: if `correlationMiddleware` was not
+ * mounted first, it still assigns a request id (re-using the trusted-header
+ * validation path) and echoes it on the response so the request log is never
+ * correlated to `undefined`.
+ *
+ * Query strings are intentionally excluded from the `url` field to bound log
+ * cardinality — high-entropy / sensitive values belong in their own log line,
+ * not on every request completion record.
  */
 export function httpRequestLogMiddleware(req: Request, res: Response, next: NextFunction): void {
+  if (!req.id) {
+    const id = pickRequestId(req.headers);
+    req.id = id;
+    res.setHeader(REQUEST_ID_HEADER, id);
+  }
+
   const startedAt = process.hrtime.bigint();
-  const child = logger.child({ reqId: req.id, method: req.method, url: req.originalUrl ?? req.url });
+  const pathname = (req.baseUrl ?? "") + (req.path ?? req.url ?? "");
+  const child = logger.child({ reqId: req.id, method: req.method, url: pathname });
   req.log = child;
 
   res.once("close", () => {

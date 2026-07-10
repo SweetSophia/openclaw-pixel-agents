@@ -104,4 +104,47 @@ describe("correlation middleware", () => {
     expect(response.headers["x-request-id"]).toBe("parse-error-1");
     expect(response.body).toEqual({ id: "parse-error-1", hasLog: true });
   });
+
+  it("httpRequestLogMiddleware is self-sufficient when correlation middleware is absent", async () => {
+    const app = express();
+    // Intentionally skip correlationMiddleware — the log middleware must still
+    // attach a usable request id and a per-request child logger.
+    app.use(httpRequestLogMiddleware);
+    app.get("/probe", (req, res) => {
+      res.json({ id: req.id, hasLog: typeof req.log?.info === "function" });
+    });
+
+    const response = await request(app).get("/probe").expect(200);
+
+    expect(response.headers["x-request-id"]).toBeDefined();
+    expect(response.body.id).toBe(response.headers["x-request-id"]);
+    expect(response.body.hasLog).toBe(true);
+    expect(response.body.id).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it("httpRequestLogMiddleware honors a safe X-Request-Id without correlation middleware", async () => {
+    const app = express();
+    app.use(httpRequestLogMiddleware);
+    app.get("/probe", (req, res) => {
+      res.json({ id: req.id });
+    });
+
+    const response = await request(app)
+      .get("/probe")
+      .set("X-Request-Id", "req-only-log")
+      .expect(200);
+
+    expect(response.headers["x-request-id"]).toBe("req-only-log");
+    expect(response.body.id).toBe("req-only-log");
+  });
+
+  it("accepts the SAFE_ID boundary at 128 characters and rejects 129", () => {
+    const max = "a".repeat(128);
+    expect(pickRequestId({ "x-request-id": max })).toBe(max);
+
+    const tooLong = "a".repeat(129);
+    const result = pickRequestId({ "x-request-id": tooLong });
+    expect(result).not.toBe(tooLong);
+    expect(result).toMatch(/^[a-f0-9-]{36}$/);
+  });
 });

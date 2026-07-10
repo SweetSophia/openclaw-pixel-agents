@@ -1159,7 +1159,8 @@ async function shutdown(signal: string) {
   }
 
   logger.info({ subsystem: "server" }, "shutdown complete");
-  // Flush buffered log lines before exit so structured output isn't dropped.
+  // Best-effort drain of buffered pino lines; flush is fire-and-forget here
+  // because `process.exit` is synchronous and there is no awaiting wrapper.
   logger.flush?.();
   process.exit(0);
 }

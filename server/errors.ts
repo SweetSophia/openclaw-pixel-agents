@@ -28,7 +28,11 @@ export function registerProcessErrorHandlers(): void {
   processHandlersRegistered = true;
 
   process.on("unhandledRejection", (reason) => {
-    logger.error({ reason }, "[unhandledRejection]");
+    // Normalize the reason so pino's { err } serializer can extract
+    // type/stack/message consistently — non-Error reasons (strings, plain
+    // objects, undefined) would otherwise log as a bare `[object]` blob.
+    const err = reason instanceof Error ? reason : new Error(String(reason ?? "unknown rejection"));
+    logger.error({ err }, "[unhandledRejection]");
   });
 
   process.on("uncaughtException", (err) => {
