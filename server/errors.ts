@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from "express";
+import { logger } from "./logger";
 
 type AsyncRequestHandler = (req: Request, res: Response, next: NextFunction) => unknown | Promise<unknown>;
 
@@ -8,13 +9,15 @@ export function asyncHandler(handler: AsyncRequestHandler): RequestHandler {
   };
 }
 
-export const apiErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
+export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
   if (res.headersSent) {
     next(err);
     return;
   }
 
-  console.error("[api error]", err);
+  // Use the per-request child logger if available, otherwise fall back to the base logger.
+  const log = req.log ?? logger;
+  log.error({ err, reqId: req.id }, "[api error]");
   res.status(500).json({ error: "Internal server error" });
 };
 
@@ -25,11 +28,12 @@ export function registerProcessErrorHandlers(): void {
   processHandlersRegistered = true;
 
   process.on("unhandledRejection", (reason) => {
-    console.error("[unhandledRejection]", reason);
+    logger.error({ reason }, "[unhandledRejection]");
   });
 
   process.on("uncaughtException", (err) => {
-    console.error("[uncaughtException]", err);
+    logger.fatal({ err }, "[uncaughtException]");
+    logger.flush?.();
     process.exit(1);
   });
 }

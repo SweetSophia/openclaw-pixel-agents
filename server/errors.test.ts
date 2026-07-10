@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiErrorHandler, asyncHandler } from "./errors";
+import { logger } from "./logger";
 
 describe("Express error boundary", () => {
   afterEach(() => {
@@ -10,7 +11,7 @@ describe("Express error boundary", () => {
 
   it("turns async route rejections into 500 responses and keeps serving", async () => {
     const app = express();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
 
     app.get(
       "/reject",
@@ -27,7 +28,10 @@ describe("Express error boundary", () => {
       .expect("Content-Type", /json/)
       .expect({ error: "Internal server error" });
 
-    expect(errorSpy).toHaveBeenCalledWith("[api error]", expect.any(Error));
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "[api error]",
+    );
 
     await request(app)
       .get("/health")
