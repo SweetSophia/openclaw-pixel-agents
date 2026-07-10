@@ -1,8 +1,17 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiErrorHandler, asyncHandler, registerProcessErrorHandlers } from "./errors";
+import { apiErrorHandler, asyncHandler, handleUnhandledRejection } from "./errors";
 import { logger, type Logger } from "./logger";
+
+// Spy on `logger.error` and return the logger so callers that chain method
+// calls remain type-safe without per-test casts. The `unknown` bridge keeps
+// the `void`-returning target signature honest.
+function spyOnLoggerError(): ReturnType<typeof vi.spyOn> {
+  return vi
+    .spyOn(logger, "error")
+    .mockImplementation((() => logger) as unknown as Logger["error"]);
+}
 
 describe("Express error boundary", () => {
   afterEach(() => {
@@ -10,13 +19,9 @@ describe("Express error boundary", () => {
   });
 
   it("turns async route rejections into 500 responses and keeps serving", async () => {
-    const app = express();
-    // Cast through `unknown` so the spy can return Logger for callers that chain
-    // method calls while still satisfying the `void`-returning target signature.
-    const errorSpy = vi
-      .spyOn(logger, "error")
-      .mockImplementation((() => logger) as unknown as Logger["error"]);
+    const errorSpy = spyOnLoggerError();
 
+    const app = express();
     app.get(
       "/reject",
       asyncHandler(async () => {
@@ -44,9 +49,7 @@ describe("Express error boundary", () => {
   });
 
   it("delegates to default Express handler when headers were already sent", () => {
-    const errorSpy = vi
-      .spyOn(logger, "error")
-      .mockImplementation((() => logger) as unknown as Logger["error"]);
+    const errorSpy = spyOnLoggerError();
 
     // Simulate the late-rejection scenario without a real socket: res.headersSent
     // is true so apiErrorHandler must call next(err) and bail out, leaving the
@@ -66,37 +69,58 @@ describe("Express error boundary", () => {
     expect(next).toHaveBeenCalledWith(err);
     expect((res.status as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     expect((res.json as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
-    expect(errorSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ err: expect.any(Error) }),
-      "[api error]",
-    );
+    // The headersSent branch must not log at all — earlier versions only
+    // asserted absence of one call shape, which a buggy future refactor could
+    // still satisfy by adding a different log call. Zero calls proves intent.
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("normalizes non-Error rejection reasons for the unhandledRejection handler", () => {
-    const errorSpy = vi
-      .spyOn(logger, "error")
-      .mockImplementation((() => logger) as unknown as Logger["error"]);
+  describe("handleUnhandledRejection normalization", () => {
+    it("passes Error reasons through unchanged (identity preserved)", () => {
+      const errorSpy = spyOnLoggerError();
+      const original = new Error("real boom");
 
-    // Re-register with an idempotency escape hatch: registerProcessErrorHandlers
-    // uses a module-level guard, so we attach a fresh listener directly to
-    // exercise the same handler body without disturbing other tests.
-    const original = process.listeners("unhandledRejection");
-    process.removeAllListeners("unhandledRejection");
-    try {
-      registerProcessErrorHandlers();
-      process.emit("unhandledRejection", "plain string rejection", { type: "unhandledRejection" } as unknown as Promise<unknown>);
+      handleUnhandledRejection(original);
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ err: expect.any(Error) }),
-        "[unhandledRejection]",
-      );
       const [fields] = errorSpy.mock.calls[0]!;
-      expect(fields.err).toBeInstanceOf(Error);
-      expect((fields as { err: Error }).err.message).toBe("plain string rejection");
-    } finally {
-      // Restore previous listeners (test isolation across the suite).
-      process.removeAllListeners("unhandledRejection");
-      for (const listener of original) process.on("unhandledRejection", listener as NodeJS.UnhandledRejectionListener);
-    }
+      expect((fields as { err: Error }).err).toBe(original);
+    });
+
+    it("normalizes string rejection reasons to Error instances", () => {
+      const errorSpy = spyOnLoggerError();
+
+      handleUnhandledRejection("plain string rejection");
+
+      const [fields] = errorSpy.mock.calls[0]!;
+      const err = (fields as { err: Error }).err;
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toBe("plain string rejection");
+    });
+
+    it("preserves object rejection reasons via Error.cause", () => {
+      const errorSpy = spyOnLoggerError();
+      const reason = { code: "ECONNRESET", target: "upstream" };
+
+      handleUnhandledRejection(reason);
+
+      const [fields] = errorSpy.mock.calls[0]!;
+      const err = (fields as { err: Error & { cause?: unknown } }).err;
+      expect(err).toBeInstanceOf(Error);
+      // Stable message when the reason does not stringify usefully.
+      expect(err.message).toBe("[object Object]");
+      // Original reason retained for structured dumps.
+      expect(err.cause).toBe(reason);
+    });
+
+    it("falls back to a stable message for nullish reasons", () => {
+      const errorSpy = spyOnLoggerError();
+
+      handleUnhandledRejection(undefined);
+
+      const [fields] = errorSpy.mock.calls[0]!;
+      const err = (fields as { err: Error }).err;
+      expect(err.message).toBe("unknown rejection");
+      expect((err as Error & { cause?: unknown }).cause).toBeUndefined();
+    });
   });
 });

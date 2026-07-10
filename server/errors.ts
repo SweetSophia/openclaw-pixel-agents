@@ -21,19 +21,32 @@ export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
   res.status(500).json({ error: "Internal server error" });
 };
 
+/**
+ * Normalize an `unhandledRejection` reason so pino's `{ err }` serializer
+ * can extract type/stack/message consistently.
+ *
+ * - Error reasons pass through (their identity is preserved so stack traces
+ *   remain intact).
+ * - null/undefined fall back to a stable message.
+ * - Everything else is stringified, but the original reason is retained on
+ *   `Error.cause` so structured dumps can still reconstruct what came down
+ *   the pipe (otherwise `new Error(String({foo: 1}))` loses to `[object Object]`).
+ */
+export function handleUnhandledRejection(reason: unknown): void {
+  const err =
+    reason instanceof Error
+      ? reason
+      : new Error(reason == null ? "unknown rejection" : String(reason), { cause: reason });
+  logger.error({ err }, "[unhandledRejection]");
+}
+
 let processHandlersRegistered = false;
 
 export function registerProcessErrorHandlers(): void {
   if (processHandlersRegistered) return;
   processHandlersRegistered = true;
 
-  process.on("unhandledRejection", (reason) => {
-    // Normalize the reason so pino's { err } serializer can extract
-    // type/stack/message consistently — non-Error reasons (strings, plain
-    // objects, undefined) would otherwise log as a bare `[object]` blob.
-    const err = reason instanceof Error ? reason : new Error(String(reason ?? "unknown rejection"));
-    logger.error({ err }, "[unhandledRejection]");
-  });
+  process.on("unhandledRejection", handleUnhandledRejection);
 
   process.on("uncaughtException", (err) => {
     logger.fatal({ err }, "[uncaughtException]");
