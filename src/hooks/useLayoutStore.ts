@@ -25,8 +25,15 @@ export function useLayoutStore() {
   const activeLayoutRef = useRef<LayoutDoc | null>(null);
 
   // useReducer replaces the dual useState+useRef pattern. The reducer
-  // ALWAYS syncs the ref, making desync architecturally impossible.
+  // ALWAYS syncs the ref, making desync architecturally impossible —
   // dispatch is the single entry point for all active-layout mutations.
+  //
+  // Note: the ref-write inside the reducer is technically impure (React
+  // invokes reducers twice in Strict Mode), but it is idempotent —
+  // writing the same value twice is harmless. This trade-off is preferred
+  // over a useEffect sync because the ref is read synchronously inside
+  // saveActiveLayout's async callback chain, which would otherwise have a
+  // one-render stale window.
   const [activeLayout, setActiveLayout] = useReducer(
     function reducer(state: LayoutDoc | null, action: LayoutAction): LayoutDoc | null {
       const next = typeof action === 'function' ? action(state) : action;

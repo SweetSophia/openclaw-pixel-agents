@@ -149,7 +149,7 @@ describe('useLayoutStore', () => {
     expect(latest(snapshots).activeLayout?.id).toBe('default');
   });
 
-  it('saveActiveLayout uses the most-recent active layout, not a stale closure', async () => {
+  it('saveActiveLayout always reads the latest active layout (invariant test)', async () => {
     await renderStoreProbe();
 
     // The initial layout has updatedAt=1000
@@ -162,16 +162,19 @@ describe('useLayoutStore', () => {
     expect(latest(snapshots).activeLayout?.id).toBe('other');
     expect(latest(snapshots).activeLayout?.updatedAt).toBe(2000);
 
-    // Save — should PUT with the "other" layout's updatedAt (2000),
-    // not the stale "default" layout's updatedAt (1000).
+    // Save — the PUT body's baseUpdatedAt should be 2000 (the "other"
+    // layout's updatedAt), proving saveActiveLayout read the latest
+    // committed state at the moment its async chain ran.
+    //
+    // This is an INVARIANT test for the new useReducer architecture: if
+    // a future refactor introduces a path that bypasses the reducer
+    // (and thus desyncs the ref), this test will catch the regression.
     await act(async () => {
       await latest(snapshots).saveActiveLayout();
     });
 
     expect(captures.lastPutBody).toBeDefined();
     expect(captures.lastPutBody!.id).toBe('other');
-    // baseUpdatedAt should be the "other" layout's updatedAt (2000),
-    // proving saveActiveLayout read the latest state, not a stale one.
     expect(captures.lastPutBody!.baseUpdatedAt).toBe(2000);
   });
 
