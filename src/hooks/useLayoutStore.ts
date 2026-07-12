@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { PlacedFurniture, OfficeLayout } from '../../shared/types';
+import { useState, useEffect, useCallback, useReducer, useRef } from 'react';
+import type { PlacedFurniture } from '../../shared/types';
 
 const API_BASE = '/api';
 
@@ -13,22 +13,31 @@ export interface LayoutDoc {
   updatedAt: number;
 }
 
+/**
+ * Dispatched action: a new layout value, or a functional updater.
+ * Every mutation flows through the reducer, which guarantees the ref
+ * stays in sync — there is no separate raw setter that could bypass it.
+ */
+type LayoutAction = LayoutDoc | null | ((prev: LayoutDoc | null) => LayoutDoc | null);
+
 export function useLayoutStore() {
   const [layouts, setLayouts] = useState<LayoutDoc[]>([]);
-  const [activeLayoutState, _setActiveLayout] = useState<LayoutDoc | null>(null);
   const activeLayoutRef = useRef<LayoutDoc | null>(null);
-  const [catalog, setCatalog] = useState<string[]>([]);
-  const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
 
-  const setActiveLayout = useCallback((layout: LayoutDoc | null | ((prev: LayoutDoc | null) => LayoutDoc | null)) => {
-    _setActiveLayout(prev => {
-      const next = typeof layout === 'function' ? layout(prev) : layout;
+  // useReducer replaces the dual useState+useRef pattern. The reducer
+  // ALWAYS syncs the ref, making desync architecturally impossible.
+  // dispatch is the single entry point for all active-layout mutations.
+  const [activeLayout, setActiveLayout] = useReducer(
+    function reducer(state: LayoutDoc | null, action: LayoutAction): LayoutDoc | null {
+      const next = typeof action === 'function' ? action(state) : action;
       activeLayoutRef.current = next;
       return next;
-    });
-  }, []);
+    },
+    null,
+  );
 
-  const activeLayout = activeLayoutState;
+  const [catalog, setCatalog] = useState<string[]>([]);
+  const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
 
   const fetchLayouts = useCallback(async () => {
     try {
@@ -54,6 +63,10 @@ export function useLayoutStore() {
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     savePromiseRef.current = savePromiseRef.current.then(async () => {
+      // Read from the ref — it's always synced by the reducer, so this
+      // always reflects the latest committed state. This replaces the
+      // old dual-setter pattern where a raw useState setter could bypass
+      // the ref sync.
       const currentLayout = activeLayoutRef.current;
       if (!currentLayout) return;
 
