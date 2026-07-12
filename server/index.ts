@@ -1130,28 +1130,36 @@ async function shutdown(signal: string) {
   clearInterval(ingestPruneTimer);
   if (pollTimer) clearInterval(pollTimer);
 
-  // Race: graceful close vs. hard timeout
-  const gracefulClose = new Promise<false>((resolve) => {
-    // Close HTTP server (stops accepting new connections)
-    server.close(() => {
-      logger.info({ subsystem: "server" }, "http server closed");
-      resolve(false);
-    });
+  // Race: graceful close vs. hard timeout. Hoist the hard-timeout handle so we
+  // can `clearTimeout` once the race resolves, preventing a delayed forced-shutdown
+  // log from firing after a successful graceful exit.
+  let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
-    // Close Socket.IO connections
-    io.close(() => {
-      logger.info({ subsystem: "server" }, "socket.io connections closed");
-    });
-  });
+  const gracefulClose = (async (): Promise<false> => {
+    // Close HTTP server (stops accepting new connections)
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        logger.info({ subsystem: "server" }, "http server closed");
+        resolve();
+      }),
+    );
+    // Close Socket.IO connections (awaited so log lines land in order).
+    await io.close();
+    logger.info({ subsystem: "server" }, "socket.io connections closed");
+    return false;
+  })();
 
   const hardTimeout = new Promise<true>((resolve) => {
-    setTimeout(() => {
+    hardTimeoutHandle = setTimeout(() => {
       logger.error({ subsystem: "server" }, "forced shutdown after timeout");
       resolve(true);
     }, GRACEFUL_SHUTDOWN_MS);
+    // Don't keep the loop alive solely on the force-timeout.
+    hardTimeoutHandle.unref?.();
   });
 
   const timedOut = await Promise.race([gracefulClose, hardTimeout]);
+  if (hardTimeoutHandle) clearTimeout(hardTimeoutHandle);
   if (timedOut) {
     logger.error({ subsystem: "server" }, "shutdown complete (forced)");
     logger.flush?.();
@@ -1159,7 +1167,8 @@ async function shutdown(signal: string) {
   }
 
   logger.info({ subsystem: "server" }, "shutdown complete");
-  // Flush buffered log lines before exit so structured output isn't dropped.
+  // Best-effort drain of buffered pino lines; flush is fire-and-forget here
+  // because `process.exit` is synchronous and there is no awaiting wrapper.
   logger.flush?.();
   process.exit(0);
 }

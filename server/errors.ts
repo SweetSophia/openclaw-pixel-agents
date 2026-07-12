@@ -17,9 +17,36 @@ export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
 
   // Use the per-request child logger if available, otherwise fall back to the base logger.
   const log = req.log ?? logger;
-  log.error({ err, reqId: req.id }, "[api error]");
+  // Normalize non-Error rejections (string/object) so pino's { err } serializer
+  // produces a real Error — stringification alone drops stacks and loses the
+  // original reason.
+  const normalized = toError(err, "api error");
+  log.error({ err: normalized, reqId: req.id }, "[api error]");
   res.status(500).json({ error: "Internal server error" });
 };
+
+/**
+ * Normalize an unknown rejection/error value into an `Error`.
+ *
+ * - `Error` instances pass through unchanged so identity (and therefore the
+ *   original stack trace) is preserved for pino's `{ err }` serializer.
+ * - `null`/`undefined` fall back to a stable, caller-provided message.
+ * - Anything else is stringified into `Error.message`, but the original value
+ *   is retained on `Error.cause` so structured dumps can still reconstruct it
+ *   (otherwise `new Error(String({foo: 1}))` collapses to `[object Object]`).
+ */
+export function toError(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) return value;
+  return new Error(value == null ? fallbackMessage : String(value), { cause: value });
+}
+
+/**
+ * Normalize an `unhandledRejection` reason so pino's `{ err }` serializer can
+ * extract type/stack/message consistently. See {@link toError} for the rules.
+ */
+export function handleUnhandledRejection(reason: unknown): void {
+  logger.error({ err: toError(reason, "unknown rejection") }, "[unhandledRejection]");
+}
 
 let processHandlersRegistered = false;
 
@@ -27,9 +54,7 @@ export function registerProcessErrorHandlers(): void {
   if (processHandlersRegistered) return;
   processHandlersRegistered = true;
 
-  process.on("unhandledRejection", (reason) => {
-    logger.error({ reason }, "[unhandledRejection]");
-  });
+  process.on("unhandledRejection", handleUnhandledRejection);
 
   process.on("uncaughtException", (err) => {
     logger.fatal({ err }, "[uncaughtException]");
