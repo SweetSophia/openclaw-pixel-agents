@@ -62,7 +62,12 @@ export function httpRequestLogMiddleware(req: Request, res: Response, next: Next
   }
 
   const startedAt = process.hrtime.bigint();
-  const pathname = (req.baseUrl ?? "") + (req.path ?? req.url ?? "");
+  // Strip any query string from the req.url fallback so high-entropy /
+  // sensitive values never leak into the per-request child log bindings.
+  // `req.path` is set by the Express router; only fall back to `req.url`
+  // when it is missing.
+  const pathLike = req.path ?? (req.url ?? "").split("?")[0] ?? "";
+  const pathname = (req.baseUrl ?? "") + pathLike;
   const child = logger.child({ reqId: req.id, method: req.method, url: pathname });
   req.log = child;
 

@@ -17,27 +17,35 @@ export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
 
   // Use the per-request child logger if available, otherwise fall back to the base logger.
   const log = req.log ?? logger;
-  log.error({ err, reqId: req.id }, "[api error]");
+  // Normalize non-Error rejections (string/object) so pino's { err } serializer
+  // produces a real Error — stringification alone drops stacks and loses the
+  // original reason.
+  const normalized = toError(err, "api error");
+  log.error({ err: normalized, reqId: req.id }, "[api error]");
   res.status(500).json({ error: "Internal server error" });
 };
 
 /**
- * Normalize an `unhandledRejection` reason so pino's `{ err }` serializer
- * can extract type/stack/message consistently.
+ * Normalize an unknown rejection/error value into an `Error`.
  *
- * - Error reasons pass through (their identity is preserved so stack traces
- *   remain intact).
- * - null/undefined fall back to a stable message.
- * - Everything else is stringified, but the original reason is retained on
- *   `Error.cause` so structured dumps can still reconstruct what came down
- *   the pipe (otherwise `new Error(String({foo: 1}))` loses to `[object Object]`).
+ * - `Error` instances pass through unchanged so identity (and therefore the
+ *   original stack trace) is preserved for pino's `{ err }` serializer.
+ * - `null`/`undefined` fall back to a stable, caller-provided message.
+ * - Anything else is stringified into `Error.message`, but the original value
+ *   is retained on `Error.cause` so structured dumps can still reconstruct it
+ *   (otherwise `new Error(String({foo: 1}))` collapses to `[object Object]`).
+ */
+export function toError(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) return value;
+  return new Error(value == null ? fallbackMessage : String(value), { cause: value });
+}
+
+/**
+ * Normalize an `unhandledRejection` reason so pino's `{ err }` serializer can
+ * extract type/stack/message consistently. See {@link toError} for the rules.
  */
 export function handleUnhandledRejection(reason: unknown): void {
-  const err =
-    reason instanceof Error
-      ? reason
-      : new Error(reason == null ? "unknown rejection" : String(reason), { cause: reason });
-  logger.error({ err }, "[unhandledRejection]");
+  logger.error({ err: toError(reason, "unknown rejection") }, "[unhandledRejection]");
 }
 
 let processHandlersRegistered = false;

@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "./logger";
 import { correlationMiddleware, httpRequestLogMiddleware, pickRequestId } from "./correlation";
 
 describe("correlation middleware", () => {
@@ -146,5 +147,57 @@ describe("correlation middleware", () => {
     const result = pickRequestId({ "x-request-id": tooLong });
     expect(result).not.toBe(tooLong);
     expect(result).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it("strips query strings from the fallback url so secrets/token bounds are preserved", () => {
+    const childSpy = vi.spyOn(logger, "child");
+    const fakeChild = {
+      warn: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      bindings: () => ({}),
+    };
+    childSpy.mockReturnValue(fakeChild as unknown as ReturnType<typeof logger.child>);
+
+    // Drive the middleware with a minimal req/res pair. `req.path` is
+    // intentionally missing to exercise the req.url fallback path.
+    const req = {
+      method: "GET",
+      headers: {},
+      url: "/probe?token=secret&session=abc",
+      baseUrl: "",
+    } as unknown as express.Request;
+    const headers: Record<string, string> = {};
+    const res = {
+      setHeader: (name: string, value: string) => {
+        headers[name] = value;
+      },
+      once: () => undefined,
+      statusCode: 200,
+      writableFinished: true,
+    } as unknown as express.Response;
+    const next = vi.fn();
+
+    httpRequestLogMiddleware(req, res, next);
+
+    const bindings = childSpy.mock.calls[0]?.[0] as { url?: string } | undefined;
+    expect(bindings?.url).toBe("/probe");
+    expect(bindings?.url).not.toContain("token=secret");
+    expect(bindings?.url).not.toContain("session=abc");
+  });
+
+  it("preserves req.baseUrl when the log middleware is mounted on a sub-router", async () => {
+    const router = express.Router();
+    router.get("/v1/users", (req, res) => {
+      const log = req.log as unknown as { bindings?: () => { url?: string } };
+      res.json({ url: log?.bindings?.().url });
+    });
+    const app = express();
+    app.use(correlationMiddleware);
+    app.use(httpRequestLogMiddleware);
+    app.use("/api", router);
+
+    const response = await request(app).get("/api/v1/users").expect(200);
+    expect(response.body.url).toBe("/api/v1/users");
   });
 });

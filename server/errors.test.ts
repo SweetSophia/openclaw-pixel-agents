@@ -1,13 +1,13 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { apiErrorHandler, asyncHandler, handleUnhandledRejection } from "./errors";
 import { logger, type Logger } from "./logger";
 
-// Spy on `logger.error` and return the logger so callers that chain method
-// calls remain type-safe without per-test casts. The `unknown` bridge keeps
-// the `void`-returning target signature honest.
-function spyOnLoggerError(): ReturnType<typeof vi.spyOn> {
+// Spy on `logger.error` and return the mock so callers can introspect calls.
+// The implementation returns `logger` so chained calls (e.g. `.child().error()`)
+// remain type-safe; the cast bridges that into the void-returning stub.
+function spyOnLoggerError(): MockInstance<Logger["error"]> {
   return vi
     .spyOn(logger, "error")
     .mockImplementation((() => logger) as unknown as Logger["error"]);
@@ -46,6 +46,59 @@ describe("Express error boundary", () => {
       .get("/health")
       .expect(200)
       .expect({ ok: true });
+  });
+
+  it("normalizes async string rejections so the logged err is an Error preserving the original on cause", async () => {
+    const errorSpy = spyOnLoggerError();
+
+    const app = express();
+    app.get(
+      "/reject-string",
+      asyncHandler(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        throw "string boom";
+      }),
+    );
+    app.use(apiErrorHandler);
+
+    await request(app).get("/reject-string").expect(500).expect({ error: "Internal server error" });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "[api error]",
+    );
+    const [fields] = errorSpy.mock.calls[0]!;
+    const err = (fields as { err: Error & { cause?: unknown } }).err;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("string boom");
+    expect(err.cause).toBe("string boom");
+  });
+
+  it("normalizes async object rejections so the logged err is an Error preserving the original on cause", async () => {
+    const errorSpy = spyOnLoggerError();
+    const reason = { code: "ECONNRESET", target: "upstream" };
+
+    const app = express();
+    app.get(
+      "/reject-object",
+      asyncHandler(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        throw reason;
+      }),
+    );
+    app.use(apiErrorHandler);
+
+    await request(app).get("/reject-object").expect(500).expect({ error: "Internal server error" });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      "[api error]",
+    );
+    const [fields] = errorSpy.mock.calls[0]!;
+    const err = (fields as { err: Error & { cause?: unknown } }).err;
+    expect(err).toBeInstanceOf(Error);
+    // Default String(reason) collapses objects — that's fine: `cause` retains the original.
+    expect(err.cause).toBe(reason);
   });
 
   it("delegates to default Express handler when headers were already sent", () => {
