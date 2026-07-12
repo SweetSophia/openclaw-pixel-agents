@@ -619,6 +619,10 @@ const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
 // configured token length via timing (CWE-208). Both sides are always 32 bytes
 // regardless of token length, eliminating the length-mismatch branch that
 // previously allowed timing side-channel analysis.
+//
+// Both INGEST_TOKEN (from env) and the provided Bearer header are JS strings;
+// createHash().update(string) defaults to UTF-8 in Node, so the two sides
+// agree on encoding for arbitrary Unicode tokens.
 const INGEST_TOKEN_DIGEST = INGEST_TOKEN
   ? createHash("sha256").update(INGEST_TOKEN).digest()
   : Buffer.alloc(32);
