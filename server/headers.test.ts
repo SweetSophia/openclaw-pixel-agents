@@ -77,8 +77,8 @@ describe("security headers", () => {
     const prodIo = serverModule.io;
 
     const res = await request(prodApp).get("/api/status");
-    expect(res.headers["strict-transport-security"]).toMatch(/max-age=\d+/);
-    expect(res.headers["strict-transport-security"]).toContain("includeSubDomains");
+    // Exact value: 2 years (63072000s) required for HSTS preload eligibility.
+    expect(res.headers["strict-transport-security"]).toBe("max-age=63072000; includeSubDomains");
 
     prodIo?.close();
   });
@@ -116,6 +116,33 @@ describe("security headers", () => {
     const connectSrc = csp.match(/connect-src[^;]*/);
     expect(connectSrc).toBeTruthy();
     expect(connectSrc![0]).toContain("ws:");
-    expect(connectSrc![0]).toContain("wss:");
+  });
+
+  it("CSP has base-uri 'self', object-src 'none', form-action 'self' for defense-in-depth", async () => {
+    const h = await headers();
+    const csp = h["content-security-policy"] as string;
+    expect(csp).toContain("base-uri 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("form-action 'self'");
+  });
+
+  it("CSP does not allow unsafe-eval", async () => {
+    const h = await headers();
+    const csp = h["content-security-policy"] as string;
+    expect(csp).not.toContain("'unsafe-eval'");
+  });
+
+  it("security headers apply to all response surfaces (API, static assets, SPA fallback)", async () => {
+    // The headers middleware runs before static + SPA fallback. Verify a
+    // sample of each surface carries the same headers, not just /api/status.
+    const paths = ["/api/status", "/some-static-asset.js", "/some/unknown/spa-route"];
+    for (const path of paths) {
+      const res = await request(app).get(path);
+      expect(res.headers["x-content-type-options"], `path=${path}`).toBe("nosniff");
+      expect(res.headers["x-frame-options"], `path=${path}`).toBe("DENY");
+      expect(res.headers["referrer-policy"], `path=${path}`).toBe("strict-origin-when-cross-origin");
+      expect(res.headers["permissions-policy"], `path=${path}`).toContain("camera=()");
+      expect(res.headers["content-security-policy"], `path=${path}`).toContain("default-src 'self'");
+    }
   });
 });

@@ -47,11 +47,17 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   // 'unsafe-inline' needed for React-emitted inline styles; nonce migration
-  // tracked in #54. Google Fonts CSS is loaded via <link> in index.html.
+  // tracked for future hardening. Google Fonts CSS is loaded via <link> in index.html.
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data:",
-  "connect-src 'self' ws: wss:",
+  // ws: covers both ws:// and wss:// per CSP3; standalone wss: is redundant.
+  "connect-src 'self' ws:",
+  // Defense-in-depth: lock down <base>, <object>, and <form> targets against
+  // any future XSS vector even though no such sinks exist today.
+  "base-uri 'self'",
+  "object-src 'none'",
+  "form-action 'self'",
   "frame-ancestors 'none'",
 ].join("; ");
 
