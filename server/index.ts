@@ -51,9 +51,10 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data:",
-  // WebSocket scheme-source. Per CSP3, ws: covers both ws:// and wss://;
-  // standalone wss: is technically redundant but kept for defensive clarity
-  // (CSP-linter compatibility — Sourcery flags ws:-only as ambiguous).
+  // WebSocket scheme-source. Per CSP3, the ws scheme-source token covers both
+  // plain and TLS WebSocket connections; the standalone secure variant is
+  // technically redundant but kept for defensive clarity and CSP-linter
+  // compatibility (Sourcery flags a scheme-source-only directive as ambiguous).
   "connect-src 'self' ws: wss:",
   // Defense-in-depth: lock down <base>, <object>, and <form> targets against
   // any future XSS vector even though no such sinks exist today.
