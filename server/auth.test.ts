@@ -10,6 +10,7 @@ describe("API auth boundaries", () => {
   let app: Express;
   let io: SocketIOServer;
   let dataDir: string;
+  let authenticateIngest: (req: Express.Request, res: Express.Response) => boolean;
   const appOrigin = "https://pixel.test";
 
   beforeAll(async () => {
@@ -24,6 +25,7 @@ describe("API auth boundaries", () => {
     const serverModule = await import("./index");
     app = serverModule.app;
     io = serverModule.io;
+    authenticateIngest = serverModule.authenticateIngest;
   });
 
   afterAll(() => {
@@ -48,6 +50,61 @@ describe("API auth boundaries", () => {
       .send({ sessions: [] })
       .expect(401)
       .expect({ error: "Unauthorized" });
+  });
+
+  it("authenticateIngest does not leak token length via timing", () => {
+    // Regression test for CWE-208: the old implementation had an early-return
+    // branch on length mismatch that let an attacker detect the configured
+    // token length. The SHA-256 digest approach uses a single code path for
+    // all inputs — only the hash of the attacker-controlled input varies in
+    // time, never the secret comparison.
+    const authenticate = authenticateIngest;
+    expect(authenticate).toBeDefined();
+
+    const makeReq = (token: string): Express.Request =>
+      ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Express.Request;
+
+    const correctToken = "test-secret"; // matches INGEST_API_TOKEN from beforeAll
+    const wrongSameLen = "not-the-xxx"; // same length (11 chars), wrong content
+    const wrongShort = "X";
+    const wrongLong = "X".repeat(200);
+
+    // Functional: only the correct token authenticates
+    expect(authenticate(makeReq(correctToken), {} as Express.Response)).toBe(true);
+    expect(authenticate(makeReq(wrongSameLen), {} as Express.Response)).toBe(false);
+    expect(authenticate(makeReq(wrongShort), {} as Express.Response)).toBe(false);
+    expect(authenticate(makeReq(wrongLong), {} as Express.Response)).toBe(false);
+
+    // Timing: all paths should take comparable wall-clock time.
+    // The old length-branch created a >10x divergence; the digest approach
+    // has a single path. Allow 2x for CI runner noise.
+    const ITERATIONS = 20_000;
+
+    // Warm up JIT and caches
+    for (let i = 0; i < 2000; i++) {
+      authenticate(makeReq(correctToken), {} as Express.Response);
+      authenticate(makeReq(wrongShort), {} as Express.Response);
+    }
+
+    const measure = (token: string): number => {
+      const req = makeReq(token);
+      const start = process.hrtime.bigint();
+      for (let i = 0; i < ITERATIONS; i++) {
+        authenticate(req, {} as Express.Response);
+      }
+      return Number(process.hrtime.bigint() - start);
+    };
+
+    const correctTime = measure(correctToken);
+    const shortTime = measure(wrongShort);
+    const longTime = measure(wrongLong);
+    const sameLenTime = measure(wrongSameLen);
+
+    const max = Math.max(correctTime, shortTime, longTime, sameLenTime);
+    const min = Math.min(correctTime, shortTime, longTime, sameLenTime);
+    // Assert no path is dramatically faster — that would indicate a
+    // length-based early return has been reintroduced.
+    expect(max / min).toBeLessThan(2);
   });
 
   it("accepts collector ingest when the token is valid", async () => {

@@ -12,7 +12,7 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
@@ -615,19 +615,20 @@ async function pollAndBroadcast(): Promise<void> {
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
 const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
-const INGEST_TOKEN_BUF = INGEST_TOKEN ? Buffer.from(INGEST_TOKEN, "utf-8") : Buffer.alloc(0);
+// Pre-compute a fixed-length SHA-256 digest so the comparison never leaks the
+// configured token length via timing (CWE-208). Both sides are always 32 bytes
+// regardless of token length, eliminating the length-mismatch branch that
+// previously allowed timing side-channel analysis.
+const INGEST_TOKEN_DIGEST = INGEST_TOKEN
+  ? createHash("sha256").update(INGEST_TOKEN).digest()
+  : Buffer.alloc(32);
 
-function authenticateIngest(req: express.Request, _res: express.Response): boolean {
-  if (!INGEST_TOKEN_BUF.length) return false;
+export function authenticateIngest(req: express.Request, _res: express.Response): boolean {
+  if (!INGEST_TOKEN) return false;
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Bearer ")) return false;
-  const token = auth.slice(7);
-  const provided = Buffer.from(token, "utf-8");
-  if (INGEST_TOKEN_BUF.length !== provided.length) {
-    timingSafeEqual(INGEST_TOKEN_BUF, Buffer.alloc(INGEST_TOKEN_BUF.length));
-    return false;
-  }
-  return timingSafeEqual(INGEST_TOKEN_BUF, provided);
+  const provided = createHash("sha256").update(auth.slice(7)).digest();
+  return timingSafeEqual(INGEST_TOKEN_DIGEST, provided);
 }
 
 /**
