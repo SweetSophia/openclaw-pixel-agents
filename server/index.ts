@@ -42,11 +42,30 @@ io.engine.on("initial_headers", (_headers, req: any) => {
   }
 });
 
-// Basic security headers
+// Security headers (OWASP A05:2021, CWE-693)
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // 'unsafe-inline' needed for React-emitted inline styles; nonce migration
+  // tracked in #54. Google Fonts CSS is loaded via <link> in index.html.
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self' ws: wss:",
+  "frame-ancestors 'none'",
+].join("; ");
+
+const isProd = process.env.NODE_ENV === "production";
+
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: wss:");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (isProd) {
+    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+  }
+  res.setHeader("Content-Security-Policy", CSP);
   next();
 });
 
