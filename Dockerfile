@@ -1,27 +1,31 @@
-FROM node:20-slim
+# syntax=docker/dockerfile:1.7
 
+# ---- Builder stage -----------------------------------------------------------
+# Full dev deps + source, produces the compiled output in /app/dist.
+FROM node:20-alpine AS builder
 WORKDIR /app
-
 COPY package.json package-lock.json ./
-RUN npm install && npm cache clean --force
-
+RUN npm ci
 COPY . .
-
 RUN npm run build
 
-RUN rm -rf node_modules && npm install --omit=dev && npm cache clean --force
+# ---- Runtime stage -----------------------------------------------------------
+# Production deps only + compiled dist. No source, no dev deps, no .git.
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
 
-# Run as non-root user
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
-ENV PORT=3400
-ENV DATA_SOURCE=ingest
-ENV DATA_DIR=/app/data
-EXPOSE 3400
+COPY --from=builder /app/dist ./dist
 
-# Create data dir owned by appuser
-RUN mkdir -p /app/data && chown -R appuser:appuser /app/data /app
+# Non-root user
+RUN addgroup -S appuser && adduser -S -G appuser -d /app -s /sbin/nologin appuser \
+    && mkdir -p /app/data && chown -R appuser:appuser /app
 
 USER appuser
+ENV PORT=3001 DATA_SOURCE=ingest DATA_DIR=/app/data
+EXPOSE 3001
 
-CMD ["node", "dist/server/index.js"]
+CMD ["node", "dist/server/server/index.js"]

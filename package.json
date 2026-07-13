@@ -8,11 +8,12 @@
     "dev:client": "vite",
     "dev:server": "npx tsx watch server/index.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
-    "start": "NODE_ENV=production node dist/server/index.js",
+    "start": "NODE_ENV=production node dist/server/server/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "audit:runtime": "npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {
     "express": "^4.21.0",
