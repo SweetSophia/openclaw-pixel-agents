@@ -16,7 +16,7 @@ npm run dev        # Start dev (Vite on :3000 + backend on :3001, via concurrent
 npm run dev:client # Vite only (port 3000, proxies /api → :3001)
 npm run dev:server # Backend only (tsx watch on :3001)
 npm run build      # Vite build + tsc -p tsconfig.server.json → dist/
-npm run start      # Run production build (node dist/server/index.js)
+npm run start      # Run production build (node dist/server/server/index.js)
 npm run typecheck  # tsc --noEmit
 ```
 

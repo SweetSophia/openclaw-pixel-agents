@@ -1,0 +1,46 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (fetched fresh inside the builder)
+node_modules
+
+# Build output (produced inside the builder)
+dist
+
+# Environment files
+.env*
+
+# Logs
+*.log
+
+# Documentation — not needed at runtime
+AGENTS.md
+AUDIT.md
+CONTRIBUTING.md
+README.md
+docs/
+
+# Test artifacts
+test-results/
+public/test-*.html
+
+# Coverage reports (not in builder context, would just bloat layers)
+coverage/
+
+# Runtime data (mounted as a volume in production)
+data/
+
+# Agent / IDE workspace state
+.vscode/
+.idea/
+.codegraph/
+.worktrees/
+.understand-anything/
+.ua/
+.cortexkit/
+.tmp-pr*/
+
+# Docker metadata
+Dockerfile
+.dockerignore
