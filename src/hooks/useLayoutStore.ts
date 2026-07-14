@@ -46,6 +46,30 @@ export function useLayoutStore() {
   const [catalog, setCatalog] = useState<string[]>([]);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
 
+  // --- Auto-save state ---
+  // isDirty: true when furniture has been changed but not yet persisted.
+  const [isDirty, setIsDirty] = useState(false);
+  // skipAutoSaveRef: set to true before programmatic layout changes (load,
+  // create, save-response) so the auto-save effect doesn't fire on them.
+  // The auto-save effect resets it to false after skipping.
+  const skipAutoSaveRef = useRef(true); // Start true to skip initial load
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // isDirtyRef: mirror of isDirty for synchronous reads (e.g. beforeunload).
+  // React state closures capture stale values; refs read the latest.
+  const isDirtyRef = useRef(false);
+  // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
+  const retryAttemptRef = useRef(0);
+
+  // Wrapper for programmatic layout changes. Always sets skipAutoSaveRef
+  // before setActiveLayout so the auto-save effect skips these changes.
+  // Also clears isDirty. This makes the skip-auto-save invariant
+  // architecturally enforced — every programmatic set goes through here.
+  const setActiveLayoutProgrammatic = useCallback((layout: LayoutDoc | null) => {
+    skipAutoSaveRef.current = true;
+    setIsDirty(false);
+    setActiveLayout(layout);
+  }, []);
+
   const fetchLayouts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/layouts`);
@@ -57,16 +81,24 @@ export function useLayoutStore() {
   }, []);
 
   const loadLayoutById = useCallback(async (id: string) => {
+    // If there are unsaved changes, confirm discard before loading.
+    // This prevents silently losing user edits when switching layouts.
+    if (isDirtyRef.current) {
+      const ok = window.confirm(
+        'You have unsaved furniture changes that will be discarded. Continue?',
+      );
+      if (!ok) return null;
+    }
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`);
       const data = await res.json();
-      setActiveLayout(data);
+      setActiveLayoutProgrammatic(data);
       return data;
     } catch (err) {
       console.error('Failed to load layout:', err);
       return null;
     }
-  }, [setActiveLayout]);
+  }, [setActiveLayoutProgrammatic]);
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     savePromiseRef.current = savePromiseRef.current.then(async () => {
@@ -88,17 +120,31 @@ export function useLayoutStore() {
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
           console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
+          // Retry on 5xx (server error) but not 4xx (client error won't succeed)
+          if (response.status >= 500) {
+            const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+            retryAttemptRef.current++;
+            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+            autoSaveTimerRef.current = setTimeout(() => { saveActiveLayout(); }, delay);
+          }
           return;
         }
+        // Success — reset retry counter
+        retryAttemptRef.current = 0;
         const data = await response.json().catch(() => null);
-        setActiveLayout(data?.layout ?? merged);
+        setActiveLayoutProgrammatic(data?.layout ?? merged);
         fetchLayouts();
       } catch (err: any) {
         console.error('Failed to save layout:', err);
+        // Network error — retry with backoff
+        const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+        retryAttemptRef.current++;
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = setTimeout(() => { saveActiveLayout(); }, delay);
       }
     });
     return savePromiseRef.current;
-  }, [fetchLayouts, setActiveLayout]);
+  }, [fetchLayouts, setActiveLayoutProgrammatic]);
 
   const createLayout = useCallback(async (name: string) => {
     try {
@@ -109,7 +155,7 @@ export function useLayoutStore() {
       });
       const data = await res.json();
       if (data.layout) {
-        setActiveLayout(data.layout);
+        setActiveLayoutProgrammatic(data.layout);
         fetchLayouts();
       }
       return data.layout;
@@ -117,7 +163,7 @@ export function useLayoutStore() {
       console.error('Failed to create layout:', err);
       return null;
     }
-  }, [fetchLayouts]);
+  }, [fetchLayouts, setActiveLayoutProgrammatic]);
 
   const deleteLayout = useCallback(async (id: string) => {
     try {
@@ -127,12 +173,14 @@ export function useLayoutStore() {
         console.error('Failed to delete layout:', err.error);
         return;
       }
-      if (activeLayout?.id === id) setActiveLayout(null);
+      if (activeLayout?.id === id) {
+        setActiveLayoutProgrammatic(null);
+      }
       fetchLayouts();
     } catch (err) {
       console.error('Failed to delete layout:', err);
     }
-  }, [activeLayout, fetchLayouts]);
+  }, [activeLayout, fetchLayouts, setActiveLayoutProgrammatic]);
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -160,9 +208,79 @@ export function useLayoutStore() {
     });
   }, []);
 
-  // Auto-save removed — furniture is persisted only via the explicit
-  // Save button (saveActiveLayout) to avoid race conditions on initial
-  // load and StrictMode double-mounts that caused furniture to reset.
+  // --- Debounced auto-save ---
+  // Watches furniture changes and saves after 2s of inactivity.
+  // Programmatic changes (load, create, save-response, delete) are skipped
+  // via skipAutoSaveRef, which is set to true by setActiveLayoutProgrammatic
+  // before every programmatic dispatch.
+  useEffect(() => {
+    if (!activeLayout) return;
+
+    // Skip programmatic changes (initial load, createLayout, save response)
+    if (skipAutoSaveRef.current) {
+      skipAutoSaveRef.current = false;
+      return;
+    }
+
+    // Mark as dirty — there are unsaved furniture changes
+    setIsDirty(true);
+
+    // Clear any pending auto-save (debounce: rapid changes coalesce)
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    // Schedule debounced auto-save (2 seconds of inactivity)
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      saveActiveLayout();
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [activeLayout?.furniture, saveActiveLayout]);
+
+  // --- Sync isDirty → isDirtyRef for synchronous reads ---
+  // beforeunload handlers and loadLayoutById need to check isDirty
+  // synchronously, but React state closures capture stale values.
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  // --- beforeunload: emergency save + browser confirmation ---
+  // Registered once with empty deps; reads isDirtyRef for current state.
+  // If there are unsaved changes, attempt a keepalive PUT and show the
+  // browser's "Leave site?" dialog.
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isDirtyRef.current) return;
+
+      const currentLayout = activeLayoutRef.current;
+      if (currentLayout) {
+        const merged = {
+          ...currentLayout,
+          baseUpdatedAt: currentLayout.updatedAt,
+          updatedAt: Date.now(),
+        };
+        fetch(`${API_BASE}/layouts/${merged.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged),
+          keepalive: true,
+        }).catch(() => {});
+      }
+
+      e.preventDefault();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -174,6 +292,7 @@ export function useLayoutStore() {
   return {
     layouts,
     activeLayout,
+    isDirty,
     catalog,
     loadLayoutById,
     saveActiveLayout,
