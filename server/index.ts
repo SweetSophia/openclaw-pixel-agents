@@ -22,7 +22,7 @@ import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import { isValidLayoutId } from "./layouts";
 import { logger } from "./logger";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
-import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
+import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
 const server = createServer(app);
 const corsConfig = createCorsConfig();
@@ -186,21 +186,9 @@ for (const [id, prefs] of savedPrefs) {
 
 const rooms: Room[] = [...DEFAULT_ROOMS];
 
-/** Determine which room an agent should be in based on their first tag */
-function resolveRoom(agentTags: AgentTag[]): string {
-  if (agentTags.length === 0) return "office"; // default
-
-  const firstTag = agentTags[0];
-  // Check primary tag match
-  const primaryMatch = rooms.find(r => r.primaryTag === firstTag);
-  if (primaryMatch) return primaryMatch.id;
-
-  // Check secondary tag match
-  const secondaryMatch = rooms.find(r => r.secondaryTags?.includes(firstTag));
-  if (secondaryMatch) return secondaryMatch.id;
-
-  return "office"; // fallback
-}
+/** Determine which room an agent should be in based on their first tag.
+ *  Shared helper — see shared/types.ts for the implementation. */
+const resolveRoom = resolveRoomByTags;
 
 // ---- State ----
 

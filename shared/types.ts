@@ -171,6 +171,23 @@ export const DEFAULT_ROOMS: Room[] = [
   { id: 'lounge', name: 'Lounge', primaryTag: 'creative', secondaryTags: ['orchestration', 'media'], icon: '🎨', order: 3 },
 ];
 
+/**
+ * Resolve which room an agent belongs to based on its tags.
+ * Uses the first tag: checks primary tag match, then secondary tag match,
+ * then falls back to 'office'. Shared between server and client so both
+ * sides use identical routing logic — if a new room is added to
+ * DEFAULT_ROOMS, both sides pick it up automatically.
+ */
+export function resolveRoomByTags(agentTags: AgentTag[]): string {
+  if (agentTags.length === 0) return 'office';
+  const firstTag = agentTags[0];
+  const primaryMatch = DEFAULT_ROOMS.find(r => r.primaryTag === firstTag);
+  if (primaryMatch) return primaryMatch.id;
+  const secondaryMatch = DEFAULT_ROOMS.find(r => r.secondaryTags?.includes(firstTag));
+  if (secondaryMatch) return secondaryMatch.id;
+  return 'office';
+}
+
 // ── Message Ticker ─────────────────────────────────────
 
 export interface TickerMessage {

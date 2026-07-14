@@ -154,3 +154,131 @@ describe('useAgentStore REST polling fallback', () => {
     expect(socketMock.socket.disconnect).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('useAgentStore room filtering', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    socketMock.handlers.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function renderWithAgents(agents: unknown[]) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ agents }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    );
+    const snapshots: AgentStoreSnapshot[] = [];
+    const view = render(<StoreProbe onSnapshot={(snapshot) => snapshots.push(snapshot)} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    return { snapshots, ...view };
+  }
+
+  const baseAgent = {
+    id: 'agent-1',
+    name: 'Test Agent',
+    activity: 'typing',
+    model: 'test',
+    sessionKey: 's1',
+    active: true,
+    lastActivity: Date.now(),
+    pixelEnabled: true,
+    tags: [] as string[],
+  };
+
+  it('includes agents whose roomId matches the active room', async () => {
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', roomId: 'office' },
+      { ...baseAgent, id: 'a2', roomId: 'lab' },
+    ]);
+
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+  });
+
+  it('derives roomId from tags when roomId is missing (Bug #40)', async () => {
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: ['research'] },
+      { ...baseAgent, id: 'a2', tags: ['coding'] },
+    ]);
+
+    // Default room is 'office' (coding tag → office)
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a2']);
+
+    // Switch to 'lab' (research tag → lab)
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+  });
+
+  it('keeps agents visible across room switches without disappearing (Bug #40)', async () => {
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: ['coding'], roomId: 'office' },
+      { ...baseAgent, id: 'a2', tags: ['research'], roomId: 'lab' },
+    ]);
+
+    // Start in office
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+
+    // Switch to lab
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a2']);
+
+    // Switch back to office
+    act(() => { latest(snapshots).setActiveRoomId('office'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+  });
+
+  it('falls back to office for agents with no tags and no roomId', async () => {
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: [] },
+    ]);
+
+    // Agent with no tags → defaults to office
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+
+    // Switching to lab should exclude the agent
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual([]);
+  });
+
+  it('routes by secondary tag (frontend → office)', async () => {
+    // 'frontend' is a secondary tag for the 'office' room
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: ['frontend'] },
+    ]);
+
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+
+    // 'analysis' is a secondary tag for 'lab'
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual([]);
+  });
+
+  it('falls back to office for tags not in DEFAULT_ROOMS', async () => {
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: ['unknown-tag'] as string[] },
+    ]);
+
+    // Unknown tag → office
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+
+    // Switching to lab excludes the agent
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual([]);
+  });
+});
