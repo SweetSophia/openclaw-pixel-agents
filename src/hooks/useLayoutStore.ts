@@ -46,6 +46,15 @@ export function useLayoutStore() {
   const [catalog, setCatalog] = useState<string[]>([]);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
 
+  // --- Auto-save state ---
+  // isDirty: true when furniture has been changed but not yet persisted.
+  const [isDirty, setIsDirty] = useState(false);
+  // skipAutoSaveRef: set to true before programmatic layout changes (load,
+  // create, save-response) so the auto-save effect doesn't fire on them.
+  // The auto-save effect resets it to false after skipping.
+  const skipAutoSaveRef = useRef(true); // Start true to skip initial load
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const fetchLayouts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/layouts`);
@@ -60,6 +69,8 @@ export function useLayoutStore() {
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`);
       const data = await res.json();
+      skipAutoSaveRef.current = true;
+      setIsDirty(false);
       setActiveLayout(data);
       return data;
     } catch (err) {
@@ -91,6 +102,8 @@ export function useLayoutStore() {
           return;
         }
         const data = await response.json().catch(() => null);
+        skipAutoSaveRef.current = true;
+        setIsDirty(false);
         setActiveLayout(data?.layout ?? merged);
         fetchLayouts();
       } catch (err: any) {
@@ -109,6 +122,8 @@ export function useLayoutStore() {
       });
       const data = await res.json();
       if (data.layout) {
+        skipAutoSaveRef.current = true;
+        setIsDirty(false);
         setActiveLayout(data.layout);
         fetchLayouts();
       }
@@ -127,7 +142,11 @@ export function useLayoutStore() {
         console.error('Failed to delete layout:', err.error);
         return;
       }
-      if (activeLayout?.id === id) setActiveLayout(null);
+      if (activeLayout?.id === id) {
+        skipAutoSaveRef.current = true;
+        setIsDirty(false);
+        setActiveLayout(null);
+      }
       fetchLayouts();
     } catch (err) {
       console.error('Failed to delete layout:', err);
@@ -160,9 +179,78 @@ export function useLayoutStore() {
     });
   }, []);
 
-  // Auto-save removed — furniture is persisted only via the explicit
-  // Save button (saveActiveLayout) to avoid race conditions on initial
-  // load and StrictMode double-mounts that caused furniture to reset.
+  // --- Debounced auto-save ---
+  // Watches furniture changes and saves after 2s of inactivity.
+  // Programmatic changes (load, create, save-response) are skipped via
+  // skipAutoSaveRef, which is set to true before those operations and
+  // reset to false by this effect after skipping.
+  useEffect(() => {
+    if (!activeLayout) return;
+
+    // Skip programmatic changes (initial load, createLayout, save response)
+    if (skipAutoSaveRef.current) {
+      skipAutoSaveRef.current = false;
+      return;
+    }
+
+    // Mark as dirty — there are unsaved furniture changes
+    setIsDirty(true);
+
+    // Clear any pending auto-save (debounce: rapid changes coalesce)
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    // Schedule debounced auto-save (2 seconds of inactivity)
+    autoSaveTimerRef.current = setTimeout(() => {
+      saveActiveLayout();
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [activeLayout?.furniture, saveActiveLayout]);
+
+  // --- beforeunload: emergency save + browser confirmation ---
+  // If there are unsaved changes when the user leaves, attempt a
+  // keepalive PUT and trigger the browser's "Leave site?" dialog.
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+
+      const currentLayout = activeLayoutRef.current;
+      if (currentLayout) {
+        const merged = {
+          ...currentLayout,
+          baseUpdatedAt: currentLayout.updatedAt,
+          updatedAt: Date.now(),
+        };
+        fetch(`${API_BASE}/layouts/${merged.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged),
+          keepalive: true,
+        }).catch(() => {});
+      }
+
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
+  // Cleanup auto-save timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -174,6 +262,7 @@ export function useLayoutStore() {
   return {
     layouts,
     activeLayout,
+    isDirty,
     catalog,
     loadLayoutById,
     saveActiveLayout,

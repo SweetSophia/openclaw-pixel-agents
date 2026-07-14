@@ -16,7 +16,7 @@ import './App.css';
 export const App: React.FC = () => {
   const { agents, connected, toggleAgent, toggleAll, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
   const {
-    layouts, activeLayout, catalog,
+    layouts, activeLayout, isDirty, catalog,
     loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
   } = useLayoutStore();
 
@@ -127,6 +127,7 @@ export const App: React.FC = () => {
             <LayoutEditor
               catalog={catalog}
               activeLayout={activeLayout}
+              isDirty={isDirty}
               layouts={layouts}
               editorMode={editorMode}
               selectedFurnitureType={selectedFurnitureType}

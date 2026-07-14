@@ -6,6 +6,7 @@ import './LayoutEditor.css';
 interface Props {
   catalog: string[];
   activeLayout: LayoutDoc | null;
+  isDirty: boolean;
   layouts: LayoutDoc[];
   editorMode: boolean;
   selectedFurnitureType: string | null;
@@ -105,6 +106,7 @@ const CATEGORIES = [
 export const LayoutEditor: React.FC<Props> = ({
   catalog,
   activeLayout,
+  isDirty,
   layouts,
   editorMode,
   selectedFurnitureType,
@@ -156,8 +158,8 @@ export const LayoutEditor: React.FC<Props> = ({
           📐 Layouts
         </button>
         <div className="toolbar-separator" />
-        <button className="toolbar-btn save-btn" onClick={onSave} title="Save layout">
-          💾 Save
+        <button className={`toolbar-btn save-btn ${isDirty ? 'dirty' : ''}`} onClick={onSave} title={isDirty ? 'Save layout (unsaved changes)' : 'Save layout'}>
+          {isDirty ? '💾 Save ●' : '💾 Save'}
         </button>
         <button className="toolbar-btn" onClick={onToggleEditor} title="Exit editor">
           ✖ Close

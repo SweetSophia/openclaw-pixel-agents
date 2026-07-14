@@ -56,6 +56,13 @@
   background: rgba(0, 255, 170, 0.3);
   box-shadow: 0 0 8px rgba(0, 255, 170, 0.4);
 }
+.toolbar-btn.save-btn.dirty {
+  animation: pulse-dirty 2s ease-in-out infinite;
+}
+@keyframes pulse-dirty {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 200, 0, 0.4); }
+  50% { box-shadow: 0 0 8px 2px rgba(255, 200, 0, 0.2); }
+}
 
 .toolbar-separator {
   width: 1px;

@@ -122,7 +122,7 @@ describe('useLayoutStore', () => {
   let layouts: Record<string, LayoutDoc>;
   let captures: { lastPutBody?: LayoutDoc & { baseUpdatedAt?: number } };
   let snapshots: LayoutStoreSnapshot[];
-  let unmount: () => void;
+  let unmount: (() => void) | undefined;
 
   beforeEach(() => {
     layouts = { default: { ...MOCK_LAYOUT }, other: { ...OTHER_LAYOUT } };
@@ -131,6 +131,8 @@ describe('useLayoutStore', () => {
   });
 
   afterEach(() => {
+    if (unmount) unmount();
+    unmount = undefined;
     vi.unstubAllGlobals();
     snapshots = [];
   });
@@ -230,5 +232,92 @@ describe('useLayoutStore', () => {
     });
 
     expect(latest(snapshots).activeLayout?.furniture).toEqual([]);
+  });
+
+  // --- Auto-save tests ---
+
+  it('does not auto-save during initial load', async () => {
+    await renderStoreProbe();
+
+    const putCalls = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => {
+        const init = call[1] as RequestInit | undefined;
+        return init?.method === 'PUT';
+      }
+    );
+    expect(putCalls.length).toBe(0);
+  });
+
+  it('isDirty is false after initial load, true after updateFurniture', async () => {
+    await renderStoreProbe();
+    expect(latest(snapshots).isDirty).toBe(false);
+
+    await act(async () => {
+      latest(snapshots).updateFurniture([{ id: 'f1', type: 'desk', x: 5, y: 5, rotation: 0 }]);
+    });
+    expect(latest(snapshots).isDirty).toBe(true);
+  });
+
+  it('auto-saves after 2s debounce and clears isDirty', async () => {
+    await renderStoreProbe();
+
+    const putCountBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => {
+        const init = call[1] as RequestInit | undefined;
+        return init?.method === 'PUT';
+      }
+    ).length;
+
+    await act(async () => {
+      latest(snapshots).updateFurniture([{ id: 'f1', type: 'desk', x: 5, y: 5, rotation: 0 }]);
+    });
+    expect(latest(snapshots).isDirty).toBe(true);
+
+    // Wait for the 2-second debounce
+    await act(async () => { await new Promise(r => setTimeout(r, 2100)); });
+
+    // Auto-save should have fired
+    const putCountAfter = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => {
+        const init = call[1] as RequestInit | undefined;
+        return init?.method === 'PUT';
+      }
+    ).length;
+    expect(putCountAfter).toBeGreaterThan(putCountBefore);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('debounces rapid furniture changes into a single save', async () => {
+    await renderStoreProbe();
+
+    const putCountBefore = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => {
+        const init = call[1] as RequestInit | undefined;
+        return init?.method === 'PUT';
+      }
+    ).length;
+
+    // Make 3 rapid changes
+    await act(async () => {
+      latest(snapshots).updateFurniture([{ id: 'f1', type: 'desk', x: 1, y: 1, rotation: 0 }]);
+    });
+    await act(async () => {
+      latest(snapshots).updateFurniture([{ id: 'f1', type: 'desk', x: 2, y: 2, rotation: 0 }]);
+    });
+    await act(async () => {
+      latest(snapshots).updateFurniture([{ id: 'f1', type: 'desk', x: 3, y: 3, rotation: 0 }]);
+    });
+
+    // Wait for debounce
+    await act(async () => { await new Promise(r => setTimeout(r, 2100)); });
+
+    // Only 1 PUT should have been made (debounced)
+    const putCountAfter = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => {
+        const init = call[1] as RequestInit | undefined;
+        return init?.method === 'PUT';
+      }
+    ).length;
+    expect(putCountAfter - putCountBefore).toBe(1);
   });
 });
