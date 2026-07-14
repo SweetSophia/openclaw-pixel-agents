@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-The dev server runs on `http://localhost:5173` and proxies API requests to the backend on port 3001.
+The dev server runs on `http://localhost:3000` and proxies API requests to the backend on port 3001.
 
 ## Project Structure
 

@@ -37,7 +37,7 @@ npm install
 npm run dev
 ```
 
-The app runs at `http://localhost:5173` with the backend API on port 3001.
+The app runs at `http://localhost:3000` with the backend API on port 3001.
 
 ### Requirements
 
