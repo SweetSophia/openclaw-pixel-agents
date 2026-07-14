@@ -25,6 +25,9 @@ docs/
 test-results/
 public/test-*.html
 
+# Coverage reports (not in builder context, would just bloat layers)
+coverage/
+
 # Runtime data (mounted as a volume in production)
 data/
 
@@ -35,6 +38,7 @@ data/
 .worktrees/
 .understand-anything/
 .ua/
+.cortexkit/
 .tmp-pr*/
 
 # Docker metadata

@@ -12,8 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "audit:runtime": "npm audit --omit=dev --audit-level=moderate"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "express": "^4.21.0",
