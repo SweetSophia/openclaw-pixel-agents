@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { io as socketIO } from 'socket.io-client';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
-import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
+import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, type AgentTag } from '../../shared/types';
 
 const API_BASE = '/api';
 
@@ -107,11 +107,29 @@ export function useAgentStore() {
     }
   }, []);
 
+  /**
+   * Resolve which room an agent belongs to.
+   * If the server has set `roomId`, use it directly. Otherwise derive the
+   * room from the agent's first tag, mirroring the server's `resolveRoom`
+   * logic. This prevents agents from disappearing when a Socket.IO update
+   * arrives with a missing `roomId` during a room switch.
+   */
+  const resolveAgentRoom = useCallback((agent: AgentState): string => {
+    if (agent.roomId) return agent.roomId;
+    const tags = agent.tags || [];
+    if (tags.length === 0) return 'office';
+    const firstTag = tags[0] as AgentTag;
+    const primaryMatch = DEFAULT_ROOMS.find(r => r.primaryTag === firstTag);
+    if (primaryMatch) return primaryMatch.id;
+    const secondaryMatch = DEFAULT_ROOMS.find(r => r.secondaryTags?.includes(firstTag));
+    if (secondaryMatch) return secondaryMatch.id;
+    return 'office';
+  }, []);
+
   /** Filter agents visible in the current room */
   const roomAgents = useMemo(() => agents.filter(a =>
-    a.roomId === activeRoomId
-    || (a.roomId == null && activeRoomId === 'office')
-  ), [agents, activeRoomId]);
+    resolveAgentRoom(a) === activeRoomId
+  ), [agents, activeRoomId, resolveAgentRoom]);
 
   /** Update character recipe (paperdoll body/hair/outfit) for an agent */
   const updateRecipe = useCallback(async (agentId: string, recipe: CharacterRecipe) => {

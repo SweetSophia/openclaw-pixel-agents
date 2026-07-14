@@ -138,6 +138,10 @@ export const PixelOffice: React.FC<Props> = ({
           lastMessage: agent.lastMessage,
         });
       } else {
+        // Ensure the agent has a seat — setLayout may have cleared all seats
+        // when the layout changed. assignSeat returns the existing seat if
+        // one is already assigned, so this is a no-op in the normal case.
+        engine.assignSeat(agent.id);
         engine.updateCharacter(agent.id, {
           state: agent.activity, model: agent.model, name: agent.name,
           lastMessage: agent.lastMessage,
