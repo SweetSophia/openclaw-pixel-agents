@@ -10,3 +10,6 @@ coverage/
 data/
 collector/.env.collector
 .worktrees/
+.codegraph/
+.cortexkit/
+.slim/
