@@ -253,4 +253,32 @@ describe('useAgentStore room filtering', () => {
 
     expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual([]);
   });
+
+  it('routes by secondary tag (frontend → office)', async () => {
+    // 'frontend' is a secondary tag for the 'office' room
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: ['frontend'] },
+    ]);
+
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+
+    // 'analysis' is a secondary tag for 'lab'
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual([]);
+  });
+
+  it('falls back to office for tags not in DEFAULT_ROOMS', async () => {
+    const { snapshots } = await renderWithAgents([
+      { ...baseAgent, id: 'a1', tags: ['unknown-tag'] as string[] },
+    ]);
+
+    // Unknown tag → office
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual(['a1']);
+
+    // Switching to lab excludes the agent
+    act(() => { latest(snapshots).setActiveRoomId('lab'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(latest(snapshots).roomAgents.map(a => a.id)).toEqual([]);
+  });
 });
