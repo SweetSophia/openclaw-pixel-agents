@@ -21,8 +21,11 @@ The dev server runs on `http://localhost:3000` and proxies API requests to the b
 ├── src/
 │   ├── components/      # React components (PixelOffice, AgentSidebar, LayoutEditor)
 │   ├── game/            # Canvas 2D game engine
-│   │   ├── GameEngine.ts    # Main rendering loop, editor mode, mouse handling
-│   │   └── SpriteLoader.ts  # Asset loading, sprite sheet slicing, frame extraction
+│   │   ├── GameEngine.ts       # Rendering loop, pathfinding, host façade
+│   │   ├── EditorController.ts # Mouse/touch editor input and listener lifecycle
+│   │   ├── Schedule.ts         # Day/night interpolation
+│   │   ├── SubAgentFSM.ts      # Sub-agent lifetime/fade planner
+│   │   └── SpriteLoader.ts     # Asset loading, sprite slicing, frame extraction
 │   ├── hooks/           # React hooks (useAgentStore, useLayoutStore)
 │   └── App.tsx          # Root component
 ├── public/assets/       # Pixel art sprites and tilesets

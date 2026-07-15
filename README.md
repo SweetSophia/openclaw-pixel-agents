@@ -74,7 +74,7 @@ Click **✏️ Edit** in the header to enter editor mode:
 | Delete furniture | Use 🗑️ button in the info bar, or press Delete |
 | Save layout | Click 💾 Save |
 
-Layouts auto-save 1 second after any change.
+Layouts auto-save 2 seconds after the last furniture change; the explicit Save button remains available.
 
 ### Layout Manager
 
@@ -136,7 +136,8 @@ See [collector/README.md](collector/README.md) for full setup instructions.
 
 | Component | Purpose |
 |-----------|---------|
-| `GameEngine` | Canvas 2D rendering loop, sprite animation, editor mode, mouse handling |
+| `GameEngine` | Canvas 2D rendering loop, sprite animation, pathfinding, and host façade |
+| `EditorController` | Mouse/touch editor state and canvas listener lifecycle |
 | `SpriteLoader` | Loads and slices sprite sheets into individual frame canvases |
 | `LayoutEditor` | Toolbar, furniture palette, layout manager UI |
 | `PixelOffice` | Canvas wrapper, wires agent/layout data to GameEngine |
