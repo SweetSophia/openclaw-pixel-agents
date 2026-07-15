@@ -22,6 +22,7 @@ import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
+import { screenToGrid as mapScreenToGrid, touchDistance } from './inputGeometry';
 
 export interface GameConfig {
   tileSize: number;
@@ -1302,46 +1303,15 @@ export class GameEngine {
   private screenToGrid(clientX: number, clientY: number): { gridX: number; gridY: number } | null;
   private screenToGrid(eOrX: MouseEvent | number, maybeY?: number): { gridX: number; gridY: number } | null {
     const rect = this.canvas.getBoundingClientRect();
-    const canvas = this.canvas;
-
-    // When object-fit: contain is used, the CSS box (rect) may be larger than
-    // the actual rendered canvas area due to pillarboxing/letterboxing.
-    // We need to compute the actual rendered dimensions to get correct scales.
-    const cssRatio = rect.width / rect.height;
-    const canvasRatio = canvas.width / canvas.height;
-
-    let renderedWidth: number, renderedHeight: number, offsetX: number, offsetY: number;
-
-    if (cssRatio > canvasRatio) {
-      // Pillarboxing: bars on left/right
-      renderedWidth = (canvas.width / canvas.height) * rect.height;
-      renderedHeight = rect.height;
-      offsetX = rect.left + (rect.width - renderedWidth) / 2;
-      offsetY = rect.top;
-    } else {
-      // Letterboxing: bars on top/bottom
-      renderedWidth = rect.width;
-      renderedHeight = (canvas.height / canvas.width) * rect.width;
-      offsetX = rect.left;
-      offsetY = rect.top + (rect.height - renderedHeight) / 2;
-    }
-
-    // Use unified scale - both dimensions should have the same ratio with object-fit: contain
-    const scale = canvas.width / renderedWidth;
-
     const clientX = typeof eOrX === 'number' ? eOrX : eOrX.clientX;
     const clientY = typeof eOrX === 'number' ? maybeY! : eOrX.clientY;
 
-    // Check if click falls within the rendered canvas area (not in letterbox/pillarbox)
-    if (clientX < offsetX || clientX > offsetX + renderedWidth ||
-      clientY < offsetY || clientY > offsetY + renderedHeight) {
-      return null;
-    }
-
-    return {
-      gridX: Math.floor((clientX - offsetX) * scale / this.config.tileSize),
-      gridY: Math.floor((clientY - offsetY) * scale / this.config.tileSize),
-    };
+    return mapScreenToGrid(clientX, clientY, {
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      canvasWidth: this.canvas.width,
+      canvasHeight: this.canvas.height,
+      tileSize: this.config.tileSize,
+    });
   }
 
   private findFurnitureAt(gridX: number, gridY: number): PlacedFurniture | null {
@@ -1516,7 +1486,7 @@ export class GameEngine {
       this.touchStartPos = null;
       this.touchCurrentPos = null;
       this.touchMoved = true;
-      this.pinchStartDist = this.touchDistance(e.touches[0], e.touches[1]);
+      this.pinchStartDist = touchDistance(e.touches[0], e.touches[1]);
       this.pinchStartZoom = this.cameraZoom;
       return;
     }
@@ -1557,7 +1527,7 @@ export class GameEngine {
 
     // Pinch-to-zoom
     if (e.touches.length === 2) {
-      const dist = this.touchDistance(e.touches[0], e.touches[1]);
+      const dist = touchDistance(e.touches[0], e.touches[1]);
 
       // Guard against zero/invalid starting distance (e.g., both fingers started at the
       // same pixel): reinitialize from the first valid distance seen during move.
@@ -1716,13 +1686,6 @@ export class GameEngine {
     this.mouseGridX = -1;
     this.mouseGridY = -1;
   };
-
-  /** Euclidean distance between two touch points */
-  private touchDistance(a: Touch, b: Touch): number {
-    const dx = a.clientX - b.clientX;
-    const dy = a.clientY - b.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
 
   // ── Helpers ──────────────────────────────────────────
 
