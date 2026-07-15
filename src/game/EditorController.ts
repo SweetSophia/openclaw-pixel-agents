@@ -32,7 +32,7 @@ export interface EditorControllerConfig {
   gridHeight: number;
 }
 
-interface DragState {
+interface TouchDragState {
   id: string;
   offsetX: number;
   offsetY: number;
@@ -46,7 +46,7 @@ export class EditorController {
   private deleteMode = false;
   private _selectedFurnitureType: string | null = null;
   private _selectedFurnitureId: string | null = null;
-  private dragging: DragState | null = null;
+  private dragging: { id: string } | null = null;
   private callbacks: EditorCallbacks | null = null;
   private _mouseGridX = -1;
   private _mouseGridY = -1;
@@ -56,7 +56,7 @@ export class EditorController {
   private pinchStartDist = 0;
   private pinchStartZoom = 1;
   private cameraZoom = 1;
-  private touchDragging: DragState | null = null;
+  private touchDragging: TouchDragState | null = null;
   private touchMoved = false;
   private attached = false;
 
@@ -178,7 +178,7 @@ export class EditorController {
       }
       this._selectedFurnitureId = hit.id;
       this.callbacks?.onSelectFurniture(hit.id);
-      this.dragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
+      this.dragging = { id: hit.id };
       this.sounds.pickup();
     } else {
       this._selectedFurnitureId = null;
@@ -299,16 +299,19 @@ export class EditorController {
 
     if (this._editorMode) {
       if (this.touchDragging) {
-        const result = this.host.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
-        if (result) {
-          this.callbacks?.onMoveFurniture(
-            this.touchDragging.id,
-            this.clampX(result.gridX - this.touchDragging.offsetX),
-            this.clampY(result.gridY - this.touchDragging.offsetY),
-          );
-          this.sounds.place();
-        }
+        const dragging = this.touchDragging;
         this.touchDragging = null;
+        if (this.touchCurrentPos) {
+          const result = this.host.screenToGrid(this.touchCurrentPos.x, this.touchCurrentPos.y);
+          if (result) {
+            this.callbacks?.onMoveFurniture(
+              dragging.id,
+              this.clampX(result.gridX - dragging.offsetX),
+              this.clampY(result.gridY - dragging.offsetY),
+            );
+            this.sounds.place();
+          }
+        }
       } else if (!this.touchMoved && this.touchStartPos) {
         const result = this.host.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
         if (!result) {
