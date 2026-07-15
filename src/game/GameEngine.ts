@@ -21,6 +21,7 @@ import {
 import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
+import { tickSubAgent } from './SubAgentFSM';
 
 export interface GameConfig {
   tileSize: number;
@@ -75,9 +76,6 @@ const AGENT_PALETTES: Record<'cybera' | 'main' | 'shodan' | 'cyberlogis' | 'desc
   cybera: 0, main: 1, shodan: 1, cyberlogis: 2, descartes: 3,
   chi: 4, cylena: 5, sysauxilia: 3, miku: 0,
 };
-
-const SUBAGENT_LIFETIME = 15000; // ms before sub-agents fade out
-const SUBAGENT_FADE_DURATION = 2000; // fade animation length
 
 // ── State Transition Visual Effects ────────────────────
 
@@ -403,19 +401,17 @@ export class GameEngine {
 
   private update(dt: number) {
     for (const char of this.characters.values()) {
-      // Sub-agent lifecycle
+      // Sub-agent lifecycle (planner returns actions for caller to execute)
       if (char.isSubAgent) {
-        const age = this.nowMs - char.spawnTime;
-        if (age > SUBAGENT_LIFETIME && !char.dying) {
-          char.dying = true;
-          sfx.despawn();
+        const tick = tickSubAgent(char, this.nowMs, dt);
+        char.fadeAlpha = tick.fadeAlpha;
+        char.dying = tick.dying;
+        for (const action of tick.actions) {
+          if (action.kind === 'despawn-sound') sfx.despawn();
         }
-        if (char.dying) {
-          char.fadeAlpha = Math.max(0, char.fadeAlpha - dt / (SUBAGENT_FADE_DURATION / 1000));
-          if (char.fadeAlpha <= 0) {
-            this.characters.delete(char.id);
-            continue;
-          }
+        if (tick.shouldRemove) {
+          this.characters.delete(char.id);
+          continue;
         }
       } else {
         char.fadeAlpha = 1;
