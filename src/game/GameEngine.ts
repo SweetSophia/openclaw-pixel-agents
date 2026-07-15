@@ -21,6 +21,7 @@ import {
 import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
+import { tickSubAgent } from './SubAgentFSM';
 
 export interface GameConfig {
   tileSize: number;
@@ -75,8 +76,6 @@ const AGENT_PALETTES: Record<'cybera' | 'main' | 'shodan' | 'cyberlogis' | 'desc
   cybera: 0, main: 1, shodan: 1, cyberlogis: 2, descartes: 3,
   chi: 4, cylena: 5, sysauxilia: 3, miku: 0,
 };
-
-import { tickSubAgent } from './SubAgentFSM';
 
 // ── State Transition Visual Effects ────────────────────
 
@@ -408,7 +407,7 @@ export class GameEngine {
         char.fadeAlpha = tick.fadeAlpha;
         char.dying = tick.dying;
         for (const action of tick.actions) {
-          if (action.kind === 'spawn-despawn-sound') sfx.despawn();
+          if (action.kind === 'despawn-sound') sfx.despawn();
         }
         if (tick.shouldRemove) {
           this.characters.delete(char.id);

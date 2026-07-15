@@ -13,7 +13,9 @@ export interface SubAgentInput {
   fadeAlpha: number;
 }
 
-export type SubAgentAction = { kind: 'spawn-despawn-sound' };
+export type SubAgentAction = { kind: 'despawn-sound' };
+
+const EMPTY_ACTIONS: SubAgentAction[] = [];
 
 export interface SubAgentTick {
   fadeAlpha: number;
@@ -32,12 +34,14 @@ export function tickSubAgent(
   const justEnteredDying = dying && !char.dying;
 
   if (!dying) {
-    return { fadeAlpha: 1, dying: false, actions: [], shouldRemove: false };
+    // Preserve existing fadeAlpha — the original `if (char.isSubAgent)` block
+    // in GameEngine had no else that reset it. Only dying agents fade.
+    return { fadeAlpha: char.fadeAlpha, dying: false, actions: EMPTY_ACTIONS, shouldRemove: false };
   }
 
   const fadeAlpha = Math.max(0, char.fadeAlpha - dtSec / (SUBAGENT_FADE_DURATION / 1000));
   const shouldRemove = fadeAlpha <= 0;
-  const actions: SubAgentAction[] = justEnteredDying ? [{ kind: 'spawn-despawn-sound' }] : [];
+  const actions: SubAgentAction[] = justEnteredDying ? [{ kind: 'despawn-sound' }] : EMPTY_ACTIONS;
 
   return { fadeAlpha, dying, actions, shouldRemove };
 }

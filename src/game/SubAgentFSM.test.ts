@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { tickSubAgent, SUBAGENT_LIFETIME, SUBAGENT_FADE_DURATION } from './SubAgentFSM';
-import type { SubAgentTick } from './SubAgentFSM';
 
 describe('tickSubAgent', () => {
   it('returns fadeAlpha=1, dying=false, no actions for young sub-agent', () => {
@@ -18,7 +17,7 @@ describe('tickSubAgent', () => {
       0.016,
     );
     expect(tick.dying).toBe(true);
-    expect(tick.actions).toEqual([{ kind: 'spawn-despawn-sound' }]);
+    expect(tick.actions).toEqual([{ kind: 'despawn-sound' }]);
     // fadeAlpha decreases by dtSec/FADE_DURATION from the moment dying starts
     expect(tick.fadeAlpha).toBeCloseTo(1 - 0.016 / (SUBAGENT_FADE_DURATION / 1000), 5);
     expect(tick.shouldRemove).toBe(false);
@@ -84,6 +83,19 @@ describe('tickSubAgent', () => {
     );
     expect(tick.dying).toBe(false);
     expect(tick.actions).toEqual([]);
+  });
+
+  it('preserves existing fadeAlpha for non-dying sub-agent (no implicit reset)', () => {
+    // The original GameEngine code only set fadeAlpha in the dying branch;
+    // non-dying sub-agents retained their prior value. This regression test
+    // pins that behavior so future changes don't silently override it.
+    const tick = tickSubAgent(
+      { spawnTime: 0, dying: false, fadeAlpha: 0.7 },
+      1_000, // well under LIFETIME
+      0.016,
+    );
+    expect(tick.dying).toBe(false);
+    expect(tick.fadeAlpha).toBe(0.7);
   });
 });
 
