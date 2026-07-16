@@ -22,7 +22,11 @@ import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
-import { screenToGrid as mapScreenToGrid, touchDistance } from './inputGeometry';
+import { EditorController } from './EditorController';
+import type { EditorCallbacks } from './EditorController';
+import { screenToGrid as mapScreenToGrid } from './inputGeometry';
+
+export type { EditorCallbacks } from './EditorController';
 
 export interface GameConfig {
   tileSize: number;
@@ -61,12 +65,6 @@ interface Character extends CharacterData {
   lastFootstepTile: number; // tile index of last footstep sound
   typingSoundTimer: number; // cooldown for typing sounds
   stateJustChanged: boolean; // true for one frame after state change
-}
-
-export interface EditorCallbacks {
-  onPlaceFurniture: (type: string, gridX: number, gridY: number) => void;
-  onSelectFurniture: (id: string | null) => void;
-  onMoveFurniture: (id: string, gridX: number, gridY: number) => void;
 }
 
 export interface GameCallbacks {
@@ -189,16 +187,9 @@ export class GameEngine {
   private _obstacleRebuildScheduled = false;
   private _obstacleRebuildRafId: number | null = null;
 
-  // Editor state
-  private editorMode = false;
-  private deleteMode = false;
-  private selectedFurnitureType: string | null = null;
-  private selectedFurnitureId: string | null = null;
-  private dragging: { id: string; offsetX: number; offsetY: number } | null = null;
-  private editorCallbacks: EditorCallbacks | null = null;
+  // Input/editor controller
+  private editor: EditorController;
   private gameCallbacks: GameCallbacks | null = null;
-  private mouseGridX = -1;
-  private mouseGridY = -1;
 
   // Speech bubbles
   private speechBubbles: Map<string, { text: string; timer: number; alpha: number }> = new Map();
@@ -207,16 +198,6 @@ export class GameEngine {
   // Click-to-move selection
   private selectedAgentId: string | null = null;
   private selectionPulse = 0; // for animated ring
-
-  // Touch state
-  private touchStartPos: { x: number; y: number } | null = null;
-  private touchCurrentPos: { x: number; y: number } | null = null;
-  private lastTapTime = 0;
-  private pinchStartDist = 0;
-  private pinchStartZoom = 1;
-  private cameraZoom = 1; // view-only zoom applied via CSS transform (independent of render zoom)
-  private touchDragging: { id: string; offsetX: number; offsetY: number } | null = null;
-  private touchMoved = false; // true once finger moves > threshold
 
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
@@ -245,19 +226,33 @@ export class GameEngine {
     canvas.style.imageRendering = 'pixelated';
     canvas.tabIndex = 0; // enable keyboard focus for Escape key
 
-    this.canvas.addEventListener('mousemove', this.handleMouseMove);
-    this.canvas.addEventListener('mousedown', this.handleMouseDown);
-    this.canvas.addEventListener('mouseup', this.handleMouseUp);
-    this.canvas.addEventListener('mouseleave', this.handleMouseLeave);
-    this.canvas.addEventListener('contextmenu', this.handleContextMenu);
+    this.editor = new EditorController(
+      canvas,
+      { gridWidth: config.gridWidth, gridHeight: config.gridHeight },
+      {
+        screenToGrid: (clientX, clientY) => this.screenToGrid(clientX, clientY),
+        findFurnitureAt: (gridX, gridY) => this.findFurnitureAt(gridX, gridY),
+        previewFurnitureMove: (id, gridX, gridY) => {
+          const item = this.placedFurniture.find(furniture => furniture.id === id);
+          if (item) { item.x = gridX; item.y = gridY; }
+        },
+        rotateFurnitureAt: (gridX, gridY) => {
+          const item = this.findFurnitureAt(gridX, gridY);
+          if (!item) return false;
+          item.rotation = ((item.rotation || 0) + 90) % 360;
+          return true;
+        },
+        findCharacterAt: (gridX, gridY) => this.findCharacterAt(gridX, gridY),
+        hasSelectedAgent: () => this.selectedAgentId !== null,
+        handleTouchGridTap: (gridX, gridY) => this.handleTouchGridTap(gridX, gridY),
+      },
+      sfx,
+    );
+    this.editor.attach();
+
     // Character click (non-editor mode)
     this.canvas.addEventListener('click', this.handleClick);
     this.canvas.addEventListener('keydown', this.handleKeyDown);
-    // Touch support
-    this.canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
-    this.canvas.addEventListener('touchmove', this.handleTouchMove, { passive: false });
-    this.canvas.addEventListener('touchend', this.handleTouchEnd, { passive: false });
-    this.canvas.addEventListener('touchcancel', this.handleTouchCancel, { passive: false });
   }
 
   async init(signal?: AbortSignal, debugDemo: boolean = false) {
@@ -328,17 +323,9 @@ export class GameEngine {
       this._obstacleRebuildRafId = null;
       this._obstacleRebuildScheduled = false;
     }
-    this.canvas.removeEventListener('mousemove', this.handleMouseMove);
-    this.canvas.removeEventListener('mousedown', this.handleMouseDown);
-    this.canvas.removeEventListener('mouseup', this.handleMouseUp);
-    this.canvas.removeEventListener('mouseleave', this.handleMouseLeave);
-    this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
+    this.editor.detach();
     this.canvas.removeEventListener('click', this.handleClick);
     this.canvas.removeEventListener('keydown', this.handleKeyDown);
-    this.canvas.removeEventListener('touchstart', this.handleTouchStart);
-    this.canvas.removeEventListener('touchmove', this.handleTouchMove);
-    this.canvas.removeEventListener('touchend', this.handleTouchEnd);
-    this.canvas.removeEventListener('touchcancel', this.handleTouchCancel);
   }
 
   private loop = () => {
@@ -833,7 +820,7 @@ export class GameEngine {
     this.renderSpeechBubbles(tileSize);
     this.renderDayNight(tileSize);
 
-    if (this.editorMode) this.renderEditorOverlay(tileSize);
+    if (this.editor.editorMode) this.renderEditorOverlay(tileSize);
   }
 
   private renderFloor(gridW: number, gridH: number, tileSize: number, zoom: number) {
@@ -918,7 +905,7 @@ export class GameEngine {
       for (const item of this.placedFurniture) {
         const px = item.x * tileSize;
         const py = item.y * tileSize;
-        const isSelected = this.editorMode && this.selectedFurnitureId === item.id;
+        const isSelected = this.editor.editorMode && this.editor.selectedFurnitureId === item.id;
 
         ctx.save();
         if (item.rotation) {
@@ -1283,9 +1270,9 @@ export class GameEngine {
     for (let y = 0; y <= this.config.gridHeight; y++) {
       ctx.beginPath(); ctx.moveTo(0, y * tileSize); ctx.lineTo(this.canvas.width, y * tileSize); ctx.stroke();
     }
-    if (this.mouseGridX >= 0 && this.mouseGridY >= 0) {
-      const px = this.mouseGridX * tileSize, py = this.mouseGridY * tileSize;
-      if (this.selectedFurnitureType) {
+    if (this.editor.mouseGridX >= 0 && this.editor.mouseGridY >= 0) {
+      const px = this.editor.mouseGridX * tileSize, py = this.editor.mouseGridY * tileSize;
+      if (this.editor.selectedFurnitureType) {
         ctx.fillStyle = 'rgba(78, 204, 163, 0.25)';
         ctx.fillRect(px, py, tileSize * 2, tileSize);
         ctx.strokeStyle = '#4ecca3'; ctx.lineWidth = 2;
@@ -1336,100 +1323,8 @@ export class GameEngine {
     return null;
   }
 
-  private handleMouseMove = (e: MouseEvent) => {
-    const result = this.screenToGrid(e);
-    if (!result) return;
-    const { gridX, gridY } = result;
-    this.mouseGridX = gridX;
-    this.mouseGridY = gridY;
-    if (this.dragging) {
-      const item = this.placedFurniture.find(f => f.id === this.dragging!.id);
-      if (item) {
-        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX));
-        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY));
-      }
-    }
-    if (this.editorMode) {
-      if (this.selectedFurnitureType) {
-        this.canvas.style.cursor = 'crosshair';
-      } else {
-        const overFurniture = this.findFurnitureAt(gridX, gridY);
-        this.canvas.style.cursor = overFurniture
-          ? (this.deleteMode ? 'pointer' : this.dragging ? 'grabbing' : 'grab')
-          : 'default';
-      }
-    } else {
-      // Non-editor: pointer on character hover, crosshair if agent is selected
-      if (this.selectedAgentId) {
-        this.canvas.style.cursor = 'crosshair';
-      } else {
-        this.canvas.style.cursor = this.findCharacterAt(gridX, gridY) ? 'pointer' : 'default';
-      }
-    }
-  };
-
-  private handleMouseDown = (e: MouseEvent) => {
-    if (!this.editorMode) return;
-    const result = this.screenToGrid(e);
-    if (!result) return;
-    const { gridX, gridY } = result;
-    if (e.button === 0) {
-      if (this.selectedFurnitureType) {
-        this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
-        sfx.place();
-        return;
-      }
-      const hit = this.findFurnitureAt(gridX, gridY);
-      if (hit) {
-        if (this.deleteMode) {
-          // In delete mode: just notify React, skip drag/pickup
-          this.editorCallbacks?.onSelectFurniture(hit.id);
-          return;
-        }
-        this.selectedFurnitureId = hit.id;
-        this.editorCallbacks?.onSelectFurniture(hit.id);
-        this.dragging = { id: hit.id, offsetX: gridX - hit.x, offsetY: gridY - hit.y };
-        sfx.pickup();
-      } else {
-        this.selectedFurnitureId = null;
-        this.editorCallbacks?.onSelectFurniture(null);
-      }
-    }
-  };
-
-  private handleMouseUp = (e: MouseEvent) => {
-    if (!this.editorMode) return;
-    if (this.dragging) {
-      const result = this.screenToGrid(e);
-      if (!result) return;
-      const { gridX, gridY } = result;
-      this.editorCallbacks?.onMoveFurniture(
-        this.dragging.id,
-        Math.max(1, Math.min(this.config.gridWidth - 3, gridX)),
-        Math.max(1, Math.min(this.config.gridHeight - 3, gridY)),
-      );
-      sfx.place();
-      this.dragging = null;
-    }
-  };
-
-  private handleMouseLeave = () => {
-    this.mouseGridX = -1; this.mouseGridY = -1; this.dragging = null;
-    this.canvas.style.cursor = 'default';
-  };
-
-  private handleContextMenu = (e: MouseEvent) => {
-    if (!this.editorMode) return;
-    e.preventDefault();
-    const result = this.screenToGrid(e);
-    if (!result) return;
-    const { gridX, gridY } = result;
-    const hit = this.findFurnitureAt(gridX, gridY);
-    if (hit) hit.rotation = ((hit.rotation || 0) + 90) % 360;
-  };
-
   private handleClick = (e: MouseEvent) => {
-    if (this.editorMode) return;
+    if (this.editor.editorMode) return;
     const result = this.screenToGrid(e);
     if (!result) return;
     const { gridX, gridY } = result;
@@ -1471,190 +1366,15 @@ export class GameEngine {
     }
   };
 
-  // ── Touch Event Handlers ─────────────────────────────
-
-  private static readonly TAP_THRESHOLD = 12; // px movement before it's a drag, not a tap
-  private static readonly DOUBLE_TAP_MS = 300; // max interval between double-tap
-
-  private handleTouchStart = (e: TouchEvent) => {
-    e.preventDefault(); // prevent mouse event synthesis & scroll
-
-    if (e.touches.length === 2) {
-      // Pinch-to-zoom start: cancel any active one-finger drag/tap state so that
-      // lifting all fingers after a pinch cannot accidentally finalize a furniture drag.
-      this.touchDragging = null;
-      this.touchStartPos = null;
-      this.touchCurrentPos = null;
-      this.touchMoved = true;
-      this.pinchStartDist = touchDistance(e.touches[0], e.touches[1]);
-      this.pinchStartZoom = this.cameraZoom;
-      return;
-    }
-
-    const t = e.touches[0];
-    this.touchStartPos = { x: t.clientX, y: t.clientY };
-    this.touchCurrentPos = { x: t.clientX, y: t.clientY };
-    this.touchMoved = false;
-
-    const result1 = this.screenToGrid(t.clientX, t.clientY);
-    if (!result1) return;
-    const { gridX: gridX1, gridY: gridY1 } = result1;
-    this.mouseGridX = gridX1;
-    this.mouseGridY = gridY1;
-
-    // Editor mode: start dragging furniture immediately on touch
-    if (this.editorMode && e.touches.length === 1) {
-      if (this.selectedFurnitureType) {
-        // Will place on touchend if not moved
-      } else {
-        const hit = this.findFurnitureAt(gridX1, gridY1);
-        if (hit) {
-          if (this.deleteMode) {
-            // In delete mode: just notify React, skip drag
-            this.editorCallbacks?.onSelectFurniture(hit.id);
-          } else {
-            this.touchDragging = { id: hit.id, offsetX: gridX1 - hit.x, offsetY: gridY1 - hit.y };
-            this.selectedFurnitureId = hit.id;
-            this.editorCallbacks?.onSelectFurniture(hit.id);
-          }
-        }
-      }
-    }
-  };
-
-  private handleTouchMove = (e: TouchEvent) => {
-    e.preventDefault();
-
-    // Pinch-to-zoom
-    if (e.touches.length === 2) {
-      const dist = touchDistance(e.touches[0], e.touches[1]);
-
-      // Guard against zero/invalid starting distance (e.g., both fingers started at the
-      // same pixel): reinitialize from the first valid distance seen during move.
-      if (!this.pinchStartDist || this.pinchStartDist <= 0) {
-        if (dist <= 0) return;
-        this.pinchStartDist = dist;
-        this.pinchStartZoom = this.cameraZoom;
-      }
-
-      const scale = dist / this.pinchStartDist;
-      const newZoom = Math.max(1, Math.min(4, this.pinchStartZoom * scale));
-      this.cameraZoom = newZoom;
-      this.canvas.style.transform = `scale(${this.cameraZoom})`;
-      this.canvas.style.transformOrigin = 'center center';
-      return;
-    }
-
-    if (!this.touchStartPos) return;
-    const t = e.touches[0];
-    const dx = t.clientX - this.touchStartPos.x;
-    const dy = t.clientY - this.touchStartPos.y;
-
-    if (Math.abs(dx) > GameEngine.TAP_THRESHOLD || Math.abs(dy) > GameEngine.TAP_THRESHOLD) {
-      this.touchMoved = true;
-    }
-
-    // Track the latest finger position so handleTouchEnd can use the drop location
-    this.touchCurrentPos = { x: t.clientX, y: t.clientY };
-
-    const result2 = this.screenToGrid(t.clientX, t.clientY);
-    if (!result2) return;
-    const { gridX: gridX2, gridY: gridY2 } = result2;
-    this.mouseGridX = gridX2;
-    this.mouseGridY = gridY2;
-
-    // Editor mode: drag furniture (subtract grab offset to keep furniture under finger)
-    if (this.editorMode && this.touchDragging) {
-      const item = this.placedFurniture.find(f => f.id === this.touchDragging!.id);
-      if (item) {
-        item.x = Math.max(1, Math.min(this.config.gridWidth - 3, gridX2 - this.touchDragging.offsetX));
-        item.y = Math.max(1, Math.min(this.config.gridHeight - 3, gridY2 - this.touchDragging.offsetY));
-      }
-    }
-  };
-
-  private handleTouchEnd = (e: TouchEvent) => {
-    e.preventDefault();
-
-    // Pinch-to-zoom end — nothing extra to do
-    if (e.touches.length > 0) return;
-
-    // Editor mode: finish furniture drag, place, or double-tap rotate
-    if (this.editorMode) {
-      if (this.touchDragging) {
-        // touchCurrentPos is always set alongside touchStartPos in handleTouchStart and kept
-        // up-to-date in handleTouchMove, so it reliably reflects the finger's final position.
-        // Subtract the grab offset so the drop position matches what was shown during the drag.
-        const resultDrag = this.screenToGrid(this.touchCurrentPos!.x, this.touchCurrentPos!.y);
-        if (resultDrag) {
-          this.editorCallbacks?.onMoveFurniture(
-            this.touchDragging.id,
-            Math.max(1, Math.min(this.config.gridWidth - 3, resultDrag.gridX - this.touchDragging.offsetX)),
-            Math.max(1, Math.min(this.config.gridHeight - 3, resultDrag.gridY - this.touchDragging.offsetY)),
-          );
-          sfx.place();
-        }
-        this.touchDragging = null;
-      } else if (!this.touchMoved && this.touchStartPos) {
-        const resultTap = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
-        if (!resultTap) {
-          this.touchStartPos = null;
-          this.touchCurrentPos = null;
-          return;
-        }
-        const { gridX, gridY } = resultTap;
-        const now = Date.now();
-
-        // Double-tap furniture → rotate (mirrors desktop right-click in editor mode)
-        if (now - this.lastTapTime < GameEngine.DOUBLE_TAP_MS) {
-          const hit = this.findFurnitureAt(gridX, gridY);
-          if (hit) {
-            hit.rotation = ((hit.rotation || 0) + 90) % 360;
-            sfx.place();
-            this.lastTapTime = 0;
-            this.touchStartPos = null;
-            this.touchCurrentPos = null;
-            return;
-          }
-        }
-        this.lastTapTime = now;
-
-        // Single tap to place furniture
-        if (this.selectedFurnitureType) {
-          this.editorCallbacks?.onPlaceFurniture(this.selectedFurnitureType, gridX, gridY);
-          sfx.place();
-        }
-      }
-      this.touchStartPos = null;
-      this.touchCurrentPos = null;
-      return;
-    }
-
-    // ── Non-editor: tap interactions ──
-    if (this.touchMoved || !this.touchStartPos) {
-      this.touchStartPos = null;
-      this.touchCurrentPos = null;
-      return; // was a drag or pinch, not a tap
-    }
-
-    const resultTap2 = this.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
-    if (!resultTap2) {
-      this.touchStartPos = null;
-      this.touchCurrentPos = null;
-      return;
-    }
-    const { gridX, gridY } = resultTap2;
-
+  private handleTouchGridTap(gridX: number, gridY: number): void {
     const charId = this.findCharacterAt(gridX, gridY);
 
     if (charId && !charId.startsWith('sub-')) {
-      // Tap agent → select
       this.selectedAgentId = charId;
       this.selectionPulse = 0;
       sfx.click();
       this.gameCallbacks?.onCharacterClick(charId);
     } else if (this.selectedAgentId) {
-      // Tap empty tile → move selected agent
       const char = this.characters.get(this.selectedAgentId);
       if (char) {
         this.ensureObstacles();
@@ -1670,22 +1390,9 @@ export class GameEngine {
       }
       this.selectedAgentId = null;
     } else {
-      // Tap empty tile, no agent selected → deselect
       this.selectedAgentId = null;
     }
-
-    this.touchStartPos = null;
-    this.touchCurrentPos = null;
-  };
-
-  private handleTouchCancel = () => {
-    this.touchStartPos = null;
-    this.touchCurrentPos = null;
-    this.touchDragging = null;
-    this.touchMoved = false;
-    this.mouseGridX = -1;
-    this.mouseGridY = -1;
-  };
+  }
 
   // ── Helpers ──────────────────────────────────────────
 
@@ -2016,17 +1723,14 @@ export class GameEngine {
   // ── Editor API ──────────────────────────────────────────
 
   setEditorMode(enabled: boolean) {
-    this.editorMode = enabled;
-    this.selectedFurnitureType = null;
-    this.selectedFurnitureId = null;
-    this.canvas.style.cursor = 'default';
+    this.editor.setEditorMode(enabled);
   }
 
-  setEditorCallbacks(cb: EditorCallbacks) { this.editorCallbacks = cb; }
+  setEditorCallbacks(cb: EditorCallbacks) { this.editor.setEditorCallbacks(cb); }
   setGameCallbacks(cb: GameCallbacks) { this.gameCallbacks = cb; }
-  setDeleteMode(enabled: boolean) { this.deleteMode = enabled; }
-  setSelectedFurnitureType(type: string | null) { this.selectedFurnitureType = type; this.selectedFurnitureId = null; }
-  setSelectedFurnitureId(id: string | null) { this.selectedFurnitureId = id; this.selectedFurnitureType = null; }
+  setDeleteMode(enabled: boolean) { this.editor.setDeleteMode(enabled); }
+  setSelectedFurnitureType(type: string | null) { this.editor.setSelectedFurnitureType(type); }
+  setSelectedFurnitureId(id: string | null) { this.editor.setSelectedFurnitureId(id); }
 
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
     this.placedFurniture = furniture;

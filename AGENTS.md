@@ -40,7 +40,11 @@ src/
     TagEditor.tsx       # Tag management
     SoundControls.tsx    # Mute/volume UI
   game/
-    GameEngine.ts       # Canvas 2D rendering loop, animation, pathfinding, editor mode
+    GameEngine.ts       # Canvas 2D rendering loop, animation, pathfinding, host façade
+    EditorController.ts # Mouse/touch editor state and canvas listener lifecycle
+    Schedule.ts         # Pure day/night phase interpolation
+    SubAgentFSM.ts      # Pure sub-agent lifetime/fade planner
+    inputGeometry.ts    # Pure screen/grid and touch-distance geometry
     SpriteLoader.ts     # Sprite sheet loading, frame extraction
     CharacterComposer.ts # Paperdoll compositor (body+hair+outfit layering)
     Pathfinder.ts        # BFS pathfinding
@@ -126,9 +130,12 @@ Output is in the same 3×7 format as legacy sprites (16×32 frames). If source s
 
 `SoundFX.ts` is a **Web Audio API synthesizer** — no audio files. All sounds (typing clicks, footsteps, spawn/despawn chimes, etc.) are generated procedurally via oscillators and gain envelopes. Muted state and volume persist in the singleton.
 
-### Editor Mode (GameEngine)
+### Editor Mode (EditorController via GameEngine)
 
-Editor mode is a mode on `GameEngine` (not a separate component). When active:
+React continues to use the stable editor methods on `GameEngine`, which delegate to
+`EditorController`. The controller owns mouse/touch state and canvas listener lifecycle;
+`GameEngine` supplies a narrow host adapter for furniture mutation and non-editor agent taps.
+When editor mode is active:
 - Canvas cursor changes to indicate placement/drag/delete modes
 - Right-click rotates furniture 90°
 - Touch: single tap = place/select, double-tap = rotate, drag = move
@@ -138,7 +145,7 @@ The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `on
 
 ## Non-Obvious Gotchas
 
-1. **Auto-save was intentionally removed.** The `useLayoutStore` comment explains: furniture is persisted only via explicit **Save button** to avoid race conditions on initial load and React StrictMode double-mounts that caused furniture to reset. The `updateFurniture` function accepts a functional updater form specifically for rapid delete-mode clicks.
+1. **Layout auto-save is guarded.** Furniture edits mark the active layout dirty and schedule a 2-second debounced save. Programmatic load/create/save-response changes use `skipAutoSaveRef` so React StrictMode or initial loading cannot write stale layouts back. Saves are serialized through `savePromiseRef`; the explicit **Save** button remains available.
 
 2. **`furnitureKey` detection.** `PixelOffice` uses `JSON.stringify` of furniture positions/rotations as a React effect dependency to detect layout changes. If you add new fields to `PlacedFurniture` that the engine reads but don't include them in this string, the engine won't re-sync.
 
@@ -150,7 +157,7 @@ The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `on
 
 6. **Socket.IO `changeOrigin: true`.** The Vite proxy config sets `changeOrigin: true` for both `/api` and `/socket.io`. Without it, WebSocket upgrades fail because the `Host` header doesn't match what the backend expects.
 
-7. **`screenToGrid` has overloads.** `screenToGrid(e: MouseEvent)` and `screenToGrid(clientX: number, clientY: number)` — used by both mouse and touch handlers. Don't merge them naively.
+7. **`screenToGrid` has overloads.** The compatibility wrapper remains on `GameEngine` as `screenToGrid(e: MouseEvent)` and `screenToGrid(clientX: number, clientY: number)`, while pure letterbox/pillarbox math lives in `inputGeometry.ts`. `EditorController` uses the numeric overload. Don't merge or change the edge semantics naively.
 
 8. **`stateJustChanged` is one-frame-only.** Set to `true` in `updateCharacter` when state changes, consumed once in `update()` to trigger sounds/VFX, then reset. If you add more state-change side effects, add them before the reset.
 
@@ -158,7 +165,7 @@ The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `on
 
 10. **Demo mode.** If no agents are active (no CLI and no ingest data), `spawnDemoAgents()` creates 8 hardcoded demo characters. The backend always initializes these in the engine, so the office is never empty.
 
-11. **Sub-agent lifecycle.** Sub-agents spawn near their parent, live for 15 seconds (`SUBAGENT_LIFETIME`), then enter a 2-second fade-out. The `subAgents` array on `AgentState` drives spawn/kill via `engine.spawnSubAgent()` / `engine.killSubAgent()`. Session completion/abort sets sub-agent status, which triggers the kill.
+11. **Sub-agent lifecycle.** `SubAgentFSM.tickSubAgent()` plans the 15-second lifetime, one-shot despawn event, and 2-second fade; `GameEngine` applies the plan and sound side effect. The `subAgents` array on `AgentState` drives spawn/kill via `engine.spawnSubAgent()` / `engine.killSubAgent()`.
 
 12. **Duplicate type definition.** `CharacterRecipe` is defined in both `shared/types.ts` (line ~64) and `CharacterComposer.ts` (line ~54). They are identical. The one in `shared/types.ts` is used by the network layer; `CharacterComposer.ts` exports its own for the compositor.
 
@@ -179,7 +186,7 @@ The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `on
 
 1. Add sprites to `public/assets/furniture/<TYPE>/`
 2. Create `manifest.json` with `id`, `name`, `category`, `type`, and `members` array
-3. Add type name to the furniture catalog array in `server/index.ts` (line ~932)
+3. Add type name to the furniture catalog array in `server/index.ts` (line ~1091)
 4. It appears in the editor palette automatically via `/api/furniture-catalog`
 
 ## Socket.IO Events
