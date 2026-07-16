@@ -23,6 +23,7 @@ import { tickSubAgent } from './SubAgentFSM';
 import { EditorController } from './EditorController';
 import type { EditorCallbacks } from './EditorController';
 import { screenToGrid as mapScreenToGrid } from './inputGeometry';
+import { getDayPhase, type InterpolatedDayPhase } from './Schedule';
 
 export type { EditorCallbacks } from './EditorController';
 
@@ -111,8 +112,6 @@ const STATE_VFX: Record<string, {
   reading: { color: '#34d399', icon: '📖', particleCount: 3, particleSpeed: 10, glowColor: 'rgba(52,211,153,0.1)', glowDuration: 400 },
 };
 
-import { getDayPhase as getDayPhaseImpl, type InterpolatedDayPhase } from './Schedule';
-
 // ── Day/Night Cycle ────────────────────────────────────
 
 // ── Ambient Particles ──────────────────────────────────
@@ -199,7 +198,7 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
-  private _currentPhase: InterpolatedDayPhase = getDayPhaseImpl(0);
+  private _currentPhase: InterpolatedDayPhase = getDayPhase(this.dayPhase);
 
   // Ambient particles (dust motes, steam)
   private ambientParticles: AmbientParticle[] = [];
@@ -498,7 +497,7 @@ export class GameEngine {
 
     // ── Day/night cycle update ──
     this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
-    this._currentPhase = getDayPhaseImpl(this.dayPhase);
+    this._currentPhase = getDayPhase(this.dayPhase);
 
     // ── Ambient particles update ──
     this.updateAmbientParticles(dt);
@@ -797,7 +796,7 @@ export class GameEngine {
     this.renderFloor(gridWidth, gridHeight, tileSize);
     this.renderWalls(gridWidth, gridHeight, tileSize);
     this.renderFurniture(tileSize, zoom);
-    this.renderCharacters(tileSize, zoom);
+    this.renderCharacters(tileSize);
     this.renderSelectionRing(tileSize);
     this.renderMoveTargets(tileSize);
     this.renderStateEffects(tileSize);
@@ -834,7 +833,7 @@ export class GameEngine {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(this.floorCacheCanvas, 0, 0);
     } else if (!this.floorCacheCtx) {
-      // Fallback: render floor directly when OffscreenCanvas context unavailable
+      // Fallback: render floor directly when the cache canvas's 2D context is unavailable
       this.drawFloorTiles(ctx, gridW, gridH, tileSize, hasFloor, floors);
     }
   }
@@ -851,12 +850,16 @@ export class GameEngine {
     hasFloor: boolean,
     floors: LoadedFloor[],
   ) {
+    if (hasFloor) {
+      // Set once per call: the flag applies to the whole target context, so
+      // there is no reason to re-assert it inside the inner tile loop.
+      target.imageSmoothingEnabled = false;
+    }
     for (let row = 0; row < gridH; row++) {
       for (let col = 0; col < gridW; col++) {
         const px = col * tileSize, py = row * tileSize;
         if (hasFloor) {
           const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
-          target.imageSmoothingEnabled = false;
           target.drawImage(floor.canvas, px, py, tileSize, tileSize);
         } else {
           target.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
@@ -988,7 +991,7 @@ export class GameEngine {
     ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
   }
 
-  private renderCharacters(tileSize: number, zoom: number) {
+  private renderCharacters(tileSize: number) {
     const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
     for (const char of sorted) {
       this.renderCharacter(char, tileSize);
