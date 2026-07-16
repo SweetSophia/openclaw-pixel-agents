@@ -188,6 +188,7 @@ export class EditorController {
 
   private handleMouseUp = (event: MouseEvent): void => {
     if (!this._editorMode || !this.dragging) return;
+    if (event.button !== 0) return;
     const result = this.host.screenToGrid(event.clientX, event.clientY);
     if (!result) return;
     this.callbacks?.onMoveFurniture(

@@ -186,7 +186,7 @@ The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `on
 
 1. Add sprites to `public/assets/furniture/<TYPE>/`
 2. Create `manifest.json` with `id`, `name`, `category`, `type`, and `members` array
-3. Add type name to the furniture catalog array in `server/index.ts` (line ~932)
+3. Add type name to the furniture catalog array in `server/index.ts` (line ~1091)
 4. It appears in the editor palette automatically via `/api/furniture-catalog`
 
 ## Socket.IO Events

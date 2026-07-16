@@ -226,4 +226,51 @@ describe('EditorController', () => {
     canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 4, clientY: 5 }));
     expect(canvas.style.cursor).toBe('default');
   });
+
+  it('aborts an active mouse drag if mouseleave fires before mouseup', () => {
+    furniture = { id: 'desk-1', x: 3, y: 4 };
+    controller.attach();
+    controller.setEditorMode(true);
+
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 5, clientY: 7 }));
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
+    canvas.dispatchEvent(new MouseEvent('mouseleave'));
+
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    expect(sounds.place).not.toHaveBeenCalled();
+
+    canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
+
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    expect(sounds.place).not.toHaveBeenCalled();
+  });
+
+  it('does not finalize a drag on right-click mouseup', () => {
+    furniture = { id: 'desk-1', x: 3, y: 4 };
+    controller.attach();
+    controller.setEditorMode(true);
+
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 5, clientY: 7 }));
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
+    canvas.dispatchEvent(new MouseEvent('mouseup', { button: 2, clientX: 99, clientY: 99 }));
+
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    expect(sounds.place).not.toHaveBeenCalled();
+
+    canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
+    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 21, 13);
+    expect(sounds.place).toHaveBeenCalledOnce();
+  });
+
+  it('places selected furniture on a single touch tap with no drag', () => {
+    controller.attach();
+    controller.setEditorMode(true);
+    controller.setSelectedFurnitureType('DESK');
+
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 5, clientY: 6 }]));
+    canvas.dispatchEvent(touchEvent('touchend', []));
+
+    expect(callbacks.onPlaceFurniture).toHaveBeenCalledWith('DESK', 5, 6);
+    expect(sounds.place).toHaveBeenCalledOnce();
+  });
 });
