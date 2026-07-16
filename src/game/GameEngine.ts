@@ -198,6 +198,9 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
+  // Sentinel initial value; overwritten by `update()` on the first tick before
+  // any render path reads it. Uses `this.dayPhase` (not a literal) so the sentinel
+  // tracks any future change to `dayPhase`'s default.
   private _currentPhase: InterpolatedDayPhase = getDayPhase(this.dayPhase);
 
   // Ambient particles (dust motes, steam)
