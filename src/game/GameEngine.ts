@@ -10,8 +10,6 @@ import {
   loadAllAssets,
   loadCharacters,
   getSpriteFrame,
-  getCachedCharacters,
-  getCachedFurniture,
   type LoadedCharacter,
   type LoadedFloor,
   type LoadedFurnitureItem,
@@ -25,6 +23,7 @@ import { tickSubAgent } from './SubAgentFSM';
 import { EditorController } from './EditorController';
 import type { EditorCallbacks } from './EditorController';
 import { screenToGrid as mapScreenToGrid } from './inputGeometry';
+import { getDayPhase, type InterpolatedDayPhase } from './Schedule';
 
 export type { EditorCallbacks } from './EditorController';
 
@@ -113,8 +112,6 @@ const STATE_VFX: Record<string, {
   reading: { color: '#34d399', icon: '📖', particleCount: 3, particleSpeed: 10, glowColor: 'rgba(52,211,153,0.1)', glowDuration: 400 },
 };
 
-import { getDayPhase as getDayPhaseImpl, type DayPhase } from './Schedule';
-
 // ── Day/Night Cycle ────────────────────────────────────
 
 // ── Ambient Particles ──────────────────────────────────
@@ -175,7 +172,6 @@ export class GameEngine {
   private floors: LoadedFloor[] = [];
   private furniture: Map<string, LoadedFurnitureItem> = new Map();
   private zoom: number;
-  private onAssetsLoaded?: () => void;
 
   // Layout data
   private placedFurniture: PlacedFurniture[] = [];
@@ -202,11 +198,10 @@ export class GameEngine {
   // Day/night cycle
   private dayPhase = 0; // 0-1, loops continuously
   private static readonly DAY_CYCLE_SECONDS = 120; // full cycle duration
-  private _currentPhase: DayPhase = {
-    overlay: 'rgba(255, 255, 240, 0.02)',
-    light: 1.0,
-    label: 'Midday',
-  };
+  // Sentinel initial value; overwritten by `update()` on the first tick before
+  // any render path reads it. Uses `this.dayPhase` (not a literal) so the sentinel
+  // tracks any future change to `dayPhase`'s default.
+  private _currentPhase: InterpolatedDayPhase = getDayPhase(this.dayPhase);
 
   // Ambient particles (dust motes, steam)
   private ambientParticles: AmbientParticle[] = [];
@@ -214,12 +209,11 @@ export class GameEngine {
   // Idle behaviors
   private idleBehaviors: Map<string, IdleBehavior> = new Map();
 
-  constructor(canvas: HTMLCanvasElement, config: GameConfig, onAssetsLoaded?: () => void) {
+  constructor(canvas: HTMLCanvasElement, config: GameConfig) {
     this.canvas = canvas;
     this.config = config;
     this.ctx = canvas.getContext('2d')!;
     this.zoom = config.tileSize / 16;
-    this.onAssetsLoaded = onAssetsLoaded;
 
     canvas.width = config.gridWidth * config.tileSize;
     canvas.height = config.gridHeight * config.tileSize;
@@ -492,7 +486,6 @@ export class GameEngine {
 
     // Update state transition effects
     for (const fx of this.stateEffects) {
-      const elapsed = this.nowMs - fx.startTime;
       for (const p of fx.particles) {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
@@ -507,7 +500,7 @@ export class GameEngine {
 
     // ── Day/night cycle update ──
     this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
-    this._currentPhase = this.getDayPhase();
+    this._currentPhase = getDayPhase(this.dayPhase);
 
     // ── Ambient particles update ──
     this.updateAmbientParticles(dt);
@@ -517,12 +510,6 @@ export class GameEngine {
   }
 
   // ── Day/Night Cycle ──────────────────────────────────
-
-  /** Get interpolated day phase data */
-  private getDayPhase(): DayPhase {
-    const phase = getDayPhaseImpl(this.dayPhase);
-    return { overlay: phase.overlay, light: phase.light, label: phase.label };
-  }
 
   /** Render day/night color overlay and monitor glow */
   private renderDayNight(tileSize: number) {
@@ -809,10 +796,10 @@ export class GameEngine {
 
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    this.renderFloor(gridWidth, gridHeight, tileSize, zoom);
+    this.renderFloor(gridWidth, gridHeight, tileSize);
     this.renderWalls(gridWidth, gridHeight, tileSize);
     this.renderFurniture(tileSize, zoom);
-    this.renderCharacters(tileSize, zoom);
+    this.renderCharacters(tileSize);
     this.renderSelectionRing(tileSize);
     this.renderMoveTargets(tileSize);
     this.renderStateEffects(tileSize);
@@ -823,7 +810,7 @@ export class GameEngine {
     if (this.editor.editorMode) this.renderEditorOverlay(tileSize);
   }
 
-  private renderFloor(gridW: number, gridH: number, tileSize: number, zoom: number) {
+  private renderFloor(gridW: number, gridH: number, tileSize: number) {
     const { ctx, floors } = this;
     const hasFloor = floors.length > 0 && this.assetsLoaded;
     const reqWidth = gridW * tileSize;
@@ -841,20 +828,7 @@ export class GameEngine {
     }
 
     if (!this.floorCacheValid && this.floorCacheCtx) {
-      const ftx = this.floorCacheCtx;
-      for (let row = 0; row < gridH; row++) {
-        for (let col = 0; col < gridW; col++) {
-          const px = col * tileSize, py = row * tileSize;
-          if (hasFloor) {
-            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
-            ftx.imageSmoothingEnabled = false;
-            ftx.drawImage(floor.canvas, px, py, tileSize, tileSize);
-          } else {
-            ftx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
-            ftx.fillRect(px, py, tileSize, tileSize);
-          }
-        }
-      }
+      this.drawFloorTiles(this.floorCacheCtx, gridW, gridH, tileSize, hasFloor, floors);
       this.floorCacheValid = true;
     }
 
@@ -862,18 +836,37 @@ export class GameEngine {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(this.floorCacheCanvas, 0, 0);
     } else if (!this.floorCacheCtx) {
-      // Fallback: render floor directly when OffscreenCanvas context unavailable
-      for (let row = 0; row < gridH; row++) {
-        for (let col = 0; col < gridW; col++) {
-          const px = col * tileSize, py = row * tileSize;
-          if (hasFloor) {
-            const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
-            ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(floor.canvas, px, py, tileSize, tileSize);
-          } else {
-            ctx.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
-            ctx.fillRect(px, py, tileSize, tileSize);
-          }
+      // Fallback: render floor directly when the cache canvas's 2D context is unavailable
+      this.drawFloorTiles(ctx, gridW, gridH, tileSize, hasFloor, floors);
+    }
+  }
+
+  /**
+   * Draw checkerboard floor tiles onto a 2D context.
+   * Falls back to a tinted fill when no floor sprites are available.
+   */
+  private drawFloorTiles(
+    target: CanvasRenderingContext2D,
+    gridW: number,
+    gridH: number,
+    tileSize: number,
+    hasFloor: boolean,
+    floors: LoadedFloor[],
+  ) {
+    if (hasFloor) {
+      // Set once per call: the flag applies to the whole target context, so
+      // there is no reason to re-assert it inside the inner tile loop.
+      target.imageSmoothingEnabled = false;
+    }
+    for (let row = 0; row < gridH; row++) {
+      for (let col = 0; col < gridW; col++) {
+        const px = col * tileSize, py = row * tileSize;
+        if (hasFloor) {
+          const floor = floors[((col + row) % 2 === 0 ? 0 : 1) % floors.length];
+          target.drawImage(floor.canvas, px, py, tileSize, tileSize);
+        } else {
+          target.fillStyle = (col + row) % 2 === 0 ? 'rgba(26, 26, 46, 0.3)' : 'rgba(30, 30, 58, 0.3)';
+          target.fillRect(px, py, tileSize, tileSize);
         }
       }
     }
@@ -1001,14 +994,14 @@ export class GameEngine {
     ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
   }
 
-  private renderCharacters(tileSize: number, zoom: number) {
+  private renderCharacters(tileSize: number) {
     const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
     for (const char of sorted) {
-      this.renderCharacter(char, tileSize, zoom);
+      this.renderCharacter(char, tileSize);
     }
   }
 
-  private renderCharacter(char: Character, tileSize: number, zoom: number) {
+  private renderCharacter(char: Character, tileSize: number) {
     const { ctx } = this;
     const px = char.x * tileSize, py = char.y * tileSize;
     const isWalking = Math.abs(char.targetX - char.x) > 0.1 || Math.abs(char.targetY - char.y) > 0.1;
