@@ -135,15 +135,35 @@ describe('EditorController', () => {
     controller.setEditorMode(true);
 
     canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 5, clientY: 6 }]));
-    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 10, clientY: 12 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 18, clientY: 12 }]));
     canvas.dispatchEvent(touchEvent('touchend', []));
 
-    expect(host.previewFurnitureMove).toHaveBeenCalledWith('desk-1', 8, 10);
-    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 8, 10);
+    expect(host.previewFurnitureMove).toHaveBeenCalledWith('desk-1', 16, 10);
+    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 16, 10);
     expect(sounds.place).toHaveBeenCalledOnce();
   });
 
-  it('rotates furniture on a double tap and emits the existing place sound', () => {
+  it('rotates furniture on a normal-mode double tap within the tap threshold', () => {
+    furniture = { id: 'desk-1', x: 3, y: 4 };
+    controller.attach();
+    controller.setEditorMode(true);
+
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 4, clientY: 5 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 8, clientY: 9 }]));
+    canvas.dispatchEvent(touchEvent('touchend', []));
+    nowMs = 1_200;
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 4, clientY: 5 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 8, clientY: 9 }]));
+    canvas.dispatchEvent(touchEvent('touchend', []));
+
+    expect(host.rotateFurnitureAt).toHaveBeenCalledWith(4, 5);
+    expect(callbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
+    expect(host.previewFurnitureMove).not.toHaveBeenCalled();
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    expect(sounds.place).toHaveBeenCalledOnce();
+  });
+
+  it('preserves single-tap touch deletion without starting a drag', () => {
     furniture = { id: 'desk-1', x: 3, y: 4 };
     controller.attach();
     controller.setEditorMode(true);
@@ -151,13 +171,10 @@ describe('EditorController', () => {
 
     canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 4, clientY: 5 }]));
     canvas.dispatchEvent(touchEvent('touchend', []));
-    nowMs = 1_200;
-    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 4, clientY: 5 }]));
-    canvas.dispatchEvent(touchEvent('touchend', []));
 
-    expect(host.rotateFurnitureAt).toHaveBeenCalledWith(4, 5);
-    expect(callbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
-    expect(sounds.place).toHaveBeenCalledOnce();
+    expect(callbacks.onSelectFurniture).toHaveBeenCalledWith('desk-1');
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    expect(callbacks.onRotateFurniture).not.toHaveBeenCalled();
   });
 
   it('reinitializes a zero pinch distance and clamps zoom to four', () => {
@@ -193,7 +210,7 @@ describe('EditorController', () => {
     controller.setEditorMode(true);
 
     canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 5, clientY: 6 }]));
-    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 10, clientY: 12 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 18, clientY: 12 }]));
     canvas.dispatchEvent(touchEvent('touchcancel', []));
     canvas.dispatchEvent(touchEvent('touchend', []));
 
@@ -205,7 +222,6 @@ describe('EditorController', () => {
     furniture = { id: 'desk-1', x: 3, y: 4 };
     controller.attach();
     controller.setEditorMode(true);
-    controller.setDeleteMode(true);
 
     canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 4, clientY: 5 }]));
     canvas.dispatchEvent(touchEvent('touchend', []));
@@ -214,6 +230,7 @@ describe('EditorController', () => {
     canvas.dispatchEvent(touchEvent('touchend', []));
 
     expect(host.rotateFurnitureAt).not.toHaveBeenCalled();
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
     expect(sounds.place).not.toHaveBeenCalled();
   });
 

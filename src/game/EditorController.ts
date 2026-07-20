@@ -292,7 +292,9 @@ export class EditorController {
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
 
-    if (this._editorMode && this.touchDragging) {
+    // A furniture hit is only a drag candidate until the touch crosses the
+    // tap threshold. This keeps ordinary finger jitter eligible for a tap.
+    if (this._editorMode && this.touchDragging && this.touchMoved) {
       this.host.previewFurnitureMove(
         this.touchDragging.id,
         this.clampX(result.gridX - this.touchDragging.offsetX),
@@ -306,9 +308,9 @@ export class EditorController {
     if (event.touches.length > 0) return;
 
     if (this._editorMode) {
-      if (this.touchDragging) {
-        const dragging = this.touchDragging;
-        this.touchDragging = null;
+      const dragging = this.touchDragging;
+      this.touchDragging = null;
+      if (dragging && this.touchMoved) {
         if (this.touchCurrentPos) {
           const result = this.host.screenToGrid(this.touchCurrentPos.x, this.touchCurrentPos.y);
           if (result) {
