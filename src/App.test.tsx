@@ -113,9 +113,14 @@ describe('App furniture rotation persistence', () => {
     ) => PlacedFurniture[];
 
     expect(update([
-      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 },
+      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 180 },
     ])).toEqual([
-      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 270 },
+    ]);
+    expect(update([
+      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 270 },
+    ])).toEqual([
+      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 },
     ]);
   });
 });

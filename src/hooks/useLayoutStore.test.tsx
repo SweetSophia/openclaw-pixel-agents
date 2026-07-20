@@ -131,6 +131,7 @@ describe('useLayoutStore', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (unmount) unmount();
     unmount = undefined;
     vi.unstubAllGlobals();
@@ -289,6 +290,7 @@ describe('useLayoutStore', () => {
 
   it('includes the latest absolute rotation in the autosave payload', async () => {
     await renderStoreProbe();
+    vi.useFakeTimers();
 
     await act(async () => {
       latest(snapshots).updateFurniture([
@@ -296,7 +298,12 @@ describe('useLayoutStore', () => {
       ]);
     });
 
-    await act(async () => { await new Promise(r => setTimeout(r, 2100)); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
     expect(captures.lastPutBody?.furniture).toEqual([
       { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },

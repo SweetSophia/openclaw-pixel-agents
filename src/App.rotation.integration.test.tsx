@@ -6,6 +6,12 @@ import { App } from './App';
 import { GameEngine } from './game/GameEngine';
 import type { LayoutDoc } from './hooks/useLayoutStore';
 
+const TILE_SIZE = 32;
+const DESK_GRID_X = 3;
+const DESK_GRID_Y = 4;
+const DESK_CENTER_X = (DESK_GRID_X + 0.5) * TILE_SIZE;
+const DESK_CENTER_Y = (DESK_GRID_Y + 0.5) * TILE_SIZE;
+
 vi.mock('./hooks/useAgentStore', () => ({
   useAgentStore: () => ({
     agents: [],
@@ -68,7 +74,11 @@ describe('App furniture rotation roundtrip', () => {
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input.toString();
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
 
       if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string) as LayoutDoc;
@@ -102,6 +112,7 @@ describe('App furniture rotation roundtrip', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -113,18 +124,29 @@ describe('App furniture rotation roundtrip', () => {
     fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
     await waitFor(() => expect(screen.getByTestId('persisted-rotation')).toHaveTextContent('0'));
 
-    // The fixture desk begins at grid (3, 4); with 32 px tiles these client
-    // coordinates land at its center and exercise the real screen mapping.
-    fireEvent.contextMenu(firstRender.container.querySelector('canvas')!, {
-      clientX: 112,
-      clientY: 144,
-    });
-    await waitFor(() => expect(screen.getByTestId('persisted-rotation')).toHaveTextContent('90'));
+    vi.useFakeTimers();
 
-    await act(async () => { await new Promise(r => setTimeout(r, 2100)); });
+    // These coordinates land at the fixture desk's center and exercise the
+    // real grid-to-screen mapping instead of calling the callback directly.
+    fireEvent.contextMenu(firstRender.container.querySelector('canvas')!, {
+      clientX: DESK_CENTER_X,
+      clientY: DESK_CENTER_Y,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('persisted-rotation')).toHaveTextContent('90');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(putBodies).toHaveLength(1);
     expect(putBodies[0].furniture[0].rotation).toBe(90);
 
+    vi.useRealTimers();
     firstRender.unmount();
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
