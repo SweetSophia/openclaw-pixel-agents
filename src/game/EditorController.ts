@@ -59,6 +59,7 @@ export class EditorController {
   private touchStartPos: { x: number; y: number } | null = null;
   private touchCurrentPos: { x: number; y: number } | null = null;
   private lastTapTime = 0;
+  private lastTapFurnitureId: string | null = null;
   private pinchStartDist = 0;
   private pinchStartZoom = 1;
   private cameraZoom = 1;
@@ -112,6 +113,8 @@ export class EditorController {
     this._editorMode = enabled;
     this._selectedFurnitureType = null;
     this._selectedFurnitureId = null;
+    this.lastTapTime = 0;
+    this.lastTapFurnitureId = null;
     this.canvas.style.cursor = 'default';
   }
 
@@ -229,6 +232,8 @@ export class EditorController {
       this.touchStartPos = null;
       this.touchCurrentPos = null;
       this.touchMoved = true;
+      this.lastTapTime = 0;
+      this.lastTapFurnitureId = null;
       this.pinchStartDist = touchDistance(event.touches[0], event.touches[1]);
       this.pinchStartZoom = this.cameraZoom;
       return;
@@ -292,7 +297,7 @@ export class EditorController {
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
 
-    // A furniture hit is only a drag candidate until the touch crosses the
+    // A furniture hit becomes a drag only after the touch crosses the
     // tap threshold. This keeps ordinary finger jitter eligible for a tap.
     if (this._editorMode && this.touchDragging && this.touchMoved) {
       this.host.previewFurnitureMove(
@@ -311,6 +316,8 @@ export class EditorController {
       const dragging = this.touchDragging;
       this.touchDragging = null;
       if (dragging && this.touchMoved) {
+        this.lastTapTime = 0;
+        this.lastTapFurnitureId = null;
         if (this.touchCurrentPos) {
           const result = this.host.screenToGrid(this.touchCurrentPos.x, this.touchCurrentPos.y);
           if (result) {
@@ -331,18 +338,24 @@ export class EditorController {
         }
 
         const now = this.now();
-        if (now - this.lastTapTime < EditorController.DOUBLE_TAP_MS) {
+        if (
+          dragging
+          && dragging.id === this.lastTapFurnitureId
+          && now - this.lastTapTime < EditorController.DOUBLE_TAP_MS
+        ) {
           const rotated = this.host.rotateFurnitureAt(result.gridX, result.gridY);
           if (rotated) {
             this.callbacks?.onRotateFurniture(rotated.id, rotated.rotation);
             this.sounds.place();
             this.lastTapTime = 0;
+            this.lastTapFurnitureId = null;
             this.touchStartPos = null;
             this.touchCurrentPos = null;
             return;
           }
         }
         this.lastTapTime = now;
+        this.lastTapFurnitureId = dragging?.id ?? null;
 
         if (this._selectedFurnitureType) {
           this.callbacks?.onPlaceFurniture(this._selectedFurnitureType, result.gridX, result.gridY);
@@ -371,6 +384,8 @@ export class EditorController {
     this.touchCurrentPos = null;
     this.touchDragging = null;
     this.touchMoved = false;
+    this.lastTapTime = 0;
+    this.lastTapFurnitureId = null;
     this._mouseGridX = -1;
     this._mouseGridY = -1;
   };

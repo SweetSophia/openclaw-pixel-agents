@@ -163,6 +163,25 @@ describe('EditorController', () => {
     expect(sounds.place).toHaveBeenCalledOnce();
   });
 
+  it('does not rotate when consecutive taps hit different furniture', () => {
+    furniture = { id: 'desk-1', x: 3, y: 4 };
+    controller.attach();
+    controller.setEditorMode(true);
+
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 4, clientY: 5 }]));
+    canvas.dispatchEvent(touchEvent('touchend', []));
+
+    furniture = { id: 'chair-1', x: 8, y: 9 };
+    nowMs = 1_200;
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 9, clientY: 10 }]));
+    canvas.dispatchEvent(touchEvent('touchend', []));
+
+    expect(host.rotateFurnitureAt).not.toHaveBeenCalled();
+    expect(callbacks.onRotateFurniture).not.toHaveBeenCalled();
+    expect(callbacks.onSelectFurniture).toHaveBeenNthCalledWith(1, 'desk-1');
+    expect(callbacks.onSelectFurniture).toHaveBeenNthCalledWith(2, 'chair-1');
+  });
+
   it('preserves single-tap touch deletion without starting a drag', () => {
     furniture = { id: 'desk-1', x: 3, y: 4 };
     controller.attach();
