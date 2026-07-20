@@ -31,8 +31,10 @@ import {
   SUBAGENT_LIFETIME,
 } from './SubAgentFSM';
 import { getDayPhase } from './Schedule';
+import { sfx } from '../audio/SoundFX';
 
-// Web Audio is unavailable in jsdom; ship no-op spies in place of the singleton.
+// Web Audio is unavailable in jsdom; replace the singleton with no-op spies
+// that cover exactly the methods the production engine calls.
 vi.mock('../audio/SoundFX', () => ({
   sfx: {
     click: vi.fn(),
@@ -45,7 +47,6 @@ vi.mock('../audio/SoundFX', () => ({
     spawn: vi.fn(),
     despawn: vi.fn(),
     footstep: vi.fn(),
-    movement: vi.fn(),
   },
 }));
 
@@ -72,7 +73,6 @@ type SubAgentCharacter = {
 
 type TestGameEngine = {
   characters: Map<string, SubAgentCharacter>;
-  placedFurniture: PlacedFurniture[];
   nowMs: number;
   dayPhase: number;
   _currentPhase: ReturnType<typeof getDayPhase>;
@@ -220,6 +220,7 @@ describe('GameEngine integration: editor adapters', () => {
   afterEach(() => {
     engine.stop();
     vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('routes numeric screenToGrid + editor placement through the host closure', () => {
@@ -307,22 +308,26 @@ describe('GameEngine integration: sub-agent lifecycle', () => {
   afterEach(() => {
     engine.stop();
     vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
-  it('applies the tickSubAgent plan: transition sound, monotonic fade, removal', async () => {
-    const { sfx } = await import('../audio/SoundFX');
-    const despawnSpy = (sfx as unknown as { despawn: ReturnType<typeof vi.fn> }).despawn;
+  it('applies the tickSubAgent plan: transition sound, monotonic fade, removal', () => {
+    const despawnSpy = vi.mocked(sfx.despawn);
 
     // Pin `nowMs` so the sub-agent spawn time is known deterministically.
+    // The post-call assertion turns `update(dt)` not reading `performance.now()`
+    // back into the test into a hard regression barrier (ora-3 advisory #1).
     engine.nowMs = 1_000;
     engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
     expect(engine.characters.has('sub-1')).toBe(true);
     expect(engine.isCharacterDying('sub-1')).toBe(false);
+    expect(engine.nowMs).toBe(1_000);
 
     // Frame that crosses SUBAGENT_LIFETIME: should fire exactly one despawn-sound
     // and apply the first fade decrement.
     engine.nowMs = 1_000 + SUBAGENT_LIFETIME + 50;
     engine.update(0.05);
+    expect(engine.nowMs).toBe(1_000 + SUBAGENT_LIFETIME + 50);
 
     expect(engine.isCharacterDying('sub-1')).toBe(true);
     expect(despawnSpy).toHaveBeenCalledTimes(1);
@@ -331,14 +336,15 @@ describe('GameEngine integration: sub-agent lifecycle', () => {
 
     // Subsequent dying ticks decay fade monotonically and MUST NOT re-emit the sound.
     const fadeStepMs = 100;
-    const fadeDecayPerStep = fadeStepMs / SUBAGENT_FADE_DURATION;
     engine.nowMs += fadeStepMs;
     engine.update(fadeStepMs / 1000);
     expect(despawnSpy).toHaveBeenCalledTimes(1);
     expect(engine.characters.get('sub-1')!.fadeAlpha).toBeLessThan(fadeAfterFirstDyingTick);
 
-    // Exhaust the fade window; engine must drop the character from its map.
-    for (let i = 0; i < 30; i++) {
+    // Exhaust the fade window: bound the loop on the FSM constant, not a magic
+    // iteration count, so this stays correct if SUBAGENT_FADE_DURATION changes.
+    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / fadeStepMs) + 1;
+    for (let i = 0; i < fadeSteps; i++) {
       if (!engine.characters.has('sub-1')) break;
       engine.nowMs += fadeStepMs;
       engine.update(fadeStepMs / 1000);
@@ -366,20 +372,27 @@ describe('GameEngine integration: schedule progression and overlay render', () =
   afterEach(() => {
     engine.stop();
     vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('wraps dayPhase modulo 1 and feeds the recomputed phase into renderDayNight', () => {
-    // 0.99 + 0.1 cycle (= 12s of the 120s cycle) → wrap to ~0.09.
+    // Drive the schedule through the same `dt` clamp production uses in `loop()`
+    // (Math.min(rawDt, 0.1)). A single `update(12)` would only prove the modulo
+    // arithmetic and let a future `if (dt < 1) skip` gate regress in silence.
     engine.dayPhase = 0.99;
     const phaseBefore = getDayPhase(0.99).overlay;
 
-    engine.update(12);
+    // 120 × 0.1s ticks = 12s of in-game time. dayPhase: 0.99 → 0.99 + 0.1 = 1.09 → 0.09.
+    for (let i = 0; i < 120; i++) engine.update(0.1);
     expect(engine.dayPhase).toBeCloseTo(0.09, 5);
 
     // Internal _currentPhase must track the same interpolated values as the
-    // pure Schedule module (no parallel/duplicated logic).
-    expect(engine._currentPhase.label).toBe(getDayPhase(engine.dayPhase).label);
-    expect(engine._currentPhase.overlay).toBe(getDayPhase(engine.dayPhase).overlay);
+    // pure Schedule module (no parallel/duplicated logic). Cache the expected
+    // phase once for symmetry across label / overlay / light (Sourcery).
+    const expected = getDayPhase(engine.dayPhase);
+    expect(engine._currentPhase.label).toBe(expected.label);
+    expect(engine._currentPhase.overlay).toBe(expected.overlay);
+    expect(engine._currentPhase.light).toBeCloseTo(expected.light, 5);
 
     // renderDayNight uses the FIRST fillRect to paint the day/night overlay
     // across the whole grid; its fillStyle must equal the recomputed overlay.
@@ -391,7 +404,7 @@ describe('GameEngine integration: schedule progression and overlay render', () =
     const fullOverlayFill = recorded.fills.find(
       (f) => f.x === 0 && f.y === 0 && f.w === w && f.h === h,
     );
-    expect(fullOverlayFill?.style).toBe(getDayPhase(engine.dayPhase).overlay);
+    expect(fullOverlayFill?.style).toBe(expected.overlay);
     expect(fullOverlayFill?.style).not.toBe(phaseBefore);
   });
 });
