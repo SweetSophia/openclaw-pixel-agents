@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -43,6 +43,14 @@ function latest<T>(items: T[]): T {
   const item = items[items.length - 1];
   if (!item) throw new Error('Expected at least one item');
   return item;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 /** Create a fetch mock that responds to the layout API routes. */
@@ -308,6 +316,85 @@ describe('useLayoutStore', () => {
     expect(captures.lastPutBody?.furniture).toEqual([
       { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
     ]);
+  });
+
+  it('preserves and serializes edits made while an older save is in flight', async () => {
+    layouts.default = {
+      ...layouts.default,
+      furniture: [{ id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 }],
+    };
+    await renderStoreProbe();
+
+    const initialFetch = fetch;
+    const firstResponse = deferred<Response>();
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) return firstResponse.promise;
+        return new Response(JSON.stringify({ layout: body }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    let firstSave!: Promise<void>;
+    act(() => {
+      firstSave = latest(snapshots).saveActiveLayout();
+    });
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+
+    vi.useFakeTimers();
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const savedOlderLayout: LayoutDoc = {
+      id: 'default',
+      name: 'Default',
+      width: 24,
+      height: 16,
+      furniture: [{ id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 }],
+      seats: {},
+      updatedAt: 2_000,
+    };
+    await act(async () => {
+      firstResponse.resolve(new Response(JSON.stringify({ layout: savedOlderLayout }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await firstSave;
+    });
+
+    expect(latest(snapshots).activeLayout?.furniture[0].rotation).toBe(90);
+    expect(latest(snapshots).isDirty).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].furniture[0].rotation).toBe(90);
+    expect(putBodies[1].baseUpdatedAt).toBe(2_000);
   });
 
   it('debounces rapid furniture changes into a single save', async () => {

@@ -45,6 +45,11 @@ export function useLayoutStore() {
 
   const [catalog, setCatalog] = useState<string[]>([]);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  // Tracks the last server revision independently from the optimistic local
+  // document. A stale response may advance this revision without being
+  // allowed to replace newer furniture edits in the UI.
+  const persistedRevisionRef = useRef<{ id: string; updatedAt: number } | null>(null);
+  const furnitureEditVersionRef = useRef(0);
 
   // --- Auto-save state ---
   // isDirty: true when furniture has been changed but not yet persisted.
@@ -67,6 +72,9 @@ export function useLayoutStore() {
   const setActiveLayoutProgrammatic = useCallback((layout: LayoutDoc | null) => {
     skipAutoSaveRef.current = true;
     setIsDirty(false);
+    persistedRevisionRef.current = layout
+      ? { id: layout.id, updatedAt: layout.updatedAt }
+      : null;
     setActiveLayout(layout);
   }, []);
 
@@ -108,8 +116,13 @@ export function useLayoutStore() {
       // the ref sync.
       const currentLayout = activeLayoutRef.current;
       if (!currentLayout) return;
+      const editVersionAtSaveStart = furnitureEditVersionRef.current;
+      const persistedRevision = persistedRevisionRef.current;
+      const baseUpdatedAt = persistedRevision?.id === currentLayout.id
+        ? persistedRevision.updatedAt
+        : currentLayout.updatedAt;
 
-      const merged = { ...currentLayout, ...updates, baseUpdatedAt: currentLayout.updatedAt, updatedAt: Date.now() };
+      const merged = { ...currentLayout, ...updates, baseUpdatedAt, updatedAt: Date.now() };
 
       try {
         const response = await fetch(`${API_BASE}/layouts/${merged.id}`, {
@@ -132,7 +145,21 @@ export function useLayoutStore() {
         // Success — reset retry counter
         retryAttemptRef.current = 0;
         const data = await response.json().catch(() => null);
-        setActiveLayoutProgrammatic(data?.layout ?? merged);
+        const savedLayout = data?.layout ?? merged;
+        persistedRevisionRef.current = {
+          id: savedLayout.id,
+          updatedAt: savedLayout.updatedAt,
+        };
+
+        // The response is authoritative only for the snapshot it saved. If
+        // the user edited or switched layouts while the PUT was in flight,
+        // retain that newer local state and let its queued auto-save proceed.
+        if (
+          furnitureEditVersionRef.current === editVersionAtSaveStart
+          && activeLayoutRef.current === currentLayout
+        ) {
+          setActiveLayoutProgrammatic(savedLayout);
+        }
         fetchLayouts();
       } catch (err: any) {
         console.error('Failed to save layout:', err);
@@ -199,6 +226,8 @@ export function useLayoutStore() {
   const updateFurniture = useCallback((
     furnitureOrUpdater: PlacedFurniture[] | ((prev: PlacedFurniture[]) => PlacedFurniture[]),
   ) => {
+    if (!activeLayoutRef.current) return;
+    furnitureEditVersionRef.current++;
     setActiveLayout(prev => {
       if (!prev) return null;
       const furniture = typeof furnitureOrUpdater === 'function'
@@ -262,9 +291,12 @@ export function useLayoutStore() {
 
       const currentLayout = activeLayoutRef.current;
       if (currentLayout) {
+        const persistedRevision = persistedRevisionRef.current;
         const merged = {
           ...currentLayout,
-          baseUpdatedAt: currentLayout.updatedAt,
+          baseUpdatedAt: persistedRevision?.id === currentLayout.id
+            ? persistedRevision.updatedAt
+            : currentLayout.updatedAt,
           updatedAt: Date.now(),
         };
         fetch(`${API_BASE}/layouts/${merged.id}`, {
