@@ -146,10 +146,12 @@ export function useLayoutStore() {
         retryAttemptRef.current = 0;
         const data = await response.json().catch(() => null);
         const savedLayout = data?.layout ?? merged;
-        persistedRevisionRef.current = {
-          id: savedLayout.id,
-          updatedAt: savedLayout.updatedAt,
-        };
+        if (activeLayoutRef.current?.id === savedLayout.id) {
+          persistedRevisionRef.current = {
+            id: savedLayout.id,
+            updatedAt: savedLayout.updatedAt,
+          };
+        }
 
         // The response is authoritative only for the snapshot it saved. If
         // the user edited or switched layouts while the PUT was in flight,
