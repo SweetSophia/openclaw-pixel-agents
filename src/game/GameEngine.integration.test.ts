@@ -209,6 +209,7 @@ describe('GameEngine integration: editor adapters', () => {
       onPlaceFurniture: vi.fn(),
       onSelectFurniture: vi.fn(),
       onMoveFurniture: vi.fn(),
+      onRotateFurniture: vi.fn(),
     };
     gameCallbacks = { onCharacterClick: vi.fn() };
 
@@ -289,6 +290,7 @@ describe('GameEngine integration: editor adapters', () => {
       }),
     );
     expect(engine.getPlacedFurniture()[0].rotation).toBe(90);
+    expect(editorCallbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
   });
 });
 

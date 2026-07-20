@@ -4,6 +4,7 @@ export interface EditorCallbacks {
   onPlaceFurniture: (type: string, gridX: number, gridY: number) => void;
   onSelectFurniture: (id: string | null) => void;
   onMoveFurniture: (id: string, gridX: number, gridY: number) => void;
+  onRotateFurniture: (id: string, rotation: number) => void;
 }
 
 export interface FurnitureHit {
@@ -12,11 +13,16 @@ export interface FurnitureHit {
   y: number;
 }
 
+export interface FurnitureRotation {
+  id: string;
+  rotation: number;
+}
+
 export interface EditorControllerHost {
   screenToGrid: (clientX: number, clientY: number) => { gridX: number; gridY: number } | null;
   findFurnitureAt: (gridX: number, gridY: number) => FurnitureHit | null;
   previewFurnitureMove: (id: string, gridX: number, gridY: number) => void;
-  rotateFurnitureAt: (gridX: number, gridY: number) => boolean;
+  rotateFurnitureAt: (gridX: number, gridY: number) => FurnitureRotation | null;
   findCharacterAt: (gridX: number, gridY: number) => string | null;
   hasSelectedAgent: () => boolean;
   handleTouchGridTap: (gridX: number, gridY: number) => void;
@@ -212,7 +218,8 @@ export class EditorController {
     event.preventDefault();
     const result = this.host.screenToGrid(event.clientX, event.clientY);
     if (!result) return;
-    this.host.rotateFurnitureAt(result.gridX, result.gridY);
+    const rotated = this.host.rotateFurnitureAt(result.gridX, result.gridY);
+    if (rotated) this.callbacks?.onRotateFurniture(rotated.id, rotated.rotation);
   };
 
   private handleTouchStart = (event: TouchEvent): void => {
@@ -323,7 +330,9 @@ export class EditorController {
 
         const now = this.now();
         if (now - this.lastTapTime < EditorController.DOUBLE_TAP_MS) {
-          if (this.host.rotateFurnitureAt(result.gridX, result.gridY)) {
+          const rotated = this.host.rotateFurnitureAt(result.gridX, result.gridY);
+          if (rotated) {
+            this.callbacks?.onRotateFurniture(rotated.id, rotated.rotation);
             this.sounds.place();
             this.lastTapTime = 0;
             this.touchStartPos = null;

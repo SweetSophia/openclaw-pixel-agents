@@ -232,9 +232,9 @@ export class GameEngine {
         },
         rotateFurnitureAt: (gridX, gridY) => {
           const item = this.findFurnitureAt(gridX, gridY);
-          if (!item) return false;
+          if (!item) return null;
           item.rotation = ((item.rotation || 0) + 90) % 360;
-          return true;
+          return { id: item.id, rotation: item.rotation };
         },
         findCharacterAt: (gridX, gridY) => this.findCharacterAt(gridX, gridY),
         hasSelectedAgent: () => this.selectedAgentId !== null,
