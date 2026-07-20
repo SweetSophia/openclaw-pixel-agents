@@ -141,7 +141,7 @@ When editor mode is active:
 - Touch: single tap = place/select, double-tap = rotate, drag = move
 - Clicking furniture in delete mode immediately deletes it
 
-The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `onMoveFurniture`) back to React, which updates the layout store.
+The engine fires `EditorCallbacks` (`onPlaceFurniture`, `onSelectFurniture`, `onMoveFurniture`, `onRotateFurniture`) back to React, which updates the layout store. Rotation callbacks carry the exact post-rotation angle so the canvas and store cannot double-increment while sharing a furniture object.
 
 ## Non-Obvious Gotchas
 

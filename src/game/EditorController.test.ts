@@ -31,7 +31,9 @@ describe('EditorController', () => {
       screenToGrid: vi.fn((x: number, y: number) => ({ gridX: x, gridY: y })),
       findFurnitureAt: vi.fn(() => furniture),
       previewFurnitureMove: vi.fn(),
-      rotateFurnitureAt: vi.fn(() => furniture !== null),
+      rotateFurnitureAt: vi.fn(() => furniture
+        ? { id: furniture.id, rotation: 90 }
+        : null),
       findCharacterAt: vi.fn(() => null),
       hasSelectedAgent: vi.fn(() => false),
       handleTouchGridTap: vi.fn(),
@@ -41,6 +43,7 @@ describe('EditorController', () => {
       onPlaceFurniture: vi.fn(),
       onSelectFurniture: vi.fn(),
       onMoveFurniture: vi.fn(),
+      onRotateFurniture: vi.fn(),
     };
     controller = new EditorController(
       canvas,
@@ -115,12 +118,14 @@ describe('EditorController', () => {
     expect(sounds.place).toHaveBeenCalledOnce();
   });
 
-  it('rotates furniture on editor context menu without adding sound', () => {
+  it('reports the resulting context-menu rotation without adding sound', () => {
+    furniture = { id: 'desk-1', x: 3, y: 4 };
     controller.attach();
     controller.setEditorMode(true);
     canvas.dispatchEvent(new MouseEvent('contextmenu', { clientX: 4, clientY: 5, cancelable: true }));
 
     expect(host.rotateFurnitureAt).toHaveBeenCalledWith(4, 5);
+    expect(callbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
     expect(sounds.place).not.toHaveBeenCalled();
   });
 
@@ -151,6 +156,7 @@ describe('EditorController', () => {
     canvas.dispatchEvent(touchEvent('touchend', []));
 
     expect(host.rotateFurnitureAt).toHaveBeenCalledWith(4, 5);
+    expect(callbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
     expect(sounds.place).toHaveBeenCalledOnce();
   });
 

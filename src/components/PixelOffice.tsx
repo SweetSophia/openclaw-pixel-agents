@@ -15,13 +15,14 @@ interface Props {
   onPlaceFurniture: (type: string, gridX: number, gridY: number) => void;
   onSelectFurniture: (id: string | null) => void;
   onMoveFurniture: (id: string, gridX: number, gridY: number) => void;
+  onRotateFurniture: (id: string, rotation: number) => void;
   onCharacterClick?: (agentId: string) => void;
 }
 
 export const PixelOffice: React.FC<Props> = ({
   agents, editorMode, deleteMode, activeLayout,
   selectedFurnitureType,
-  onPlaceFurniture, onSelectFurniture, onMoveFurniture,
+  onPlaceFurniture, onSelectFurniture, onMoveFurniture, onRotateFurniture,
   onCharacterClick,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -51,8 +52,13 @@ export const PixelOffice: React.FC<Props> = ({
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    engine.setEditorCallbacks({ onPlaceFurniture, onSelectFurniture, onMoveFurniture });
-  }, [onPlaceFurniture, onSelectFurniture, onMoveFurniture]);
+    engine.setEditorCallbacks({
+      onPlaceFurniture,
+      onSelectFurniture,
+      onMoveFurniture,
+      onRotateFurniture,
+    });
+  }, [onPlaceFurniture, onSelectFurniture, onMoveFurniture, onRotateFurniture]);
 
   // Wire game callbacks (character click)
   useEffect(() => {

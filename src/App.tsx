@@ -64,14 +64,16 @@ export const App: React.FC = () => {
     setSelectedFurnitureType(null);
   }, [deleteMode, updateFurniture]);
 
-  // Rotate selected furniture
-  const handleRotateFurniture = useCallback((id: string) => {
-    if (!activeLayout) return;
-    const newFurniture = activeLayout.furniture.map(f =>
-      f.id === id ? { ...f, rotation: ((f.rotation || 0) + 90) % 360 } : f
-    );
-    updateFurniture(newFurniture);
-  }, [activeLayout, updateFurniture]);
+  // Toolbar rotations increment the latest store value. Canvas rotations pass
+  // the exact angle already applied by GameEngine, avoiding a second 90° turn
+  // when the engine and React temporarily share the same furniture object.
+  const handleRotateFurniture = useCallback((id: string, rotation?: number) => {
+    updateFurniture(furniture => furniture.map(f =>
+      f.id === id
+        ? { ...f, rotation: rotation ?? ((f.rotation || 0) + 90) % 360 }
+        : f
+    ));
+  }, [updateFurniture]);
 
   // Delete furniture
   const handleDeleteFurniture = useCallback((id: string) => {
@@ -159,6 +161,7 @@ export const App: React.FC = () => {
             onPlaceFurniture={handlePlaceFurniture}
             onSelectFurniture={handleSelectFurniture}
             onMoveFurniture={handleMoveFurniture}
+            onRotateFurniture={handleRotateFurniture}
             onCharacterClick={handleCharacterClick}
           />
         </div>
