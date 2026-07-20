@@ -462,6 +462,225 @@ describe('useLayoutStore', () => {
     });
   });
 
+  it('does not trust a successful save response without a valid layout', async () => {
+    await renderStoreProbe();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          layouts.default = { ...body, updatedAt: 2_000 };
+          return new Response(null, { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          layout: { ...body, updatedAt: 3_000 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+
+    expect(latest(snapshots).isDirty).toBe(true);
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].baseUpdatedAt).toBe(2_000);
+  });
+
+  it('refreshes the server revision and retries a conflicted autosave', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          layouts.default = { ...layouts.default, updatedAt: 2_000 };
+          return new Response(JSON.stringify({ error: 'Conflict' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({
+          layout: { ...body, updatedAt: 3_000 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+    expect(latest(snapshots).isDirty).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].baseUpdatedAt).toBe(2_000);
+    expect(putBodies[1].furniture[0].rotation).toBe(90);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('does not move the persisted revision backwards after a same-id reload', async () => {
+    await renderStoreProbe();
+
+    const initialFetch = fetch;
+    const firstResponse = deferred<Response>();
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) return firstResponse.promise;
+        return new Response(JSON.stringify({ layout: body }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    let firstSave!: Promise<void>;
+    act(() => {
+      firstSave = latest(snapshots).saveActiveLayout();
+    });
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+
+    layouts.default = { ...layouts.default, updatedAt: 3_000 };
+    await act(async () => {
+      await latest(snapshots).loadLayoutById('default');
+    });
+    expect(latest(snapshots).activeLayout?.updatedAt).toBe(3_000);
+
+    await act(async () => {
+      firstResponse.resolve(new Response(JSON.stringify({
+        layout: { ...layouts.default, updatedAt: 2_000 },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await firstSave;
+    });
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].baseUpdatedAt).toBe(3_000);
+  });
+
+  it('recovers a keepalive conflict when the page remains active', async () => {
+    await renderStoreProbe();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    let revisionFetches = 0;
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (init.keepalive) {
+          layouts.default = { ...layouts.default, updatedAt: 2_000 };
+          return new Response(JSON.stringify({ error: 'Conflict' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: body }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/api/layouts/default') && init?.method !== 'PUT') {
+        revisionFetches++;
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+    window.dispatchEvent(new Event('beforeunload') as BeforeUnloadEvent);
+    await waitFor(() => expect(revisionFetches).toBe(1));
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[0].baseUpdatedAt).toBe(1_000);
+    expect(putBodies[1].baseUpdatedAt).toBe(2_000);
+  });
+
   it('debounces rapid furniture changes into a single save', async () => {
     await renderStoreProbe();
 
