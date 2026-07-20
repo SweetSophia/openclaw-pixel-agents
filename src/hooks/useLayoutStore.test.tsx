@@ -397,6 +397,71 @@ describe('useLayoutStore', () => {
     expect(putBodies[1].baseUpdatedAt).toBe(2_000);
   });
 
+  it('keeps a newly loaded layout active when an older layout save finishes', async () => {
+    await renderStoreProbe();
+
+    const initialFetch = fetch;
+    const firstResponse = deferred<Response>();
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.includes('/api/layouts/') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) return firstResponse.promise;
+      }
+      return initialFetch(input, init);
+    }));
+
+    let defaultSave!: Promise<void>;
+    act(() => {
+      defaultSave = latest(snapshots).saveActiveLayout();
+    });
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+
+    await act(async () => {
+      await latest(snapshots).loadLayoutById('other');
+    });
+    expect(latest(snapshots).activeLayout).toMatchObject({
+      id: 'other',
+      updatedAt: 2_000,
+    });
+
+    const savedDefaultLayout: LayoutDoc = {
+      ...layouts.default,
+      updatedAt: 3_000,
+    };
+    await act(async () => {
+      firstResponse.resolve(new Response(JSON.stringify({ layout: savedDefaultLayout }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await defaultSave;
+    });
+
+    expect(latest(snapshots).activeLayout).toMatchObject({
+      id: 'other',
+      updatedAt: 2_000,
+    });
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1]).toMatchObject({
+      id: 'other',
+      baseUpdatedAt: 2_000,
+    });
+  });
+
   it('debounces rapid furniture changes into a single save', async () => {
     await renderStoreProbe();
 
