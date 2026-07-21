@@ -13,6 +13,45 @@ export interface LayoutDoc {
   updatedAt: number;
 }
 
+type PersistedRevision = { id: string; updatedAt: number };
+
+function isLayoutDoc(value: unknown): value is LayoutDoc {
+  if (!value || typeof value !== 'object') return false;
+  const layout = value as Record<string, unknown>;
+  return typeof layout.id === 'string' && layout.id.length > 0
+    && typeof layout.name === 'string' && layout.name.trim().length > 0
+    && Number.isSafeInteger(layout.width) && (layout.width as number) > 0
+    && Number.isSafeInteger(layout.height) && (layout.height as number) > 0
+    && Number.isSafeInteger(layout.updatedAt) && (layout.updatedAt as number) >= 0
+    && Array.isArray(layout.furniture)
+    && layout.furniture.every(item => {
+      if (!item || typeof item !== 'object') return false;
+      const furniture = item as Record<string, unknown>;
+      return typeof furniture.id === 'string'
+        && typeof furniture.type === 'string'
+        && Number.isSafeInteger(furniture.x)
+        && Number.isSafeInteger(furniture.y)
+        && [0, 90, 180, 270].includes(furniture.rotation as number);
+    })
+    && !!layout.seats
+    && typeof layout.seats === 'object'
+    && !Array.isArray(layout.seats)
+    && Object.values(layout.seats as Record<string, unknown>).every(seat => {
+      if (!seat || typeof seat !== 'object') return false;
+      const position = seat as Record<string, unknown>;
+      return Number.isSafeInteger(position.x) && Number.isSafeInteger(position.y);
+    });
+}
+
+function pickBaseUpdatedAt(
+  currentLayout: LayoutDoc,
+  persistedRevision: PersistedRevision | null,
+): number {
+  return persistedRevision?.id === currentLayout.id
+    ? persistedRevision.updatedAt
+    : currentLayout.updatedAt;
+}
+
 /**
  * Dispatched action: a new layout value, or a functional updater.
  * Every mutation flows through the reducer, which guarantees the ref
@@ -45,6 +84,11 @@ export function useLayoutStore() {
 
   const [catalog, setCatalog] = useState<string[]>([]);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  // Tracks the last server revision independently from the optimistic local
+  // document. A stale response may advance this revision without being
+  // allowed to replace newer furniture edits in the UI.
+  const persistedRevisionRef = useRef<PersistedRevision | null>(null);
+  const furnitureEditVersionRef = useRef(0);
 
   // --- Auto-save state ---
   // isDirty: true when furniture has been changed but not yet persisted.
@@ -60,6 +104,40 @@ export function useLayoutStore() {
   // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
   const retryAttemptRef = useRef(0);
 
+  const scheduleSaveRetry = useCallback((retry: () => void) => {
+    const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+    retryAttemptRef.current++;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      retry();
+    }, delay);
+  }, []);
+
+  const advancePersistedRevision = useCallback((id: string, updatedAt: number) => {
+    if (activeLayoutRef.current?.id !== id || !Number.isSafeInteger(updatedAt)) return false;
+    const current = persistedRevisionRef.current;
+    if (!current || current.id !== id || updatedAt > current.updatedAt) {
+      persistedRevisionRef.current = { id, updatedAt };
+    }
+    return true;
+  }, []);
+
+  const refreshPersistedRevision = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/layouts/${id}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const layout: unknown = await response.json();
+      if (!isLayoutDoc(layout) || layout.id !== id) {
+        throw new Error('Invalid layout response');
+      }
+      return advancePersistedRevision(id, layout.updatedAt);
+    } catch (err) {
+      console.error('Failed to refresh layout revision:', err);
+      return false;
+    }
+  }, [advancePersistedRevision]);
+
   // Wrapper for programmatic layout changes. Always sets skipAutoSaveRef
   // before setActiveLayout so the auto-save effect skips these changes.
   // Also clears isDirty. This makes the skip-auto-save invariant
@@ -67,6 +145,18 @@ export function useLayoutStore() {
   const setActiveLayoutProgrammatic = useCallback((layout: LayoutDoc | null) => {
     skipAutoSaveRef.current = true;
     setIsDirty(false);
+    // Reset the retry counter so the first failure on a freshly-loaded
+    // layout starts from the base 2s backoff, not the previous layout's
+    // inflated exponent.
+    retryAttemptRef.current = 0;
+    if (!layout) {
+      persistedRevisionRef.current = null;
+    } else {
+      const current = persistedRevisionRef.current;
+      if (!current || current.id !== layout.id || layout.updatedAt >= current.updatedAt) {
+        persistedRevisionRef.current = { id: layout.id, updatedAt: layout.updatedAt };
+      }
+    }
     setActiveLayout(layout);
   }, []);
 
@@ -91,7 +181,16 @@ export function useLayoutStore() {
     }
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`);
-      const data = await res.json();
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        console.error('Failed to load layout:', errBody.error ?? `HTTP ${res.status}`);
+        return null;
+      }
+      const data: unknown = await res.json();
+      if (!isLayoutDoc(data)) {
+        console.error('Failed to load layout: invalid response body');
+        return null;
+      }
       setActiveLayoutProgrammatic(data);
       return data;
     } catch (err) {
@@ -108,8 +207,11 @@ export function useLayoutStore() {
       // the ref sync.
       const currentLayout = activeLayoutRef.current;
       if (!currentLayout) return;
+      const editVersionAtSaveStart = furnitureEditVersionRef.current;
+      const persistedRevision = persistedRevisionRef.current;
+      const baseUpdatedAt = pickBaseUpdatedAt(currentLayout, persistedRevision);
 
-      const merged = { ...currentLayout, ...updates, baseUpdatedAt: currentLayout.updatedAt, updatedAt: Date.now() };
+      const merged = { ...currentLayout, ...updates, baseUpdatedAt, updatedAt: Date.now() };
 
       try {
         const response = await fetch(`${API_BASE}/layouts/${merged.id}`, {
@@ -120,31 +222,61 @@ export function useLayoutStore() {
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
           console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
-          // Retry on 5xx (server error) but not 4xx (client error won't succeed)
-          if (response.status >= 500) {
-            const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
-            retryAttemptRef.current++;
-            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-            autoSaveTimerRef.current = setTimeout(() => { saveActiveLayout(); }, delay);
+          if (response.status === 409) {
+            await refreshPersistedRevision(merged.id);
+            if (activeLayoutRef.current?.id === merged.id) {
+              scheduleSaveRetry(() => { void saveActiveLayout(); });
+            }
+          } else if (response.status >= 500) {
+            scheduleSaveRetry(() => { void saveActiveLayout(); });
           }
           return;
         }
-        // Success — reset retry counter
-        retryAttemptRef.current = 0;
         const data = await response.json().catch(() => null);
-        setActiveLayoutProgrammatic(data?.layout ?? merged);
+        const savedLayout: unknown = data?.layout;
+        if (!isLayoutDoc(savedLayout) || savedLayout.id !== merged.id) {
+          const reason = !isLayoutDoc(savedLayout)
+            ? 'invalid response body'
+            : `response id mismatch (expected '${merged.id}', got '${savedLayout.id}')`;
+          console.error(`Failed to save layout: ${reason}`);
+          await refreshPersistedRevision(merged.id);
+          if (activeLayoutRef.current?.id === merged.id) {
+            scheduleSaveRetry(() => { void saveActiveLayout(); });
+          }
+          return;
+        }
+        // Success — reset retry counter and advance the revision monotonically.
+        retryAttemptRef.current = 0;
+        const currentRevision = persistedRevisionRef.current;
+        const responseIsCurrent = currentRevision?.id !== savedLayout.id
+          || savedLayout.updatedAt >= currentRevision.updatedAt;
+        advancePersistedRevision(savedLayout.id, savedLayout.updatedAt);
+
+        // The response is authoritative only for the snapshot it saved. If
+        // the user edited or switched layouts while the PUT was in flight,
+        // retain that newer local state and let its queued auto-save proceed.
+        if (
+          responseIsCurrent
+          && furnitureEditVersionRef.current === editVersionAtSaveStart
+          && activeLayoutRef.current === currentLayout
+        ) {
+          setActiveLayoutProgrammatic(savedLayout);
+        }
         fetchLayouts();
       } catch (err: any) {
         console.error('Failed to save layout:', err);
         // Network error — retry with backoff
-        const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
-        retryAttemptRef.current++;
-        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = setTimeout(() => { saveActiveLayout(); }, delay);
+        scheduleSaveRetry(() => { void saveActiveLayout(); });
       }
     });
     return savePromiseRef.current;
-  }, [fetchLayouts, setActiveLayoutProgrammatic]);
+  }, [
+    advancePersistedRevision,
+    fetchLayouts,
+    refreshPersistedRevision,
+    scheduleSaveRetry,
+    setActiveLayoutProgrammatic,
+  ]);
 
   const createLayout = useCallback(async (name: string) => {
     try {
@@ -199,6 +331,8 @@ export function useLayoutStore() {
   const updateFurniture = useCallback((
     furnitureOrUpdater: PlacedFurniture[] | ((prev: PlacedFurniture[]) => PlacedFurniture[]),
   ) => {
+    if (!activeLayoutRef.current) return;
+    furnitureEditVersionRef.current++;
     setActiveLayout(prev => {
       if (!prev) return null;
       const furniture = typeof furnitureOrUpdater === 'function'
@@ -253,7 +387,8 @@ export function useLayoutStore() {
   }, [isDirty]);
 
   // --- beforeunload: emergency save + browser confirmation ---
-  // Registered once with empty deps; reads isDirtyRef for current state.
+  // Reads isDirtyRef/activeLayoutRef for current state; re-registers when
+  // the (stable) save/refresh callbacks change identity.
   // If there are unsaved changes, attempt a keepalive PUT and show the
   // browser's "Leave site?" dialog.
   useEffect(() => {
@@ -262,17 +397,49 @@ export function useLayoutStore() {
 
       const currentLayout = activeLayoutRef.current;
       if (currentLayout) {
+        const persistedRevision = persistedRevisionRef.current;
         const merged = {
           ...currentLayout,
-          baseUpdatedAt: currentLayout.updatedAt,
+          baseUpdatedAt: pickBaseUpdatedAt(currentLayout, persistedRevision),
           updatedAt: Date.now(),
         };
-        fetch(`${API_BASE}/layouts/${merged.id}`, {
+        void fetch(`${API_BASE}/layouts/${merged.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(merged),
           keepalive: true,
-        }).catch(() => {});
+        }).then(async response => {
+          if (response.status === 409) {
+            console.warn('Layout changed elsewhere while leaving; retrying if the page remains open.');
+            await refreshPersistedRevision(merged.id);
+            if (activeLayoutRef.current?.id === merged.id) {
+              scheduleSaveRetry(() => { void saveActiveLayout(); });
+            }
+            return;
+          }
+          if (!response.ok) {
+            console.error(`Failed to save layout before unload: HTTP ${response.status}`);
+            return;
+          }
+          const data = await response.json().catch(() => null);
+          const savedLayout: unknown = data?.layout;
+          if (!isLayoutDoc(savedLayout) || savedLayout.id !== merged.id) {
+            const reason = !isLayoutDoc(savedLayout)
+              ? 'invalid response body'
+              : `response id mismatch (expected '${merged.id}', got '${savedLayout.id}')`;
+            console.error(`Failed to save layout before unload: ${reason}`);
+            return;
+          }
+          // If the unload is cancelled and the page stays open, the next
+          // save must chain from the revision this keepalive PUT actually
+          // persisted — otherwise it 409s on a stale baseUpdatedAt.
+          // isDirty/activeLayout are deliberately untouched: edits landing
+          // after beforeunload are not covered by this save.
+          retryAttemptRef.current = 0;
+          advancePersistedRevision(savedLayout.id, savedLayout.updatedAt);
+        }).catch(err => {
+          console.error('Failed to save layout before unload:', err);
+        });
       }
 
       e.preventDefault();
@@ -280,7 +447,7 @@ export function useLayoutStore() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+  }, [refreshPersistedRevision, saveActiveLayout, scheduleSaveRetry]);
 
   // Initial load
   useEffect(() => {
