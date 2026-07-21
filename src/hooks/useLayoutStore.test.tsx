@@ -681,6 +681,62 @@ describe('useLayoutStore', () => {
     expect(putBodies[1].baseUpdatedAt).toBe(2_000);
   });
 
+  it('advances the persisted revision after a successful keepalive save', async () => {
+    await renderStoreProbe();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (init.keepalive) {
+          return new Response(JSON.stringify({
+            layout: { ...body, updatedAt: 2_000 },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({
+          layout: { ...body, updatedAt: 3_000 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+    window.dispatchEvent(new Event('beforeunload') as BeforeUnloadEvent);
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+    // Flush the keepalive response handler (json parse + revision advance).
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[0].baseUpdatedAt).toBe(1_000);
+    // The follow-up save must chain from the revision the keepalive PUT
+    // persisted (2_000), not the pre-keepalive revision (1_000).
+    expect(putBodies[1].baseUpdatedAt).toBe(2_000);
+  });
+
   it('debounces rapid furniture changes into a single save', async () => {
     await renderStoreProbe();
 
@@ -781,28 +837,62 @@ describe('useLayoutStore', () => {
   });
 
   it('retries auto-save on 5xx with exponential backoff (M1)', async () => {
-    // M1: On 5xx or network errors, the auto-save must reschedule with
-    // exponential backoff so transient server issues don't lose user edits.
+    // M1: On 5xx, scheduleSaveRetry must reschedule with exponential
+    // backoff (2s, 4s, 8s ...) so transient server errors don't strand
+    // the user's edits. Regression test for the refactored retry path.
     await renderStoreProbe();
+    vi.useFakeTimers();
 
-    // Make a change
-    await act(async () => {
-      latest(snapshots).updateFurniture([{ id: 'f1', type: 'desk', x: 1, y: 1, rotation: 0 }]);
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Service Unavailable' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
     });
 
-    // Wait for first auto-save attempt (2s)
-    await act(async () => { await new Promise(r => setTimeout(r, 2100)); });
+    // First save attempt (2s debounce).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+    expect(latest(snapshots).isDirty).toBe(true);
 
-    // The mock returns 200, so the first save succeeded and isDirty is false.
-    // To test retry, we need to simulate a failure. Let's check that the
-    // save was attempted and succeeded:
-    const putCalls = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (call: unknown[]) => {
-        const init = call[1] as RequestInit | undefined;
-        return init?.method === 'PUT';
-      }
-    );
-    expect(putCalls.length).toBeGreaterThan(0);
+    // First retry: scheduled at 2s * 2^0 = 2000ms after the 5xx.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+    // The retried PUT carries the same furniture — the user's edit is preserved.
+    expect(putBodies[1].furniture[0].rotation).toBe(90);
     expect(latest(snapshots).isDirty).toBe(false);
   });
 
