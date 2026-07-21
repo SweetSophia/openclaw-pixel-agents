@@ -145,6 +145,10 @@ export function useLayoutStore() {
   const setActiveLayoutProgrammatic = useCallback((layout: LayoutDoc | null) => {
     skipAutoSaveRef.current = true;
     setIsDirty(false);
+    // Reset the retry counter so the first failure on a freshly-loaded
+    // layout starts from the base 2s backoff, not the previous layout's
+    // inflated exponent.
+    retryAttemptRef.current = 0;
     if (!layout) {
       persistedRevisionRef.current = null;
     } else {
@@ -177,7 +181,16 @@ export function useLayoutStore() {
     }
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`);
-      const data = await res.json();
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        console.error('Failed to load layout:', errBody.error ?? `HTTP ${res.status}`);
+        return null;
+      }
+      const data: unknown = await res.json();
+      if (!isLayoutDoc(data)) {
+        console.error('Failed to load layout: invalid response body');
+        return null;
+      }
       setActiveLayoutProgrammatic(data);
       return data;
     } catch (err) {
@@ -222,7 +235,10 @@ export function useLayoutStore() {
         const data = await response.json().catch(() => null);
         const savedLayout: unknown = data?.layout;
         if (!isLayoutDoc(savedLayout) || savedLayout.id !== merged.id) {
-          console.error('Failed to save layout: invalid response body');
+          const reason = !isLayoutDoc(savedLayout)
+            ? 'invalid response body'
+            : `response id mismatch (expected '${merged.id}', got '${savedLayout.id}')`;
+          console.error(`Failed to save layout: ${reason}`);
           await refreshPersistedRevision(merged.id);
           if (activeLayoutRef.current?.id === merged.id) {
             scheduleSaveRetry(() => { void saveActiveLayout(); });
@@ -371,7 +387,8 @@ export function useLayoutStore() {
   }, [isDirty]);
 
   // --- beforeunload: emergency save + browser confirmation ---
-  // Registered once with empty deps; reads isDirtyRef for current state.
+  // Reads isDirtyRef/activeLayoutRef for current state; re-registers when
+  // the (stable) save/refresh callbacks change identity.
   // If there are unsaved changes, attempt a keepalive PUT and show the
   // browser's "Leave site?" dialog.
   useEffect(() => {
@@ -398,9 +415,25 @@ export function useLayoutStore() {
             if (activeLayoutRef.current?.id === merged.id) {
               scheduleSaveRetry(() => { void saveActiveLayout(); });
             }
-          } else if (!response.ok) {
-            console.error(`Failed to save layout before unload: HTTP ${response.status}`);
+            return;
           }
+          if (!response.ok) {
+            console.error(`Failed to save layout before unload: HTTP ${response.status}`);
+            return;
+          }
+          const data = await response.json().catch(() => null);
+          const savedLayout: unknown = data?.layout;
+          if (!isLayoutDoc(savedLayout) || savedLayout.id !== merged.id) {
+            console.error('Failed to save layout before unload: invalid response body');
+            return;
+          }
+          // If the unload is cancelled and the page stays open, the next
+          // save must chain from the revision this keepalive PUT actually
+          // persisted — otherwise it 409s on a stale baseUpdatedAt.
+          // isDirty/activeLayout are deliberately untouched: edits landing
+          // after beforeunload are not covered by this save.
+          retryAttemptRef.current = 0;
+          advancePersistedRevision(savedLayout.id, savedLayout.updatedAt);
         }).catch(err => {
           console.error('Failed to save layout before unload:', err);
         });
