@@ -251,7 +251,9 @@
 .furniture-palette::-webkit-scrollbar-thumb, .layout-list::-webkit-scrollbar-thumb { background: var(--acc-cyan); border-radius: 4px; }
 
 @media (max-width: 768px) {
-  .editor-toolbar { margin-top: 60px; flex-wrap: wrap; justify-content: center; width: 90%; }
+  /* Room switcher occupies top: 64px + ~44px height = ~108px vertical band. */
+  /* Editor toolbar must clear that band to avoid hit-testing overlap. */
+  .editor-toolbar { margin-top: 120px; flex-wrap: wrap; justify-content: center; width: 90%; }
   .furniture-palette, .layout-manager { position: static; width: auto; max-height: 250px; margin: 12px; }
   .layout-manager { right: auto; }
 }
