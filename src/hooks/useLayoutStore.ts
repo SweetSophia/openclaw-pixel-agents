@@ -424,7 +424,10 @@ export function useLayoutStore() {
           const data = await response.json().catch(() => null);
           const savedLayout: unknown = data?.layout;
           if (!isLayoutDoc(savedLayout) || savedLayout.id !== merged.id) {
-            console.error('Failed to save layout before unload: invalid response body');
+            const reason = !isLayoutDoc(savedLayout)
+              ? 'invalid response body'
+              : `response id mismatch (expected '${merged.id}', got '${savedLayout.id}')`;
+            console.error(`Failed to save layout before unload: ${reason}`);
             return;
           }
           // If the unload is cancelled and the page stays open, the next
