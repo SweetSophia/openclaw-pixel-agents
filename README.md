@@ -1,3 +1,5 @@
+*Development picked up again at 19th of April 2026. Expect many updates and improvements every week now!*
+
 # 🖥️ OpenClaw Pixel Agents
 
 A pixel art office dashboard for [OpenClaw](https://github.com/openclaw/openclaw) — where your AI agents walk around, sit at desks, and visually reflect what they're doing in real time.
