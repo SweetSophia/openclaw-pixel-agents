@@ -631,25 +631,39 @@ async function pollAndBroadcast(): Promise<void> {
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
 const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
-// Pre-compute a fixed-length SHA-256 digest so the comparison never leaks the
-// configured token length via timing (CWE-208). Both sides are always 32 bytes
-// regardless of token length, eliminating the length-mismatch branch that
-// previously allowed timing side-channel analysis.
-//
-// Both INGEST_TOKEN (from env) and the provided Bearer header are JS strings;
-// createHash().update(string) defaults to UTF-8 in Node, so the two sides
-// agree on encoding for arbitrary Unicode tokens.
-const INGEST_TOKEN_DIGEST = INGEST_TOKEN
-  ? createHash("sha256").update(INGEST_TOKEN).digest()
-  : Buffer.alloc(32);
+type IngestTokenCrypto = Readonly<{
+  digestToken: (token: string) => Buffer;
+  compareDigests: (configured: Buffer, provided: Buffer) => boolean;
+}>;
 
-export function authenticateIngest(req: express.Request, _res: express.Response): boolean {
-  if (!INGEST_TOKEN) return false;
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith("Bearer ")) return false;
-  const provided = createHash("sha256").update(auth.slice(7)).digest();
-  return timingSafeEqual(INGEST_TOKEN_DIGEST, provided);
+const defaultIngestTokenCrypto: IngestTokenCrypto = {
+  // Both token sources are strings, and createHash uses UTF-8 for strings by
+  // default, so configured and provided Unicode tokens use the same encoding.
+  digestToken: (token) => createHash("sha256").update(token).digest(),
+  compareDigests: timingSafeEqual,
+};
+
+export function createIngestAuthenticator(
+  ingestToken: string,
+  crypto: IngestTokenCrypto = defaultIngestTokenCrypto,
+): (req: express.Request, res: express.Response) => boolean {
+  // Pre-compute a fixed-length SHA-256 digest so the comparison never leaks
+  // the configured token length via timing (CWE-208). Both sides are always
+  // 32 bytes regardless of token length.
+  const configuredDigest = ingestToken
+    ? crypto.digestToken(ingestToken)
+    : Buffer.alloc(32);
+
+  return (req: express.Request, _res: express.Response): boolean => {
+    if (!ingestToken) return false;
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith("Bearer ")) return false;
+    const providedDigest = crypto.digestToken(auth.slice(7));
+    return crypto.compareDigests(configuredDigest, providedDigest);
+  };
 }
+
+export const authenticateIngest = createIngestAuthenticator(INGEST_TOKEN);
 
 /**
  * POST /api/ingest/agents
