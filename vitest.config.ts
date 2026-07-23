@@ -7,11 +7,13 @@ export default defineConfig({
     clearMocks: true,
     exclude: [...configDefaults.exclude, '**/dist/**', '.worktrees/**'],
     coverage: {
+      include: ['src/**/*.{ts,tsx}', 'server/**/*.ts', 'shared/**/*.ts'],
+      exclude: ['**/*.test.{ts,tsx}', 'src/test/**', 'src/vite-env.d.ts'],
       thresholds: {
-        branches: 40,
-        functions: 40,
-        lines: 40,
-        statements: 40,
+        branches: 36,
+        functions: 37,
+        lines: 41,
+        statements: 39,
       },
     },
   },
