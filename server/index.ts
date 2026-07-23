@@ -735,17 +735,23 @@ app.post("/api/ingest/agents", (req, res) => {
     return;
   }
 
-  const parsedSessions = parseIngestSessions(
+  const parsedSessionsResult = parseIngestSessions(
     sessions,
     new Set(AGENT_REGISTRY.keys()),
   );
-  if (!parsedSessions) {
+  if (!parsedSessionsResult.ok) {
+    logger.warn({
+      subsystem: "ingest",
+      validationCode: parsedSessionsResult.error.code,
+      sessionIndex: parsedSessionsResult.error.sessionIndex,
+      field: parsedSessionsResult.error.field,
+    }, "ingest payload rejected");
     res.status(400).json({ error: "Invalid sessions payload" });
     return;
   }
 
   // Map and broadcast
-  const agentMap = mapToAgentStates(parsedSessions);
+  const agentMap = mapToAgentStates(parsedSessionsResult.sessions);
   const { snapshot } = applyAgentSnapshot(agentStates, agentMap);
 
   lastIngestAt = Date.now();

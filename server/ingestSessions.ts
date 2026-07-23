@@ -9,6 +9,7 @@ export interface CliSession {
   contextTokens?: number | null;
   updatedAt?: number;
   kind?: string;
+  label?: string;
   status?: string;
   abortedLastRun?: boolean;
   inputTokens?: number;
@@ -31,6 +32,31 @@ export interface CliSession {
   totalTokensFresh?: boolean;
 }
 
+export type IngestSessionValidationError = {
+  code:
+    | "sessions-not-array"
+    | "too-many-sessions"
+    | "invalid-session-object"
+    | "unknown-field"
+    | "invalid-key"
+    | "unknown-agent"
+    | "invalid-string"
+    | "invalid-number"
+    | "invalid-boolean"
+    | "invalid-session-id"
+    | "invalid-agent-runtime";
+  sessionIndex?: number;
+  field?: keyof CliSession;
+};
+
+export type ParseIngestSessionsResult =
+  | { ok: true; sessions: CliSession[] }
+  | { ok: false; error: IngestSessionValidationError };
+
+type ParseIngestSessionResult =
+  | { ok: true; session: CliSession }
+  | { ok: false; error: IngestSessionValidationError };
+
 const SESSION_KEYS = new Set<keyof CliSession>([
   "key",
   "agentId",
@@ -40,6 +66,7 @@ const SESSION_KEYS = new Set<keyof CliSession>([
   "contextTokens",
   "updatedAt",
   "kind",
+  "label",
   "status",
   "abortedLastRun",
   "inputTokens",
@@ -64,6 +91,7 @@ const STRING_LIMITS: Partial<Record<keyof CliSession, number>> = {
   model: 256,
   modelProvider: 128,
   kind: 64,
+  label: 256,
   status: 64,
   thinkingLevel: 64,
   modelOverride: 256,
@@ -118,56 +146,83 @@ function isAgentRuntime(value: unknown): value is NonNullable<CliSession["agentR
 function parseIngestSession(
   value: unknown,
   knownAgentIds: ReadonlySet<string>,
-): CliSession | null {
-  if (!isPlainObject(value)) return null;
+  sessionIndex: number,
+): ParseIngestSessionResult {
+  const invalid = (
+    code: IngestSessionValidationError["code"],
+    field?: keyof CliSession,
+  ): ParseIngestSessionResult => ({
+    ok: false,
+    error: { code, sessionIndex, ...(field ? { field } : {}) },
+  });
+
+  if (!isPlainObject(value)) return invalid("invalid-session-object");
   if (!Object.keys(value).every((key) => SESSION_KEYS.has(key as keyof CliSession))) {
-    return null;
+    return invalid("unknown-field");
   }
-  if (!isBoundedString(value.key, STRING_LIMITS.key!)) return null;
-  if (typeof value.agentId !== "string" || !knownAgentIds.has(value.agentId)) return null;
+  if (!isBoundedString(value.key, STRING_LIMITS.key!)) return invalid("invalid-key", "key");
+  if (typeof value.agentId !== "string" || !knownAgentIds.has(value.agentId)) {
+    return invalid("unknown-agent", "agentId");
+  }
 
   for (const [field, maxLength] of Object.entries(STRING_LIMITS) as [keyof CliSession, number][]) {
     const fieldValue = value[field];
-    if (fieldValue !== undefined && !isBoundedString(fieldValue, maxLength)) return null;
+    if (fieldValue !== undefined && !isBoundedString(fieldValue, maxLength)) {
+      return invalid("invalid-string", field);
+    }
   }
   for (const field of NUMBER_FIELDS) {
     const fieldValue = value[field];
-    if (fieldValue !== undefined && !isNonNegativeSafeInteger(fieldValue)) return null;
+    if (fieldValue !== undefined && !isNonNegativeSafeInteger(fieldValue)) {
+      return invalid("invalid-number", field);
+    }
   }
   for (const field of NULLABLE_NUMBER_FIELDS) {
     const fieldValue = value[field];
     if (fieldValue !== undefined && fieldValue !== null && !isNonNegativeSafeInteger(fieldValue)) {
-      return null;
+      return invalid("invalid-number", field);
     }
   }
   for (const field of BOOLEAN_FIELDS) {
     const fieldValue = value[field];
-    if (fieldValue !== undefined && typeof fieldValue !== "boolean") return null;
+    if (fieldValue !== undefined && typeof fieldValue !== "boolean") {
+      return invalid("invalid-boolean", field);
+    }
   }
   if (
     value.sessionId !== undefined
     && (typeof value.sessionId !== "string" || !OPAQUE_SESSION_ID_RE.test(value.sessionId))
   ) {
-    return null;
+    return invalid("invalid-session-id", "sessionId");
   }
-  if (value.agentRuntime !== undefined && !isAgentRuntime(value.agentRuntime)) return null;
+  if (value.agentRuntime !== undefined && !isAgentRuntime(value.agentRuntime)) {
+    return invalid("invalid-agent-runtime", "agentRuntime");
+  }
 
-  return { ...value } as unknown as CliSession;
+  return {
+    ok: true,
+    session: { ...value } as unknown as CliSession,
+  };
 }
 
 export function parseIngestSessions(
   value: unknown,
   knownAgentIds: ReadonlySet<string>,
-): CliSession[] | null {
-  if (!Array.isArray(value) || value.length > 50) return null;
+): ParseIngestSessionsResult {
+  if (!Array.isArray(value)) {
+    return { ok: false, error: { code: "sessions-not-array" } };
+  }
+  if (value.length > 50) {
+    return { ok: false, error: { code: "too-many-sessions" } };
+  }
 
   const sessions: CliSession[] = [];
-  for (const candidate of value) {
-    const session = parseIngestSession(candidate, knownAgentIds);
-    if (!session) return null;
-    sessions.push(session);
+  for (const [sessionIndex, candidate] of value.entries()) {
+    const result = parseIngestSession(candidate, knownAgentIds, sessionIndex);
+    if (!result.ok) return result;
+    sessions.push(result.session);
   }
-  return sessions;
+  return { ok: true, sessions };
 }
 
 function isContained(expectedDir: string, candidatePath: string): boolean {

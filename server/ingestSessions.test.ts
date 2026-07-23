@@ -17,6 +17,7 @@ const validSession = {
   contextTokens: 200000,
   updatedAt: 1_753_300_000_000,
   kind: "direct",
+  label: "Primary session",
   status: "active",
   abortedLastRun: false,
   inputTokens: 100,
@@ -38,7 +39,10 @@ const validSession = {
 
 describe("parseIngestSessions", () => {
   it("accepts the current collector session schema", () => {
-    expect(parseIngestSessions([validSession], knownAgentIds)).toEqual([validSession]);
+    expect(parseIngestSessions([validSession], knownAgentIds)).toEqual({
+      ok: true,
+      sessions: [validSession],
+    });
   });
 
   it.each([
@@ -48,25 +52,50 @@ describe("parseIngestSessions", () => {
     "C:\\outside",
     "nested/session",
   ])("rejects unsafe sessionId %s", (sessionId) => {
-    expect(parseIngestSessions([{ ...validSession, sessionId }], knownAgentIds)).toBeNull();
+    expect(
+      parseIngestSessions([{ ...validSession, sessionId }], knownAgentIds),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid-session-id",
+        sessionIndex: 0,
+        field: "sessionId",
+      },
+    });
   });
 
   it("rejects non-string sub-agent keys before mapping", () => {
     expect(parseIngestSessions([
       { ...validSession, kind: "subagent", key: 123 },
-    ], knownAgentIds)).toBeNull();
+    ], knownAgentIds)).toEqual({
+      ok: false,
+      error: {
+        code: "invalid-key",
+        sessionIndex: 0,
+        field: "key",
+      },
+    });
   });
 
   it("rejects unknown agents, unknown fields, and overlong fields", () => {
     expect(parseIngestSessions([
       { ...validSession, agentId: "unknown" },
-    ], knownAgentIds)).toBeNull();
+    ], knownAgentIds)).toMatchObject({
+      ok: false,
+      error: { code: "unknown-agent" },
+    });
     expect(parseIngestSessions([
       { ...validSession, unexpected: true },
-    ], knownAgentIds)).toBeNull();
+    ], knownAgentIds)).toMatchObject({
+      ok: false,
+      error: { code: "unknown-field" },
+    });
     expect(parseIngestSessions([
       { ...validSession, model: "x".repeat(257) },
-    ], knownAgentIds)).toBeNull();
+    ], knownAgentIds)).toMatchObject({
+      ok: false,
+      error: { code: "invalid-string", field: "model" },
+    });
   });
 });
 
