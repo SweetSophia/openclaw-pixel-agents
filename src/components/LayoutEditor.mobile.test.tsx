@@ -70,6 +70,7 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     expect(root.get('--mobile-room-switcher-top')).toBe('64px');
     expect(root.get('--mobile-room-switcher-height')).toBe('46px');
     expect(root.get('--mobile-editor-toolbar-gap')).toBe('10px');
+    expect(root.get('--desktop-agent-sidebar-reserved-width')).toBe('316px');
 
     const roomSwitcher = getRuleDeclarations(
       roomSwitcherCss,
@@ -93,6 +94,20 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     expect(toolbarOffset).toBe(
       'calc(var(--mobile-room-switcher-top) + var(--mobile-room-switcher-height) + var(--mobile-editor-toolbar-gap))',
     );
+  });
+
+  it('reserves the desktop agent sidebar band and releases it on mobile', () => {
+    const desktopEditor = getRuleDeclarations(layoutEditorCss, '.layout-editor');
+    expect(desktopEditor.get('padding-right')).toBe(
+      'var(--desktop-agent-sidebar-reserved-width)',
+    );
+
+    const mobileEditor = getRuleDeclarations(
+      layoutEditorCss,
+      '.layout-editor',
+      MOBILE_MEDIA_QUERY,
+    );
+    expect(mobileEditor.get('padding-right')).toBe('0px');
   });
   // ── Functional regression: toolbar buttons render and fire ──────────
 

@@ -6,12 +6,15 @@
   right: 0;
   z-index: 90; /* Below Header, above Canvas */
   pointer-events: none;
+  padding-right: var(--desktop-agent-sidebar-reserved-width);
 }
 .layout-editor > * { pointer-events: auto; }
 
 /* Toolbar */
 .editor-toolbar {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
@@ -251,6 +254,8 @@
 .furniture-palette::-webkit-scrollbar-thumb, .layout-list::-webkit-scrollbar-thumb { background: var(--acc-cyan); border-radius: 4px; }
 
 @media (max-width: 768px) {
+  .layout-editor { padding-right: 0; }
+
   /* Keep the toolbar below the complete room switcher hit-target band. */
   .editor-toolbar {
     margin-top: calc(
@@ -258,8 +263,6 @@
       + var(--mobile-room-switcher-height)
       + var(--mobile-editor-toolbar-gap)
     );
-    flex-wrap: wrap;
-    justify-content: center;
     width: 90%;
   }
   .furniture-palette, .layout-manager { position: static; width: auto; max-height: 250px; margin: 12px; }

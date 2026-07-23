@@ -26,6 +26,7 @@
   --mobile-room-switcher-top: 64px;
   --mobile-room-switcher-height: 46px;
   --mobile-editor-toolbar-gap: 10px;
+  --desktop-agent-sidebar-reserved-width: 316px;
 }
 
 body {
