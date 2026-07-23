@@ -39,9 +39,12 @@ const validSession = {
 
 describe("parseIngestSessions", () => {
   it("accepts the current collector session schema", () => {
+    const { sessionFile: collectorLocalPath, ...mappedSession } = validSession;
+
+    expect(collectorLocalPath).toContain("/home/test/.openclaw/");
     expect(parseIngestSessions([validSession], knownAgentIds)).toEqual({
       ok: true,
-      sessions: [validSession],
+      sessions: [mappedSession],
     });
   });
 

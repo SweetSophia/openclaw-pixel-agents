@@ -86,8 +86,8 @@ const SESSION_KEYS = new Set<keyof CliSession>([
   "totalTokensFresh",
 ]);
 const AGENT_RUNTIME_KEYS = new Set(["id", "source"]);
+const KEY_MAX_LENGTH = 512;
 const STRING_LIMITS: Partial<Record<keyof CliSession, number>> = {
-  key: 512,
   model: 256,
   modelProvider: 128,
   kind: 64,
@@ -160,7 +160,7 @@ function parseIngestSession(
   if (!Object.keys(value).every((key) => SESSION_KEYS.has(key as keyof CliSession))) {
     return invalid("unknown-field");
   }
-  if (!isBoundedString(value.key, STRING_LIMITS.key!)) return invalid("invalid-key", "key");
+  if (!isBoundedString(value.key, KEY_MAX_LENGTH)) return invalid("invalid-key", "key");
   if (typeof value.agentId !== "string" || !knownAgentIds.has(value.agentId)) {
     return invalid("unknown-agent", "agentId");
   }
@@ -199,9 +199,15 @@ function parseIngestSession(
     return invalid("invalid-agent-runtime", "agentRuntime");
   }
 
+  const session = { ...value };
+  // `sessionFile` is an absolute path on the collector host. Accept it as part
+  // of the current CLI schema, but never carry that foreign path into server
+  // state; transcript access is derived solely from the validated session ID.
+  delete session.sessionFile;
+
   return {
     ok: true,
-    session: { ...value } as unknown as CliSession,
+    session: session as unknown as CliSession,
   };
 }
 
