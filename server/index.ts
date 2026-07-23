@@ -631,21 +631,24 @@ async function pollAndBroadcast(): Promise<void> {
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
 const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
-type IngestTokenCrypto = Readonly<{
+export type IngestTokenCrypto = Readonly<{
   digestToken: (token: string) => Buffer;
   compareDigests: (configured: Buffer, provided: Buffer) => boolean;
 }>;
 
-const defaultIngestTokenCrypto: IngestTokenCrypto = {
+export const INGEST_TOKEN_DIGEST_CONTEXT =
+  "openclaw-pixel-agents:ingest-token:v1";
+
+export const defaultIngestTokenCrypto = Object.freeze<IngestTokenCrypto>({
   // HMAC treats each bearer token as cryptographic key material and produces
   // a fixed 32-byte value without misclassifying the token as a stored user
   // password. Node encodes both string token sources as UTF-8.
   digestToken: (token) =>
     createHmac("sha256", token)
-      .update("openclaw-pixel-agents:ingest-token:v1")
+      .update(INGEST_TOKEN_DIGEST_CONTEXT)
       .digest(),
   compareDigests: timingSafeEqual,
-};
+});
 
 export function createIngestAuthenticator(
   ingestToken: string,

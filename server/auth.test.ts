@@ -13,6 +13,8 @@ describe("API auth boundaries", () => {
   let dataDir: string;
   let authenticateIngest: (req: Express.Request, res: Express.Response) => boolean;
   let createIngestAuthenticator: typeof import("./index").createIngestAuthenticator;
+  let defaultIngestTokenCrypto: typeof import("./index").defaultIngestTokenCrypto;
+  let ingestTokenDigestContext: typeof import("./index").INGEST_TOKEN_DIGEST_CONTEXT;
   const appOrigin = "https://pixel.test";
 
   beforeAll(async () => {
@@ -29,6 +31,8 @@ describe("API auth boundaries", () => {
     io = serverModule.io;
     authenticateIngest = serverModule.authenticateIngest;
     createIngestAuthenticator = serverModule.createIngestAuthenticator;
+    defaultIngestTokenCrypto = serverModule.defaultIngestTokenCrypto;
+    ingestTokenDigestContext = serverModule.INGEST_TOKEN_DIGEST_CONTEXT;
   });
 
   afterAll(() => {
@@ -92,8 +96,8 @@ describe("API auth boundaries", () => {
     expect(authenticate(makeReq("X".repeat(1000)), {} as Express.Response)).toBe(false);
 
     // Unicode token (UTF-8 must be handled consistently between env var
-    // and Bearer header — both go through sha256().update(string) which
-    // defaults to UTF-8 in Node).
+    // and Bearer header — both are normalized through HMAC-SHA-256, whose
+    // string inputs default to UTF-8 in Node).
     vi.stubEnv("INGEST_API_TOKEN", "café-secret");
     vi.resetModules();
     return import("./index").then((mod) => {
@@ -101,12 +105,12 @@ describe("API auth boundaries", () => {
       expect(unicodeAuth(makeReq("café-secret"), {} as Express.Response)).toBe(true);
       expect(unicodeAuth(makeReq("cafe-secret"), {} as Express.Response)).toBe(false);
 
-      // Restore the test secret for the timing test below
+      // Restore the test secret for the deterministic crypto-path test below.
       vi.stubEnv("INGEST_API_TOKEN", "test-secret");
       vi.resetModules();
       return import("./index").then((mod2) => {
         // Re-bind the describe-scoped binding to the re-imported function
-        // so the timing test sees the restored token.
+        // so the crypto-path test sees the restored token.
         authenticateIngest = mod2.authenticateIngest;
         expect(authenticateIngest(makeReq("test-secret"), {} as Express.Response)).toBe(true);
         expect(authenticateIngest(makeReq("not-a-secr"), {} as Express.Response)).toBe(false);
@@ -153,6 +157,19 @@ describe("API auth boundaries", () => {
       expect(configuredDigest).toHaveLength(32);
       expect(providedDigest).toHaveLength(32);
     }
+  });
+
+  it("pins the production ingest crypto policy to HMAC-SHA-256 and timingSafeEqual", () => {
+    const token = "production-policy-regression";
+    const expectedDigest = createHmac("sha256", token)
+      .update(ingestTokenDigestContext)
+      .digest();
+    const actualDigest = defaultIngestTokenCrypto.digestToken(token);
+
+    expect(Object.isFrozen(defaultIngestTokenCrypto)).toBe(true);
+    expect(actualDigest).toEqual(expectedDigest);
+    expect(actualDigest).toHaveLength(32);
+    expect(defaultIngestTokenCrypto.compareDigests).toBe(timingSafeEqual);
   });
 
   it("does not require the collector token for same-origin UI mutation endpoints", async () => {
