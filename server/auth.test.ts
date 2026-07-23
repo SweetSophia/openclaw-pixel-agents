@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,7 +124,9 @@ describe("API auth boundaries", () => {
       ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Express.Request;
 
     const digestToken = vi.fn((token: string) =>
-      createHash("sha256").update(token).digest(),
+      createHmac("sha256", token)
+        .update("openclaw-pixel-agents:ingest-token:v1")
+        .digest(),
     );
     const compareDigests = vi.fn((configured: Buffer, provided: Buffer) =>
       timingSafeEqual(configured, provided),

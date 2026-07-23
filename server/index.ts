@@ -12,7 +12,7 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
@@ -637,9 +637,13 @@ type IngestTokenCrypto = Readonly<{
 }>;
 
 const defaultIngestTokenCrypto: IngestTokenCrypto = {
-  // Both token sources are strings, and createHash uses UTF-8 for strings by
-  // default, so configured and provided Unicode tokens use the same encoding.
-  digestToken: (token) => createHash("sha256").update(token).digest(),
+  // HMAC treats each bearer token as cryptographic key material and produces
+  // a fixed 32-byte value without misclassifying the token as a stored user
+  // password. Node encodes both string token sources as UTF-8.
+  digestToken: (token) =>
+    createHmac("sha256", token)
+      .update("openclaw-pixel-agents:ingest-token:v1")
+      .digest(),
   compareDigests: timingSafeEqual,
 };
 
@@ -647,9 +651,9 @@ export function createIngestAuthenticator(
   ingestToken: string,
   crypto: IngestTokenCrypto = defaultIngestTokenCrypto,
 ): (req: express.Request, res: express.Response) => boolean {
-  // Pre-compute a fixed-length SHA-256 digest so the comparison never leaks
-  // the configured token length via timing (CWE-208). Both sides are always
-  // 32 bytes regardless of token length.
+  // Pre-compute a fixed-length HMAC-SHA-256 digest so the comparison never
+  // leaks the configured token length via timing (CWE-208). Both sides are
+  // always 32 bytes regardless of token length.
   const configuredDigest = ingestToken
     ? crypto.digestToken(ingestToken)
     : Buffer.alloc(32);
