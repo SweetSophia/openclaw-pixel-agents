@@ -15,13 +15,27 @@ describe("API auth boundaries", () => {
   let createIngestAuthenticator: typeof import("./index").createIngestAuthenticator;
   let defaultIngestTokenCrypto: typeof import("./index").defaultIngestTokenCrypto;
   let ingestTokenDigestContext: typeof import("./index").INGEST_TOKEN_DIGEST_CONTEXT;
+  let tailTranscript: typeof import("./index").tailTranscript;
+  let outsideTranscriptPath: string;
   const appOrigin = "https://pixel.test";
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-auth-test-"));
+    const agentsDir = join(dataDir, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    outsideTranscriptPath = join(dataDir, "outside.jsonl");
+    writeFileSync(
+      outsideTranscriptPath,
+      `${JSON.stringify({
+        role: "assistant",
+        content: "outside transcript secret",
+        timestamp: Date.now(),
+      })}\n`,
+    );
     vi.stubEnv("DATA_DIR", dataDir);
     vi.stubEnv("DATA_SOURCE", "ingest");
     vi.stubEnv("INGEST_API_TOKEN", "test-secret");
+    vi.stubEnv("OPENCLAW_AGENTS_DIR", agentsDir);
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", appOrigin);
 
@@ -33,6 +47,7 @@ describe("API auth boundaries", () => {
     createIngestAuthenticator = serverModule.createIngestAuthenticator;
     defaultIngestTokenCrypto = serverModule.defaultIngestTokenCrypto;
     ingestTokenDigestContext = serverModule.INGEST_TOKEN_DIGEST_CONTEXT;
+    tailTranscript = serverModule.tailTranscript;
   });
 
   afterAll(() => {
@@ -71,6 +86,104 @@ describe("API auth boundaries", () => {
         expect(response.body).toMatchObject({ ok: true, received: 0 });
         expect(response.body.agents).toBeGreaterThanOrEqual(0);
       });
+  });
+
+  it.each([
+    "../outside",
+    "/tmp/outside",
+  ])("rejects unsafe collector sessionId %s", async (sessionId) => {
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .send({
+        sessions: [{
+          key: "agent:main:test",
+          agentId: "main",
+          sessionId,
+        }],
+      })
+      .expect(400)
+      .expect({ error: "Invalid sessions payload" });
+  });
+
+  it("rejects malformed sub-agent keys with 400 instead of throwing", async () => {
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .send({
+        sessions: [{
+          key: 123,
+          agentId: "main",
+          kind: "subagent",
+        }],
+      })
+      .expect(400)
+      .expect({ error: "Invalid sessions payload" });
+  });
+
+  it("rejects a missing collector body with 400 instead of throwing", async () => {
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .expect(400)
+      .expect({ error: "Missing or invalid 'sessions' array" });
+  });
+
+  it("rejects unknown agents, fields, and oversized values", async () => {
+    const invalidSessions = [
+      { key: "agent:unknown:test", agentId: "unknown" },
+      { key: "agent:main:test", agentId: "main", unexpected: true },
+      { key: "agent:main:test", agentId: "main", model: "x".repeat(257) },
+    ];
+
+    for (const session of invalidSessions) {
+      await request(app)
+        .post("/api/ingest/agents")
+        .set("Authorization", "Bearer test-secret")
+        .send({ sessions: [session] })
+        .expect(400)
+        .expect({ error: "Invalid sessions payload" });
+    }
+  });
+
+  it("maps and broadcasts a valid collector session", async () => {
+    const emitSpy = vi.spyOn(io, "emit");
+
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .send({
+        sessions: [{
+          key: "agent:main:test",
+          agentId: "main",
+          model: "gpt-5",
+          modelProvider: "openai",
+          sessionId: "123e4567-e89b-12d3-a456-426614174000",
+          updatedAt: Date.now(),
+        }],
+      })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body).toMatchObject({ ok: true, received: 1 });
+        expect(response.body.agents).toBeGreaterThan(0);
+      });
+
+    expect(emitSpy).toHaveBeenCalledWith(
+      "agents:update",
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "main",
+          sessionKey: "agent:main:test",
+        }),
+      ]),
+    );
+    emitSpy.mockRestore();
+  });
+
+  it("refuses to read a transcript outside the registered agent's sessions directory", async () => {
+    await expect(
+      tailTranscript("main", "Shodan", outsideTranscriptPath),
+    ).resolves.toEqual([]);
   });
 
   it("authenticateIngest is functionally correct across token shapes", () => {

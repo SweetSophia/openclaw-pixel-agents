@@ -19,6 +19,12 @@ import { applyAgentSnapshot } from "./agentSnapshots";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
+import {
+  isTranscriptPathContained,
+  parseIngestSessions,
+  resolveTranscriptPath,
+  type CliSession,
+} from "./ingestSessions";
 import { isValidLayoutId } from "./layouts";
 import { logger } from "./logger";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
@@ -198,23 +204,6 @@ const agentTranscriptPaths = new Map<string, string>();
 
 // ---- CLI data source ----
 
-interface CliSession {
-  key: string;
-  agentId: string;
-  model?: string;
-  modelProvider?: string;
-  totalTokens?: number | null;
-  contextTokens?: number | null;
-  updatedAt?: number;
-  kind?: string;
-  status?: string;
-  abortedLastRun?: boolean;
-  inputTokens?: number;
-  outputTokens?: number;
-  sessionId?: string;
-  thinkingLevel?: string;
-}
-
 interface CliSessionsResult {
   sessions: CliSession[];
   count: number;
@@ -314,6 +303,7 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
     const sessions = byAgent.get(agentId);
     const sorted = sessions ? [...sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)) : [];
     const latestSession = sorted[0];
+    agentTranscriptPaths.delete(agentId);
 
     if (latestSession) {
       const activity = inferActivity(latestSession);
@@ -323,8 +313,12 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
 
       // Capture transcript path for message ticker polling
       if (latestSession.sessionId) {
-        const transcriptPath = join(AGENTS_DIR, agentId, "sessions", `${latestSession.sessionId}.jsonl`);
-        agentTranscriptPaths.set(agentId, transcriptPath);
+        const transcriptPath = resolveTranscriptPath(
+          AGENTS_DIR,
+          agentId,
+          latestSession.sessionId,
+        );
+        if (transcriptPath) agentTranscriptPaths.set(agentId, transcriptPath);
       }
 
       results.set(agentId, {
@@ -424,12 +418,17 @@ function extractText(content: unknown): string {
  * Uses a byte-offset to seek directly to the end of what was already read,
  * so each poll cycle reads only the newly-appended lines.
  */
-async function tailTranscript(
+export async function tailTranscript(
   agentId: string,
   agentName: string,
   transcriptPath: string | undefined,
 ): Promise<TickerMessage[]> {
-  if (!transcriptPath) return [];
+  if (
+    !transcriptPath
+    || !isTranscriptPathContained(AGENTS_DIR, agentId, transcriptPath)
+  ) {
+    return [];
+  }
 
   const key = `${agentId}:${transcriptPath}`;
   const offset = lastReadOffset.get(key) ?? 0;
@@ -726,7 +725,7 @@ app.post("/api/ingest/agents", (req, res) => {
   recentRequests.push(now);
   ingestRateBuckets.set(rateKey, recentRequests);
 
-  const { sessions } = req.body;
+  const sessions = req.body?.sessions;
   if (!Array.isArray(sessions)) {
     res.status(400).json({ error: "Missing or invalid 'sessions' array" });
     return;
@@ -736,8 +735,17 @@ app.post("/api/ingest/agents", (req, res) => {
     return;
   }
 
+  const parsedSessions = parseIngestSessions(
+    sessions,
+    new Set(AGENT_REGISTRY.keys()),
+  );
+  if (!parsedSessions) {
+    res.status(400).json({ error: "Invalid sessions payload" });
+    return;
+  }
+
   // Map and broadcast
-  const agentMap = mapToAgentStates(sessions as CliSession[]);
+  const agentMap = mapToAgentStates(parsedSessions);
   const { snapshot } = applyAgentSnapshot(agentStates, agentMap);
 
   lastIngestAt = Date.now();
