@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,9 @@ describe("API auth boundaries", () => {
   let io: SocketIOServer;
   let dataDir: string;
   let authenticateIngest: (req: Express.Request, res: Express.Response) => boolean;
+  let createIngestAuthenticator: typeof import("./index").createIngestAuthenticator;
+  let defaultIngestTokenCrypto: typeof import("./index").defaultIngestTokenCrypto;
+  let ingestTokenDigestContext: typeof import("./index").INGEST_TOKEN_DIGEST_CONTEXT;
   const appOrigin = "https://pixel.test";
 
   beforeAll(async () => {
@@ -26,6 +30,9 @@ describe("API auth boundaries", () => {
     app = serverModule.app;
     io = serverModule.io;
     authenticateIngest = serverModule.authenticateIngest;
+    createIngestAuthenticator = serverModule.createIngestAuthenticator;
+    defaultIngestTokenCrypto = serverModule.defaultIngestTokenCrypto;
+    ingestTokenDigestContext = serverModule.INGEST_TOKEN_DIGEST_CONTEXT;
   });
 
   afterAll(() => {
@@ -89,8 +96,8 @@ describe("API auth boundaries", () => {
     expect(authenticate(makeReq("X".repeat(1000)), {} as Express.Response)).toBe(false);
 
     // Unicode token (UTF-8 must be handled consistently between env var
-    // and Bearer header — both go through sha256().update(string) which
-    // defaults to UTF-8 in Node).
+    // and Bearer header — both are normalized through HMAC-SHA-256, whose
+    // string inputs default to UTF-8 in Node).
     vi.stubEnv("INGEST_API_TOKEN", "café-secret");
     vi.resetModules();
     return import("./index").then((mod) => {
@@ -98,12 +105,12 @@ describe("API auth boundaries", () => {
       expect(unicodeAuth(makeReq("café-secret"), {} as Express.Response)).toBe(true);
       expect(unicodeAuth(makeReq("cafe-secret"), {} as Express.Response)).toBe(false);
 
-      // Restore the test secret for the timing test below
+      // Restore the test secret for the deterministic crypto-path test below.
       vi.stubEnv("INGEST_API_TOKEN", "test-secret");
       vi.resetModules();
       return import("./index").then((mod2) => {
         // Re-bind the describe-scoped binding to the re-imported function
-        // so the timing test sees the restored token.
+        // so the crypto-path test sees the restored token.
         authenticateIngest = mod2.authenticateIngest;
         expect(authenticateIngest(makeReq("test-secret"), {} as Express.Response)).toBe(true);
         expect(authenticateIngest(makeReq("not-a-secr"), {} as Express.Response)).toBe(false);
@@ -112,63 +119,57 @@ describe("API auth boundaries", () => {
     });
   });
 
-  it("authenticateIngest does not leak token length via timing", () => {
-    // Regression test for CWE-208: the old implementation had an early-return
-    // branch on length mismatch that let an attacker detect the configured
-    // token length. The SHA-256 digest approach uses a single code path for
-    // all inputs — only the hash of the attacker-controlled input varies in
-    // time, never the secret comparison.
-    //
-    // Scope: in-process only. Does not cover Express header parsing or
-    // network jitter; asserts the comparison itself is constant-time.
-    //
-    // Note on input-length normalisation: SHA-256 throughput scales with
-    // input length (Node hashes in 64-byte blocks), so timing an attacker-
-    // controllable-length token (1B vs 200B) would conflate "hash time
-    // scales with input" with "side-channel exists". To assert the
-    // *comparison* is length-insensitive, every timing measurement must
-    // pass through the same number of hash bytes — we use four same-length
-    // tokens. Any residual spread comes from JIT/GC noise only.
-    const authenticate = authenticateIngest;
-
+  it("hashes every Bearer token and compares fixed-length digests", () => {
+    // Deterministic regression coverage for CWE-208: every syntactically
+    // valid Bearer token must reach the same hash-and-compare path regardless
+    // of its length or content. Wall-clock ratios are too sensitive to runner
+    // contention to serve as a reliable correctness oracle.
     const makeReq = (token: string): Express.Request =>
       ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Express.Request;
 
-    // All timing tokens are the same length (11 bytes) so the per-call
-    // hash cost is identical; the only variable is content correctness.
-    const correctToken = "test-secret"; // matches INGEST_API_TOKEN
-    const wrongSameLen1 = "AAAAAAAAAAA";
-    const wrongSameLen2 = "not-the-xxx";
-    const wrongSameLen3 = "ZZZZZZZZZZZ";
+    const digestToken = vi.fn((token: string) =>
+      createHmac("sha256", token)
+        .update("openclaw-pixel-agents:ingest-token:v1")
+        .digest(),
+    );
+    const compareDigests = vi.fn((configured: Buffer, provided: Buffer) =>
+      timingSafeEqual(configured, provided),
+    );
+    const authenticate = createIngestAuthenticator("test-secret", {
+      digestToken,
+      compareDigests,
+    });
+    digestToken.mockClear();
+    compareDigests.mockClear();
 
-    const ITERATIONS = 20_000;
+    const tokens = ["", "X", "not-a-secr", "test-secret", "café-secret", "X".repeat(1000)];
+    const results = tokens.map((token) =>
+      authenticate(makeReq(token), {} as Express.Response),
+    );
 
-    // Warm up JIT and caches
-    for (let i = 0; i < 2000; i++) {
-      authenticate(makeReq(correctToken), {} as Express.Response);
-      authenticate(makeReq(wrongSameLen1), {} as Express.Response);
+    expect(results).toEqual([false, false, false, true, false, false]);
+    expect(digestToken).toHaveBeenCalledTimes(tokens.length);
+    expect(compareDigests).toHaveBeenCalledTimes(tokens.length);
+
+    for (const [configuredDigest, providedDigest] of compareDigests.mock.calls) {
+      expect(configuredDigest).toBeInstanceOf(Buffer);
+      expect(providedDigest).toBeInstanceOf(Buffer);
+      expect(configuredDigest).toHaveLength(32);
+      expect(providedDigest).toHaveLength(32);
     }
+  });
 
-    const measure = (token: string): number => {
-      const req = makeReq(token);
-      const start = process.hrtime.bigint();
-      for (let i = 0; i < ITERATIONS; i++) {
-        authenticate(req, {} as Express.Response);
-      }
-      return Number(process.hrtime.bigint() - start);
-    };
+  it("pins the production ingest crypto policy to HMAC-SHA-256 and timingSafeEqual", () => {
+    const token = "production-policy-regression";
+    const expectedDigest = createHmac("sha256", token)
+      .update(ingestTokenDigestContext)
+      .digest();
+    const actualDigest = defaultIngestTokenCrypto.digestToken(token);
 
-    const correctTime = measure(correctToken);
-    const wrongTime1 = measure(wrongSameLen1);
-    const wrongTime2 = measure(wrongSameLen2);
-    const wrongTime3 = measure(wrongSameLen3);
-
-    const max = Math.max(correctTime, wrongTime1, wrongTime2, wrongTime3);
-    const min = Math.min(correctTime, wrongTime1, wrongTime2, wrongTime3);
-    // Same-length inputs → same hash cost. Residual spread is JIT/GC noise
-    // only. 2× threshold catches any reintroduced length-based early return
-    // (old code showed >10× divergence) while tolerating CI runner variance.
-    expect(max / min).toBeLessThan(2);
+    expect(Object.isFrozen(defaultIngestTokenCrypto)).toBe(true);
+    expect(actualDigest).toEqual(expectedDigest);
+    expect(actualDigest).toHaveLength(32);
+    expect(defaultIngestTokenCrypto.compareDigests).toBe(timingSafeEqual);
   });
 
   it("does not require the collector token for same-origin UI mutation endpoints", async () => {

@@ -41,9 +41,24 @@ The dev server runs on `http://localhost:3000` and proxies API requests to the b
 
 1. **Create a branch** for your feature or fix
 2. **Make your changes** with clear, commented code
-3. **Test locally** — `npm run dev` and verify in the browser
-4. **Build check** — `npm run build` must pass cleanly
+3. **Test locally** — `npm run dev` and verify behavior in the browser when the change affects the UI
+4. **Run the automated gate**:
+   ```bash
+   npm ci
+   npm run typecheck
+   npm test
+   npm run test:coverage
+   npm run build
+   npm audit --omit=dev --audit-level=high
+   ```
 5. **Open a PR** with a description of what changed and why
+
+Pull requests and updates to `main` run the same gate in GitHub Actions.
+Repository-wide coverage includes production TypeScript under `src/`, `server/`,
+and `shared/`; the baseline floors are 39% statements, 36% branches, 37%
+functions, and 41% lines. Pull requests also receive a dependency review that
+blocks newly introduced high- or critical-severity vulnerabilities. CodeQL
+scans JavaScript and TypeScript changes and runs weekly on the default branch.
 
 ## Code Style
 
