@@ -21,6 +21,11 @@
   --shadow-neon-cyan: 0 0 10px rgba(0, 240, 255, 0.2), inset 0 0 5px rgba(0, 240, 255, 0.1);
   --shadow-neon-pink: 0 0 10px rgba(255, 0, 85, 0.2), inset 0 0 5px rgba(255, 0, 85, 0.1);
   --glass-blur: blur(12px);
+
+  /* Shared mobile HUD geometry keeps independently positioned controls apart. */
+  --mobile-room-switcher-top: 64px;
+  --mobile-room-switcher-height: 46px;
+  --mobile-editor-toolbar-gap: 10px;
 }
 
 body {

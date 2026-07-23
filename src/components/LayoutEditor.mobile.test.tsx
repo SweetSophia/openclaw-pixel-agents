@@ -1,50 +1,99 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { LayoutEditor } from './LayoutEditor';
 import type { LayoutDoc } from '../hooks/useLayoutStore';
+
+const MOBILE_MEDIA_QUERY = '(max-width: 768px)';
+const COMPONENT_DIR = dirname(fileURLToPath(import.meta.url));
+const appCss = readFileSync(resolve(COMPONENT_DIR, '../App.css'), 'utf-8');
+const layoutEditorCss = readFileSync(resolve(COMPONENT_DIR, 'LayoutEditor.css'), 'utf-8');
+const roomSwitcherCss = readFileSync(resolve(COMPONENT_DIR, 'RoomSwitcher.css'), 'utf-8');
+
+function getRuleDeclarations(css: string, selector: string, mediaQuery?: string) {
+  const styleElement = document.createElement('style');
+  styleElement.textContent = css;
+  document.head.append(styleElement);
+
+  try {
+    const sheet = styleElement.sheet;
+    expect(sheet, 'CSS must produce a stylesheet').not.toBeNull();
+
+    let rules = Array.from(sheet!.cssRules);
+    if (mediaQuery) {
+      const mediaRule = rules.find(
+        (rule): rule is CSSMediaRule =>
+          'conditionText' in rule && rule.conditionText === mediaQuery,
+      );
+      expect(mediaRule, `${mediaQuery} block must exist`).toBeDefined();
+      rules = Array.from(mediaRule!.cssRules);
+    }
+
+    const styleRule = rules.find(
+      (rule): rule is CSSStyleRule =>
+        'selectorText' in rule && rule.selectorText === selector,
+    );
+    expect(styleRule, `${selector} rule must exist`).toBeDefined();
+
+    const declarations = new Map<string, string>();
+    for (let index = 0; index < styleRule!.style.length; index += 1) {
+      const property = styleRule!.style.item(index);
+      declarations.set(property, styleRule!.style.getPropertyValue(property).trim());
+    }
+    return declarations;
+  } finally {
+    styleElement.remove();
+  }
+}
 
 /**
  * Regression test for issue #87: mobile toolbar overlap with room switcher.
  *
  * Root cause: at ≤768px the room switcher sits at top:64px with z-index:100
- * and a height of ~44px (bottom edge ≈108px). The editor toolbar was at
+ * and a height of 46px (bottom edge 110px). The editor toolbar was at
  * margin-top:60px inside a z-index:90 container — so it occupied the same
  * vertical band and lost hit-testing to the room switcher.
  *
- * Fix: bump mobile toolbar margin-top to 120px so it clears the switcher.
+ * Fix: derive both elements from shared mobile HUD geometry so future room
+ * switcher changes cannot silently reintroduce the overlap.
  */
 describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
   afterEach(cleanup);
-
   // ── CSS regression: catch anyone reverting the offset ──────────────
 
-  it('mobile editor-toolbar margin-top clears the room switcher bottom edge (≥108px)', () => {
-    const css = readFileSync(
-      resolve(__dirname, 'LayoutEditor.css'),
-      'utf-8',
+  it('derives the mobile toolbar offset from the room switcher geometry', () => {
+    const root = getRuleDeclarations(appCss, ':root');
+    expect(root.get('--mobile-room-switcher-top')).toBe('64px');
+    expect(root.get('--mobile-room-switcher-height')).toBe('46px');
+    expect(root.get('--mobile-editor-toolbar-gap')).toBe('10px');
+
+    const roomSwitcher = getRuleDeclarations(
+      roomSwitcherCss,
+      '.room-switcher',
+      MOBILE_MEDIA_QUERY,
     );
 
-    // Extract the mobile media query block
-    const mobileBlock = css.match(/@media\s*\(max-width:\s*768px\)\s*\{([^}]*\{[^}]*\}[^}]*)\}/s);
-    expect(mobileBlock, 'mobile @media block must exist').not.toBeNull();
-    const rules = mobileBlock![1];
+    expect(roomSwitcher.get('top')).toBe('var(--mobile-room-switcher-top)');
+    expect(roomSwitcher.get('height')).toBe('var(--mobile-room-switcher-height)');
 
-    const toolbarMatch = rules.match(/\.editor-toolbar\s*\{([^}]*)\}/s);
-    expect(toolbarMatch, '.editor-toolbar rule in mobile media query').not.toBeNull();
-
-    const marginTopMatch = toolbarMatch![1].match(/margin-top:\s*(\d+)px/);
-    expect(marginTopMatch, 'margin-top must be a pixel value').not.toBeNull();
-
-    const marginTop = parseInt(marginTopMatch![1], 10);
-    // Room switcher bottom edge ≈ top(64) + padding(4+4) + min-height(36) + border(2) = ~110px
-    // Use 108 as the floor — anything below overlaps.
-    expect(marginTop).toBeGreaterThanOrEqual(108);
+    const editorToolbar = getRuleDeclarations(
+      layoutEditorCss,
+      '.editor-toolbar',
+      MOBILE_MEDIA_QUERY,
+    );
+    const toolbarOffset = editorToolbar
+      .get('margin-top')
+      ?.replace(/\s+/g, ' ')
+      .replace(/\(\s+/g, '(')
+      .replace(/\s+\)/g, ')');
+    expect(toolbarOffset).toBe(
+      'calc(var(--mobile-room-switcher-top) + var(--mobile-room-switcher-height) + var(--mobile-editor-toolbar-gap))',
+    );
   });
-
   // ── Functional regression: toolbar buttons render and fire ──────────
 
   const mockLayout: LayoutDoc = {
@@ -79,12 +128,6 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     onDeleteLayout: vi.fn(),
     onToggleEditor: vi.fn(),
   };
-
-  beforeEach(() => {
-    Object.values(props).forEach(fn => {
-      if (typeof fn === 'function' && 'mockClear' in fn) (fn as ReturnType<typeof vi.fn>).mockClear();
-    });
-  });
 
   it('renders all five toolbar controls in editor mode', () => {
     render(<LayoutEditor {...props} />);
@@ -122,7 +165,7 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     expect(screen.getByText('Plants')).toBeTruthy();
   });
 
-  it('fires onLoad manager toggle when Layouts is clicked', () => {
+  it('opens the layout manager when Layouts is clicked', () => {
     render(<LayoutEditor {...props} />);
     fireEvent.click(screen.getByTitle('Layout manager'));
     // Layouts toggle is internal state; the panel opens

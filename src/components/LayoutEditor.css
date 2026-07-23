@@ -251,9 +251,17 @@
 .furniture-palette::-webkit-scrollbar-thumb, .layout-list::-webkit-scrollbar-thumb { background: var(--acc-cyan); border-radius: 4px; }
 
 @media (max-width: 768px) {
-  /* Room switcher occupies top: 64px + ~44px height = ~108px vertical band. */
-  /* Editor toolbar must clear that band to avoid hit-testing overlap. */
-  .editor-toolbar { margin-top: 120px; flex-wrap: wrap; justify-content: center; width: 90%; }
+  /* Keep the toolbar below the complete room switcher hit-target band. */
+  .editor-toolbar {
+    margin-top: calc(
+      var(--mobile-room-switcher-top)
+      + var(--mobile-room-switcher-height)
+      + var(--mobile-editor-toolbar-gap)
+    );
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 90%;
+  }
   .furniture-palette, .layout-manager { position: static; width: auto; max-height: 250px; margin: 12px; }
   .layout-manager { right: auto; }
 }

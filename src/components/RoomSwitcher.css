@@ -74,7 +74,8 @@
 
 @media (max-width: 768px) {
   .room-switcher {
-    top: 64px;
+    top: var(--mobile-room-switcher-top);
+    height: var(--mobile-room-switcher-height);
     /* below the mobile header which is ~48px tall */
     padding: 4px 8px;
     gap: 3px;
