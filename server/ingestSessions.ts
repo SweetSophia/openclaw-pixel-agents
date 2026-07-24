@@ -7,29 +7,13 @@ export interface CliSession {
   modelProvider?: string;
   totalTokens?: number | null;
   contextTokens?: number | null;
-  updatedAt?: number;
+  updatedAt?: number | null;
   kind?: string;
-  label?: string;
   status?: string;
   abortedLastRun?: boolean;
   inputTokens?: number;
   outputTokens?: number;
   sessionId?: string;
-  thinkingLevel?: string;
-  ageMs?: number;
-  acpRuntime?: boolean;
-  agentRuntime?: {
-    id?: string;
-    source?: string;
-  };
-  lastInteractionAt?: number;
-  modelOverride?: string;
-  providerOverride?: string;
-  reasoningLevel?: string;
-  sessionFile?: string;
-  sessionStartedAt?: number;
-  systemSent?: boolean;
-  totalTokensFresh?: boolean;
 }
 
 export type IngestSessionValidationError = {
@@ -37,14 +21,13 @@ export type IngestSessionValidationError = {
     | "sessions-not-array"
     | "too-many-sessions"
     | "invalid-session-object"
-    | "unknown-field"
+    | "reserved-field"
     | "invalid-key"
     | "unknown-agent"
     | "invalid-string"
     | "invalid-number"
     | "invalid-boolean"
-    | "invalid-session-id"
-    | "invalid-agent-runtime";
+    | "invalid-session-id";
   sessionIndex?: number;
   field?: keyof CliSession;
 };
@@ -57,65 +40,25 @@ type ParseIngestSessionResult =
   | { ok: true; session: CliSession }
   | { ok: false; error: IngestSessionValidationError };
 
-const SESSION_KEYS = new Set<keyof CliSession>([
-  "key",
-  "agentId",
-  "model",
-  "modelProvider",
-  "totalTokens",
-  "contextTokens",
-  "updatedAt",
-  "kind",
-  "label",
-  "status",
-  "abortedLastRun",
-  "inputTokens",
-  "outputTokens",
-  "sessionId",
-  "thinkingLevel",
-  "ageMs",
-  "acpRuntime",
-  "agentRuntime",
-  "lastInteractionAt",
-  "modelOverride",
-  "providerOverride",
-  "reasoningLevel",
-  "sessionFile",
-  "sessionStartedAt",
-  "systemSent",
-  "totalTokensFresh",
-]);
-const AGENT_RUNTIME_KEYS = new Set(["id", "source"]);
+const RESERVED_SESSION_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const KEY_MAX_LENGTH = 512;
 const STRING_LIMITS: Partial<Record<keyof CliSession, number>> = {
   model: 256,
   modelProvider: 128,
   kind: 64,
-  label: 256,
   status: 64,
-  thinkingLevel: 64,
-  modelOverride: 256,
-  providerOverride: 128,
-  reasoningLevel: 64,
-  sessionFile: 4096,
 };
 const NUMBER_FIELDS = [
-  "updatedAt",
   "inputTokens",
   "outputTokens",
-  "ageMs",
-  "lastInteractionAt",
-  "sessionStartedAt",
 ] as const satisfies readonly (keyof CliSession)[];
 const NULLABLE_NUMBER_FIELDS = [
   "totalTokens",
   "contextTokens",
+  "updatedAt",
 ] as const satisfies readonly (keyof CliSession)[];
 const BOOLEAN_FIELDS = [
   "abortedLastRun",
-  "acpRuntime",
-  "systemSent",
-  "totalTokensFresh",
 ] as const satisfies readonly (keyof CliSession)[];
 const OPAQUE_AGENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const OPAQUE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -136,13 +79,6 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
     && value >= 0;
 }
 
-function isAgentRuntime(value: unknown): value is NonNullable<CliSession["agentRuntime"]> {
-  if (!isPlainObject(value)) return false;
-  if (!Object.keys(value).every((key) => AGENT_RUNTIME_KEYS.has(key))) return false;
-  return (value.id === undefined || isBoundedString(value.id, 128))
-    && (value.source === undefined || isBoundedString(value.source, 128));
-}
-
 function parseIngestSession(
   value: unknown,
   knownAgentIds: ReadonlySet<string>,
@@ -157,37 +93,47 @@ function parseIngestSession(
   });
 
   if (!isPlainObject(value)) return invalid("invalid-session-object");
-  if (!Object.keys(value).every((key) => SESSION_KEYS.has(key as keyof CliSession))) {
-    return invalid("unknown-field");
+  if (Object.keys(value).some((key) => RESERVED_SESSION_KEYS.has(key))) {
+    return invalid("reserved-field");
   }
   if (!isBoundedString(value.key, KEY_MAX_LENGTH)) return invalid("invalid-key", "key");
   if (typeof value.agentId !== "string" || !knownAgentIds.has(value.agentId)) {
     return invalid("unknown-agent", "agentId");
   }
 
+  const session: CliSession = {
+    key: value.key,
+    agentId: value.agentId,
+  };
+  const sessionRecord = session as unknown as Record<string, unknown>;
+
   for (const [field, maxLength] of Object.entries(STRING_LIMITS) as [keyof CliSession, number][]) {
     const fieldValue = value[field];
     if (fieldValue !== undefined && !isBoundedString(fieldValue, maxLength)) {
       return invalid("invalid-string", field);
     }
+    if (fieldValue !== undefined) sessionRecord[field] = fieldValue;
   }
   for (const field of NUMBER_FIELDS) {
     const fieldValue = value[field];
     if (fieldValue !== undefined && !isNonNegativeSafeInteger(fieldValue)) {
       return invalid("invalid-number", field);
     }
+    if (fieldValue !== undefined) sessionRecord[field] = fieldValue;
   }
   for (const field of NULLABLE_NUMBER_FIELDS) {
     const fieldValue = value[field];
     if (fieldValue !== undefined && fieldValue !== null && !isNonNegativeSafeInteger(fieldValue)) {
       return invalid("invalid-number", field);
     }
+    if (fieldValue !== undefined) sessionRecord[field] = fieldValue;
   }
   for (const field of BOOLEAN_FIELDS) {
     const fieldValue = value[field];
     if (fieldValue !== undefined && typeof fieldValue !== "boolean") {
       return invalid("invalid-boolean", field);
     }
+    if (fieldValue !== undefined) sessionRecord[field] = fieldValue;
   }
   if (
     value.sessionId !== undefined
@@ -195,19 +141,11 @@ function parseIngestSession(
   ) {
     return invalid("invalid-session-id", "sessionId");
   }
-  if (value.agentRuntime !== undefined && !isAgentRuntime(value.agentRuntime)) {
-    return invalid("invalid-agent-runtime", "agentRuntime");
-  }
-
-  const session = { ...value };
-  // `sessionFile` is an absolute path on the collector host. Accept it as part
-  // of the current CLI schema, but never carry that foreign path into server
-  // state; transcript access is derived solely from the validated session ID.
-  delete session.sessionFile;
+  if (value.sessionId !== undefined) session.sessionId = value.sessionId;
 
   return {
     ok: true,
-    session: session as unknown as CliSession,
+    session,
   };
 }
 

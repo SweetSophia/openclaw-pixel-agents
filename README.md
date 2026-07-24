@@ -134,10 +134,10 @@ Just run it on the same machine as OpenClaw. No extra configuration needed.
    sudo systemctl enable --now openclaw-pixel-collector.timer
    ```
 
-The ingest endpoint validates the collector's session schema, registered agent IDs,
-field sizes, and opaque session IDs before applying an update. Invalid payloads
-return HTTP 400; upgrade the collector and server together if the OpenClaw session
-schema changes.
+The ingest endpoint accepts additive fields from OpenClaw's evolving session output,
+then sanitizes each entry into the small session shape used by this server. Registered
+agent IDs, retained field types and sizes, and opaque session IDs are validated before
+an update is applied; invalid retained fields return HTTP 400.
 
 See [collector/README.md](collector/README.md) for full setup instructions.
 

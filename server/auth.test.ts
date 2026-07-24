@@ -129,10 +129,27 @@ describe("API auth boundaries", () => {
       .expect({ error: "Missing or invalid 'sessions' array" });
   });
 
-  it("rejects unknown agents, fields, and oversized values", async () => {
+  it("maps malformed JSON to 400 before ingest authentication", async () => {
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Content-Type", "application/json")
+      .send('{"sessions":[')
+      .expect(400)
+      .expect({ error: "Malformed JSON body" });
+  });
+
+  it("maps oversized JSON to 413 before ingest authentication", async () => {
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify({ payload: "x".repeat(101 * 1024) }))
+      .expect(413)
+      .expect({ error: "Request body too large" });
+  });
+
+  it("rejects unknown agents and oversized known values", async () => {
     const invalidSessions = [
       { key: "agent:unknown:test", agentId: "unknown" },
-      { key: "agent:main:test", agentId: "main", unexpected: true },
       { key: "agent:main:test", agentId: "main", model: "x".repeat(257) },
     ];
 
@@ -160,6 +177,7 @@ describe("API auth boundaries", () => {
           modelProvider: "openai",
           sessionId: "123e4567-e89b-12d3-a456-426614174000",
           updatedAt: Date.now(),
+          spawnedBy: "agent:main:fixture-parent",
         }],
       })
       .expect(200)

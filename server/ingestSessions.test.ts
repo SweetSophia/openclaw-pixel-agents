@@ -5,6 +5,7 @@ import {
   parseIngestSessions,
   resolveTranscriptPath,
 } from "./ingestSessions";
+import upstreamFixture from "./fixtures/openclaw-sessions-v2026.7.2.json";
 
 const knownAgentIds = new Set(["main", "cybera"]);
 
@@ -39,13 +40,51 @@ const validSession = {
 
 describe("parseIngestSessions", () => {
   it("accepts the current collector session schema", () => {
-    const { sessionFile: collectorLocalPath, ...mappedSession } = validSession;
-
-    expect(collectorLocalPath).toContain("/home/test/.openclaw/");
     expect(parseIngestSessions([validSession], knownAgentIds)).toEqual({
       ok: true,
-      sessions: [mappedSession],
+      sessions: [{
+        key: validSession.key,
+        agentId: validSession.agentId,
+        model: validSession.model,
+        modelProvider: validSession.modelProvider,
+        totalTokens: validSession.totalTokens,
+        contextTokens: validSession.contextTokens,
+        updatedAt: validSession.updatedAt,
+        kind: validSession.kind,
+        status: validSession.status,
+        abortedLastRun: validSession.abortedLastRun,
+        inputTokens: validSession.inputTokens,
+        outputTokens: validSession.outputTokens,
+        sessionId: validSession.sessionId,
+      }],
     });
+  });
+
+  it("accepts and sanitizes a captured upstream session shape", () => {
+    const result = parseIngestSessions(upstreamFixture.sessions, knownAgentIds);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.sessions).toEqual([
+      {
+        key: "agent:main:subagent:fixture",
+        agentId: "main",
+        model: "gpt-5",
+        modelProvider: "openai",
+        totalTokens: 1234,
+        contextTokens: 200000,
+        updatedAt: null,
+        kind: "subagent",
+        status: "active",
+        abortedLastRun: false,
+        inputTokens: 100,
+        outputTokens: 200,
+        sessionId: "123e4567-e89b-12d3-a456-426614174000",
+      },
+    ]);
+    expect(result.sessions[0]).not.toHaveProperty("spawnedBy");
+    expect(result.sessions[0]).not.toHaveProperty("sessionFile");
   });
 
   it.each([
@@ -80,7 +119,7 @@ describe("parseIngestSessions", () => {
     });
   });
 
-  it("rejects unknown agents, unknown fields, and overlong fields", () => {
+  it("rejects unknown agents and overlong known fields while dropping unknown fields", () => {
     expect(parseIngestSessions([
       { ...validSession, agentId: "unknown" },
     ], knownAgentIds)).toMatchObject({
@@ -90,14 +129,29 @@ describe("parseIngestSessions", () => {
     expect(parseIngestSessions([
       { ...validSession, unexpected: true },
     ], knownAgentIds)).toMatchObject({
-      ok: false,
-      error: { code: "unknown-field" },
+      ok: true,
+      sessions: [expect.not.objectContaining({ unexpected: true })],
     });
     expect(parseIngestSessions([
       { ...validSession, model: "x".repeat(257) },
     ], knownAgentIds)).toMatchObject({
       ok: false,
       error: { code: "invalid-string", field: "model" },
+    });
+  });
+
+  it.each([
+    "__proto__",
+    "constructor",
+    "prototype",
+  ])("rejects reserved object key %s instead of copying it", (reservedKey) => {
+    const session = JSON.parse(
+      `{"key":"agent:main:test","agentId":"main","${reservedKey}":{"polluted":true}}`,
+    );
+
+    expect(parseIngestSessions([session], knownAgentIds)).toMatchObject({
+      ok: false,
+      error: { code: "reserved-field" },
     });
   });
 });
