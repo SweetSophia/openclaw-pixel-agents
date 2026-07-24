@@ -1,0 +1,40 @@
+{
+  "source": "Shape captured from `openclaw sessions --all-agents --json`; identifying values replaced for regression safety.",
+  "openclawVersion": "2026.7.2-beta.3",
+  "sessions": [
+    {
+      "key": "agent:main:subagent:fixture",
+      "agentId": "main",
+      "model": "gpt-5",
+      "modelProvider": "openai",
+      "totalTokens": 1234,
+      "contextTokens": 200000,
+      "updatedAt": null,
+      "ageMs": null,
+      "kind": "subagent",
+      "status": "active",
+      "abortedLastRun": false,
+      "inputTokens": 100,
+      "outputTokens": 200,
+      "sessionId": "123e4567-e89b-12d3-a456-426614174000",
+      "sessionFile": "/collector/.openclaw/agents/main/sessions/fixture.jsonl",
+      "spawnedBy": "agent:main:fixture-parent",
+      "spawnedWorkspaceDir": "/collector/workspace",
+      "spawnedCwd": "/collector/workspace/project",
+      "parentSessionKey": "agent:main:fixture-parent",
+      "forkedFromParent": true,
+      "spawnDepth": 1,
+      "subagentRole": "worker",
+      "subagentControlScope": "parent",
+      "verboseLevel": "full",
+      "traceLevel": "off",
+      "elevatedLevel": "off",
+      "responseUsage": {
+        "inputTokens": 100,
+        "outputTokens": 200
+      },
+      "groupActivation": "mention",
+      "runtimePolicySessionKey": "agent:main:fixture-policy"
+    }
+  ]
+}

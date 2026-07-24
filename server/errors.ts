@@ -3,6 +3,49 @@ import { logger } from "./logger";
 
 type AsyncRequestHandler = (req: Request, res: Response, next: NextFunction) => unknown | Promise<unknown>;
 
+type BodyParserFailure = {
+  type: "entity.parse.failed" | "entity.too.large";
+  status: 400 | 413;
+  response: string;
+  limit?: number;
+  length?: number;
+};
+
+function boundedNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number"
+    && Number.isFinite(value)
+    && value >= 0
+    ? value
+    : undefined;
+}
+
+function classifyBodyParserFailure(value: unknown): BodyParserFailure | null {
+  if (!(value instanceof Error)) return null;
+  const candidate = value as Error & {
+    type?: unknown;
+    limit?: unknown;
+    length?: unknown;
+  };
+
+  if (candidate.type === "entity.parse.failed") {
+    return {
+      type: candidate.type,
+      status: 400,
+      response: "Malformed JSON body",
+    };
+  }
+  if (candidate.type === "entity.too.large") {
+    return {
+      type: candidate.type,
+      status: 413,
+      response: "Request body too large",
+      limit: boundedNonNegativeNumber(candidate.limit),
+      length: boundedNonNegativeNumber(candidate.length),
+    };
+  }
+  return null;
+}
+
 export function asyncHandler(handler: AsyncRequestHandler): RequestHandler {
   return (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
@@ -17,6 +60,20 @@ export const apiErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
 
   // Use the per-request child logger if available, otherwise fall back to the base logger.
   const log = req.log ?? logger;
+  const bodyParserFailure = classifyBodyParserFailure(err);
+  if (bodyParserFailure) {
+    // body-parser parse failures can carry the raw request body on `err.body`.
+    // Log only bounded metadata and never pass the original error to pino.
+    log.warn({
+      errorType: bodyParserFailure.type,
+      reqId: req.id,
+      limit: bodyParserFailure.limit,
+      length: bodyParserFailure.length,
+    }, "[api request rejected]");
+    res.status(bodyParserFailure.status).json({ error: bodyParserFailure.response });
+    return;
+  }
+
   // Normalize non-Error rejections (string/object) so pino's { err } serializer
   // produces a real Error — stringification alone drops stacks and loses the
   // original reason.

@@ -13,6 +13,12 @@ function spyOnLoggerError(): MockInstance<Logger["error"]> {
     .mockImplementation((() => logger) as unknown as Logger["error"]);
 }
 
+function spyOnLoggerWarn(): MockInstance<Logger["warn"]> {
+  return vi
+    .spyOn(logger, "warn")
+    .mockImplementation((() => logger) as unknown as Logger["warn"]);
+}
+
 describe("Express error boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -46,6 +52,57 @@ describe("Express error boundary", () => {
       .get("/health")
       .expect(200)
       .expect({ ok: true });
+  });
+
+  it("maps malformed JSON to 400 without logging the raw body", async () => {
+    const errorSpy = spyOnLoggerError();
+    const warnSpy = spyOnLoggerWarn();
+    const rawMarker = "malformed-sensitive-marker";
+    const app = express();
+    app.use(express.json({ limit: "100kb" }));
+    app.post("/ingest", (_req, res) => res.json({ ok: true }));
+    app.use(apiErrorHandler);
+
+    await request(app)
+      .post("/ingest")
+      .set("Content-Type", "application/json")
+      .send(`{"sessions":[${rawMarker}`)
+      .expect(400)
+      .expect({ error: "Malformed JSON body" });
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "entity.parse.failed" }),
+      "[api request rejected]",
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(rawMarker);
+  });
+
+  it("maps oversized JSON to 413 without logging the raw body", async () => {
+    const errorSpy = spyOnLoggerError();
+    const warnSpy = spyOnLoggerWarn();
+    const rawMarker = "oversized-sensitive-marker";
+    const app = express();
+    app.use(express.json({ limit: "1kb" }));
+    app.post("/ingest", (_req, res) => res.json({ ok: true }));
+    app.use(apiErrorHandler);
+
+    await request(app)
+      .post("/ingest")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify({ payload: `${rawMarker}${"x".repeat(2048)}` }))
+      .expect(413)
+      .expect({ error: "Request body too large" });
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorType: "entity.too.large",
+        limit: 1024,
+      }),
+      "[api request rejected]",
+    );
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(rawMarker);
   });
 
   it("normalizes async string rejections so the logged err is an Error preserving the original on cause", async () => {
