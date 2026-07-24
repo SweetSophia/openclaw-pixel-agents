@@ -19,7 +19,7 @@ npm start                                # production build; build first
 ```
 
 - Vitest runs in jsdom, loads `src/test/setup.ts`, and excludes `dist/**` plus `.worktrees/**`.
-- CI runs CodeQL, Socket, Sourcery, dependency review, build, test, and typecheck on every push via `.github/workflows/`. Browser-level geometry and hit-testing are not yet covered there; for those, follow the manual checklist in `CONTRIBUTING.md` (or run focused Playwright/Vitest browser specs locally).
+- CI runs CodeQL, Socket, Sourcery, dependency review, build, test, and typecheck on every push via `.github/workflows/`. Browser-level geometry and hit-testing are not yet covered there; for those, follow the manual browser-testing steps in `CONTRIBUTING.md` (run `npm run dev` and verify in the browser).
 - `npm start` sets `NODE_ENV=production` and runs the non-obvious path `dist/server/server/index.js`.
 
 ## Real Boundaries
