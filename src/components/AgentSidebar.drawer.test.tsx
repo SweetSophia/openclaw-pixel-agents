@@ -47,10 +47,10 @@ function getRuleDeclarations(css: string, selector: string, mediaQuery?: string)
       rules = Array.from(mediaRule!.cssRules);
     }
 
-    const styleRule = rules.find(
-      (rule): rule is CSSStyleRule =>
-        'selectorText' in rule && rule.selectorText === selector,
-    );
+    const styleRule = rules.find((rule): rule is CSSStyleRule => {
+      if (!('selectorText' in rule) || typeof rule.selectorText !== 'string') return false;
+      return rule.selectorText.split(',').map(s => s.trim()).includes(selector);
+    });
     expect(styleRule, `${selector} rule must exist`).toBeDefined();
 
     const declarations = new Map<string, string>();
@@ -93,6 +93,23 @@ describe('AgentSidebar drawer mode', () => {
     const open = getRuleDeclarations(sidebarCss, '.agent-sidebar.open', DRAWER_MEDIA_QUERY);
     expect(open.get('visibility')).toBe('visible');
     expect(open.get('transform')).toBe('translateX(0)');
+  });
+
+  it('reduced-motion override covers the higher-specificity .open rule', () => {
+    // .agent-sidebar.open has (0,2,0) specificity — the reduced-motion block
+    // must name it explicitly or the slide animation survives (Kody, #121).
+    const reducedClosed = getRuleDeclarations(
+      sidebarCss,
+      '.agent-sidebar',
+      '(prefers-reduced-motion: reduce)',
+    );
+    expect(reducedClosed.get('transition')).toBe('visibility 0s');
+    const reducedOpen = getRuleDeclarations(
+      sidebarCss,
+      '.agent-sidebar.open',
+      '(prefers-reduced-motion: reduce)',
+    );
+    expect(reducedOpen.get('transition')).toBe('visibility 0s');
   });
 
   it('applies the open class from the prop and requests close from the close button', () => {

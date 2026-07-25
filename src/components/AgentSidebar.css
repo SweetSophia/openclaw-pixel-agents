@@ -337,5 +337,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-sidebar { transition: visibility 0s; }
+  /* Include .open: its (0,2,0) specificity would otherwise override this
+   * rule and keep the 0.25s slide for reduced-motion users. */
+  .agent-sidebar,
+  .agent-sidebar.open { transition: visibility 0s; }
 }
