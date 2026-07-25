@@ -4,11 +4,15 @@
   top: 0;
   left: 0;
   right: 0;
-  z-index: 90; /* Below Header, above Canvas */
+  z-index: var(--z-editor);
   pointer-events: none;
-  padding-right: var(--desktop-agent-sidebar-reserved-width);
 }
 .layout-editor > * { pointer-events: auto; }
+
+@media (min-width: 1025px) {
+  /* Keep editor panels clear of the floating sidebar on desktop. */
+  .layout-editor { padding-right: var(--desktop-agent-sidebar-reserved-width); }
+}
 
 /* Toolbar */
 .editor-toolbar {
@@ -18,7 +22,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  margin-top: 80px; /* Below floating header */
+  margin-top: calc(var(--topbar-h) + 12px); /* Below the fixed top bar */
   width: fit-content;
   margin-left: auto;
   margin-right: auto;
@@ -61,6 +65,26 @@
 }
 .toolbar-btn.save-btn.dirty {
   animation: pulse-dirty 2s ease-in-out infinite;
+}
+.toolbar-btn.save-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  animation: none;
+  box-shadow: none;
+}
+.toolbar-btn.save-btn:disabled:hover {
+  background: rgba(0, 255, 170, 0.1);
+  box-shadow: none;
+}
+.toolbar-btn.save-btn.saved {
+  border-color: var(--acc-green);
+  color: var(--acc-green);
+  background: rgba(0, 255, 170, 0.25);
+}
+.toolbar-btn.save-btn.error {
+  border-color: var(--acc-pink);
+  color: var(--acc-pink);
+  background: rgba(255, 0, 85, 0.15);
 }
 @keyframes pulse-dirty {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 200, 0, 0.4); }
@@ -254,15 +278,8 @@
 .furniture-palette::-webkit-scrollbar-thumb, .layout-list::-webkit-scrollbar-thumb { background: var(--acc-cyan); border-radius: 4px; }
 
 @media (max-width: 768px) {
-  .layout-editor { padding-right: 0; }
-
-  /* Keep the toolbar below the complete room switcher hit-target band. */
+  /* Toolbar sits below the (two-row) top bar via the shared --topbar-h var. */
   .editor-toolbar {
-    margin-top: calc(
-      var(--mobile-room-switcher-top)
-      + var(--mobile-room-switcher-height)
-      + var(--mobile-editor-toolbar-gap)
-    );
     width: 90%;
   }
   .furniture-palette, .layout-manager { position: static; width: auto; max-height: 250px; margin: 12px; }

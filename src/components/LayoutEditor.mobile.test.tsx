@@ -51,63 +51,67 @@ function getRuleDeclarations(css: string, selector: string, mediaQuery?: string)
 }
 
 /**
- * Regression test for issue #87: mobile toolbar overlap with room switcher.
+ * Regression test for the overlap family first reported in issue #87
+ * (mobile toolbar vs room switcher) and generalized in the 2026 responsive
+ * revamp: ALL chrome collisions came from absolutely positioned islands
+ * with magic offsets.
  *
- * Root cause: at ≤768px the room switcher sits at top:64px with z-index:100
- * and a height of 46px (bottom edge 110px). The editor toolbar was at
- * margin-top:60px inside a z-index:90 container — so it occupied the same
- * vertical band and lost hit-testing to the room switcher.
- *
- * Fix: derive both elements from shared mobile HUD geometry so future room
- * switcher changes cannot silently reintroduce the overlap.
+ * Current architecture: one fixed top bar composes brand, room switcher,
+ * and controls in flex flow (collisions structurally impossible), and the
+ * editor toolbar offsets from the shared `--topbar-h` variable so it always
+ * clears the bar — including the two-row mobile wrap. These pins fail if
+ * anyone reintroduces independent absolute positioning.
  */
 describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
   afterEach(cleanup);
   // ── CSS regression: catch anyone reverting the offset ──────────────
 
-  it('derives the mobile toolbar offset from the room switcher geometry', () => {
+  it('derives the toolbar offset from the shared top-bar height', () => {
     const root = getRuleDeclarations(appCss, ':root');
-    expect(root.get('--mobile-room-switcher-top')).toBe('64px');
-    expect(root.get('--mobile-room-switcher-height')).toBe('46px');
-    expect(root.get('--mobile-editor-toolbar-gap')).toBe('10px');
+    expect(root.get('--topbar-h')).toBe('64px');
     expect(root.get('--desktop-agent-sidebar-reserved-width')).toBe('316px');
 
-    const roomSwitcher = getRuleDeclarations(
+    // Mobile wraps the top bar to two rows and grows the shared height var.
+    const mobileRoot = getRuleDeclarations(appCss, ':root', MOBILE_MEDIA_QUERY);
+    expect(mobileRoot.get('--topbar-h')).toBe('104px');
+
+    // The room switcher is composed in flex flow inside the top bar — never
+    // absolutely positioned. On mobile it becomes the full-width second row.
+    const baseSwitcher = getRuleDeclarations(roomSwitcherCss, '.room-switcher');
+    expect(baseSwitcher.get('position')).toBe('static');
+    const mobileSwitcher = getRuleDeclarations(
       roomSwitcherCss,
       '.room-switcher',
       MOBILE_MEDIA_QUERY,
     );
+    expect(mobileSwitcher.get('order')).toBe('3');
+    expect(mobileSwitcher.get('top')).toBeUndefined();
 
-    expect(roomSwitcher.get('top')).toBe('var(--mobile-room-switcher-top)');
-    expect(roomSwitcher.get('height')).toBe('var(--mobile-room-switcher-height)');
-
-    const editorToolbar = getRuleDeclarations(
-      layoutEditorCss,
-      '.editor-toolbar',
-      MOBILE_MEDIA_QUERY,
-    );
+    // The toolbar clears the whole bar via the shared var, in every mode.
+    const editorToolbar = getRuleDeclarations(layoutEditorCss, '.editor-toolbar');
     const toolbarOffset = editorToolbar
       .get('margin-top')
       ?.replace(/\s+/g, ' ')
       .replace(/\(\s+/g, '(')
       .replace(/\s+\)/g, ')');
-    expect(toolbarOffset).toBe(
-      'calc(var(--mobile-room-switcher-top) + var(--mobile-room-switcher-height) + var(--mobile-editor-toolbar-gap))',
-    );
+    expect(toolbarOffset).toBe('calc(var(--topbar-h) + 12px)');
   });
 
-  it('reserves the desktop agent sidebar band and releases it on mobile', () => {
-    const desktopEditor = getRuleDeclarations(layoutEditorCss, '.layout-editor');
+  it('reserves the desktop agent sidebar band above drawer width only', () => {
+    // Desktop (above the 1024px drawer breakpoint): reserve the sidebar band.
+    const desktopEditor = getRuleDeclarations(
+      layoutEditorCss,
+      '.layout-editor',
+      '(min-width: 1025px)',
+    );
     expect(desktopEditor.get('padding-right')).toBe(
       'var(--desktop-agent-sidebar-reserved-width)',
     );
 
-    const mobileEditor = getRuleDeclarations(
-      layoutEditorCss,
-      '.layout-editor',
-      MOBILE_MEDIA_QUERY,
-    );
-    expect(mobileEditor.get('padding-right')).toBe('0px');
+    // Base rule reserves nothing: below 1024px the sidebar is an off-canvas
+    // drawer, so the editor may use the full stage width.
+    const baseEditor = getRuleDeclarations(layoutEditorCss, '.layout-editor');
+    expect(baseEditor.get('padding-right')).toBeUndefined();
   });
   // ── Functional regression: toolbar buttons render and fire ──────────
 
@@ -154,9 +158,34 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     expect(screen.getByTitle('Exit editor')).toBeTruthy();
   });
 
-  it('fires onSave when Save is clicked', () => {
-    render(<LayoutEditor {...props} />);
+  it('fires onSave when Save is clicked with unsaved changes', () => {
+    render(<LayoutEditor {...props} isDirty />);
     fireEvent.click(screen.getByTitle(/Save layout/));
+    expect(props.onSave).toHaveBeenCalledOnce();
+  });
+
+  it('disables Save when there are no unsaved changes', () => {
+    render(<LayoutEditor {...props} />);
+    const saveButton = screen.getByTitle(/Save layout/);
+    expect(saveButton).toHaveProperty('disabled', true);
+    fireEvent.click(saveButton);
+    expect(props.onSave).not.toHaveBeenCalled();
+  });
+
+  it('reflects the save lifecycle state from the layout store', () => {
+    const { unmount } = render(<LayoutEditor {...props} isDirty saveStatus="saving" />);
+    expect(screen.getByTitle('Saving layout…')).toHaveProperty('disabled', true);
+    unmount();
+
+    const { unmount: unmountSaved } = render(<LayoutEditor {...props} saveStatus="saved" />);
+    expect(screen.getByTitle('Layout saved').textContent).toContain('✓ Saved');
+    unmountSaved();
+
+    // Error state: stays enabled so the user can retry immediately.
+    render(<LayoutEditor {...props} saveStatus="error" />);
+    const retryButton = screen.getByTitle(/Couldn't save/);
+    expect(retryButton).toHaveProperty('disabled', false);
+    fireEvent.click(retryButton);
     expect(props.onSave).toHaveBeenCalledOnce();
   });
 

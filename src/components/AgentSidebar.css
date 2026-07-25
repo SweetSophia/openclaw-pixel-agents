@@ -1,9 +1,9 @@
 /* AgentSidebar.css - Frosted 16-Bit HUD */
 .agent-sidebar {
-  position: absolute;
-  top: 16px;
+  position: fixed;
+  top: calc(var(--topbar-h) + 8px);
   right: 16px;
-  bottom: 80px; /* Leave room for marquee */
+  bottom: 64px; /* clear of the message ticker zone */
   width: 300px;
   background: var(--bg-panel);
   backdrop-filter: var(--glass-blur);
@@ -17,6 +17,22 @@
   z-index: 100;
   transition: all 0.3s ease;
 }
+
+/* Drawer close button — drawer mode only (≤1024px). */
+.sidebar-close-btn {
+  display: none;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-main);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.sidebar-close-btn:hover { border-color: var(--acc-pink); color: var(--acc-pink); }
 
 /* Custom Scrollbar for HUD */
 .agent-sidebar::-webkit-scrollbar {
@@ -283,23 +299,46 @@
   box-shadow: 0 0 8px rgba(255, 0, 85, 0.4);
 }
 
-/* ── Mobile: absolute slide-up panel or stripped down ── */
-@media (max-width: 768px) {
+/* ── Drawer mode: off-canvas right panel, toggled from the top bar ──
+ * Below 1024px a floating 300px panel covers too much of the office stage
+ * (measured: 736px of 768px at tablet width). The drawer keeps the stage
+ * clear and opens on demand with a backdrop. */
+@media (max-width: 1024px) {
   .agent-sidebar {
-    width: auto;
-    left: 16px; /* Span across on small screens */
-    top: auto;
-    bottom: 16px;
-    height: 35vh; /* Take bottom 1/3 */
-    max-height: none;
-    border-radius: 12px;
+    top: var(--topbar-h);
+    right: 0;
+    bottom: 0;
+    width: min(320px, 88vw);
+    border-radius: 0;
+    border-right: none;
+    border-top: none;
+    transform: translateX(105%);
+    /* Closed drawer must leave tab order and the a11y tree, not just the
+     * viewport. visibility:hidden does all three; the delayed visibility
+     * transition lets the slide-out finish before the panel disappears. */
+    visibility: hidden;
+    transition: transform 0.25s ease, visibility 0s linear 0.25s;
+    z-index: var(--z-drawer);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
   }
+  .agent-sidebar.open {
+    transform: translateX(0);
+    visibility: visible;
+    transition: transform 0.25s ease, visibility 0s;
+  }
+  .sidebar-close-btn { display: block; }
 }
 
 @media (max-width: 480px) {
   .agent-sidebar {
-    left: 8px; right: 8px; bottom: 8px;
-    height: 30vh;
-    padding: 10px;
+    width: min(320px, 92vw);
+    padding: 12px;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Include .open: its (0,2,0) specificity would otherwise override this
+   * rule and keep the 0.25s slide for reduced-motion users. */
+  .agent-sidebar,
+  .agent-sidebar.open { transition: visibility 0s; }
 }

@@ -13,6 +13,10 @@ interface Props {
   onSelectAgent?: (agentId: string) => void;
   onUpdateTags?: (agentId: string, tags: AgentTag[]) => Promise<void>;
   onUpdateRecipe?: (agentId: string, recipe: CharacterRecipe) => Promise<void>;
+  /** Drawer mode (≤1024px): whether the off-canvas panel is open. */
+  open?: boolean;
+  /** Drawer mode: request to close (backdrop / close button). */
+  onClose?: () => void;
 }
 
 const activityIcons: Record<AgentActivity, string> = {
@@ -65,6 +69,8 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
               className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
               onClick={(e) => { e.stopPropagation(); onToggle(agent.id, !agent.pixelEnabled); }}
               title={agent.pixelEnabled ? 'Hide from office' : 'Show in office'}
+              aria-label={agent.pixelEnabled ? `Hide ${agent.name} from office` : `Show ${agent.name} in office`}
+              aria-pressed={agent.pixelEnabled}
             >
               {agent.pixelEnabled ? '👁️' : '👁️‍🗨️'}
             </button>
@@ -114,6 +120,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
                   className="tag-edit-btn"
                   onClick={(e) => { e.stopPropagation(); onOpenTagEditor(agent); }}
                   title="Edit tags"
+                  aria-label={`Edit tags for ${agent.name}`}
                 >
                   ✏️
                 </button>
@@ -121,6 +128,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
                   className="tag-edit-btn"
                   onClick={(e) => { e.stopPropagation(); onOpenCustomizer(agent); }}
                   title="Customize appearance"
+                  aria-label={`Customize appearance for ${agent.name}`}
                 >
                   🎨
                 </button>
@@ -133,6 +141,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
                 className="tag-add-btn"
                 onClick={(e) => { e.stopPropagation(); onOpenTagEditor(agent); }}
                 title="Add tags"
+                aria-label={`Add tags for ${agent.name}`}
               >
                 + tags
               </button>
@@ -141,6 +150,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
                   className="tag-edit-btn"
                   onClick={(e) => { e.stopPropagation(); onOpenCustomizer(agent); }}
                   title="Customize appearance"
+                  aria-label={`Customize appearance for ${agent.name}`}
                 >
                   🎨
                 </button>
@@ -153,7 +163,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
   );
 });
 
-export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onToggleAll, onSelectAgent, onUpdateTags, onUpdateRecipe }) => {
+export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onToggleAll, onSelectAgent, onUpdateTags, onUpdateRecipe, open = true, onClose }) => {
   const enabledCount = agents.filter(a => a.pixelEnabled).length;
   const [tagEditorAgent, setTagEditorAgent] = useState<AgentState | null>(null);
   const [customizerAgent, setCustomizerAgent] = useState<AgentState | null>(null);
@@ -170,7 +180,8 @@ export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onT
   )), [agents, onToggle, onSelectAgent]);
 
   return (
-    <aside className="agent-sidebar">
+    <aside className={`agent-sidebar ${open ? 'open' : ''}`} aria-label="Agents">
+      <button className="sidebar-close-btn" onClick={onClose} aria-label="Close agents panel">✖</button>
       <h2>Agents ({enabledCount}/{agents.length})</h2>
       <div className="agent-list">
         {agentCards}

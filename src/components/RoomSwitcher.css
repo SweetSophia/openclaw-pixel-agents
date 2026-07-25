@@ -1,9 +1,14 @@
+/* Room switcher lives inside the fixed top bar (App.css .app-header),
+ * composed in flex flow: it centers in the leftover space and scrolls
+ * internally when tabs overflow — it can never collide with the brand or
+ * the header controls. */
 .room-switcher {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
+  position: static;
+  transform: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: fit-content;
+  margin: 0 auto;
 
   display: flex;
   gap: 4px;
@@ -73,10 +78,12 @@
 }
 
 @media (max-width: 768px) {
+  /* Second row of the wrapped top bar: full-width scrollable tab strip. */
   .room-switcher {
-    top: var(--mobile-room-switcher-top);
-    height: var(--mobile-room-switcher-height);
-    /* below the mobile header which is ~48px tall */
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin: 0;
     padding: 4px 8px;
     gap: 3px;
   }
