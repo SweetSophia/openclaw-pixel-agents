@@ -58,6 +58,11 @@
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
+  /* The .agent-list is a flex column with overflow-y: auto; without
+   * flex-shrink: 0 the cards collapse to the list's compressed height
+   * and the portrait (48px) + content (94px) get clipped to ~26px,
+   * making names and icons overlap. */
+  flex-shrink: 0;
 }
 
 /* Glow effect underneath active cards */

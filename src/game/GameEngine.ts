@@ -383,14 +383,11 @@ export class GameEngine {
 
   private update(dt: number) {
     for (const char of this.characters.values()) {
-      // Sub-agent lifecycle (planner returns actions for caller to execute)
+      // Sub-agent lifecycle: server status owns dying/removal (issue #102);
+      // the planner only advances the fade-out for dying sub-agents.
       if (char.isSubAgent) {
-        const tick = tickSubAgent(char, this.nowMs, dt);
+        const tick = tickSubAgent(char, dt);
         char.fadeAlpha = tick.fadeAlpha;
-        char.dying = tick.dying;
-        for (const action of tick.actions) {
-          if (action.kind === 'despawn-sound') sfx.despawn();
-        }
         if (tick.shouldRemove) {
           this.characters.delete(char.id);
           continue;
@@ -1687,10 +1684,25 @@ export class GameEngine {
     sfx.spawn();
   }
 
-  /** Mark a sub-agent as dying (will fade out) */
+  /** Mark a sub-agent as dying and start its fade-out.
+   *  Plays the despawn sound on the live→dying transition only, so repeated
+   *  kill reconciliations are idempotent and never replay the sound. */
   killSubAgent(subId: string) {
     const sub = this.characters.get(subId);
-    if (sub?.isSubAgent) sub.dying = true;
+    if (!sub?.isSubAgent || sub.dying) return;
+    sub.dying = true;
+    sfx.despawn();
+  }
+
+  /** Cancel a pending fade-out: the server status flipped back to `running`
+   *  mid-fade. The character never left, so no spawn sound and no position
+   *  reset — identity stays stable (issue #102). The spawn glow is likewise
+   *  not replayed (`spawnTime` is untouched): no visual re-emphasis either. */
+  reviveSubAgent(subId: string) {
+    const sub = this.characters.get(subId);
+    if (!sub?.isSubAgent || !sub.dying) return;
+    sub.dying = false;
+    sub.fadeAlpha = 1;
   }
 
   /** Check if a character (typically a sub-agent) is in dying state */

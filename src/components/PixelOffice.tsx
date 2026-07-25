@@ -154,7 +154,9 @@ export const PixelOffice: React.FC<Props> = ({
         });
       }
 
-      // Sync sub-agents
+      // Sync sub-agents — server status is the sole lifecycle authority:
+      // `running` keeps a sub-agent alive indefinitely, `completed`/`failed`
+      // or absence fades it out (issue #102).
       if (agent.subAgents) {
         // Spawn new sub-agents
         for (const sub of agent.subAgents) {
@@ -164,9 +166,11 @@ export const PixelOffice: React.FC<Props> = ({
               engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
               currentIds.add(sub.id); // Prevent re-spawning
             } else if (engine.isCharacterDying(sub.id)) {
-              // Only respawn if the sub-agent is in dying/fading state
-              engine.removeCharacter(sub.id);
-              engine.spawnSubAgent(agent.id, sub.id, sub.name || sub.id);
+              // Server status flipped back to `running` mid-fade: cancel the
+              // fade in place. Server status owns the sub-agent lifecycle —
+              // never remove+respawn a running sub-agent (that replayed the
+              // spawn sound and flickered, issue #102).
+              engine.reviveSubAgent(sub.id);
             }
           } else {
             engine.killSubAgent(sub.id);
