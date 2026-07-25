@@ -26,10 +26,7 @@ import { GameEngine } from './GameEngine';
 import type { GameCallbacks } from './GameEngine';
 import type { EditorCallbacks } from './EditorController';
 import type { PlacedFurniture } from '../../shared/types';
-import {
-  SUBAGENT_FADE_DURATION,
-  SUBAGENT_LIFETIME,
-} from './SubAgentFSM';
+import { SUBAGENT_FADE_DURATION } from './SubAgentFSM';
 import { getDayPhase } from './Schedule';
 import { sfx } from '../audio/SoundFX';
 
@@ -94,6 +91,8 @@ type TestGameEngine = {
   setLayout(furniture: PlacedFurniture[]): void;
   getPlacedFurniture(): PlacedFurniture[];
   spawnSubAgent(parentId: string, subId: string, subName: string): void;
+  killSubAgent(subId: string): void;
+  reviveSubAgent(subId: string): void;
   isCharacterDying(id: string): boolean;
   stop(): void;
 };
@@ -313,47 +312,122 @@ describe('GameEngine integration: sub-agent lifecycle', () => {
     vi.clearAllMocks();
   });
 
-  it('applies the tickSubAgent plan: transition sound, monotonic fade, removal', () => {
+  /** Advance `seconds` of simulated time in 100ms update steps. */
+  const advance = (seconds: number) => {
+    const stepMs = 100;
+    const steps = Math.ceil((seconds * 1000) / stepMs);
+    for (let i = 0; i < steps; i++) {
+      engine.nowMs += stepMs;
+      engine.update(stepMs / 1000);
+    }
+  };
+
+  it('keeps a running sub-agent alive and stable through 60 simulated seconds (issue #102)', () => {
+    const spawnSpy = vi.mocked(sfx.spawn);
     const despawnSpy = vi.mocked(sfx.despawn);
 
-    // Pin `nowMs` so the sub-agent spawn time is known deterministically.
-    // The post-call assertion turns `update(dt)` not reading `performance.now()`
-    // back into the test into a hard regression barrier (ora-3 advisory #1).
     engine.nowMs = 1_000;
     engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
-    expect(engine.characters.has('sub-1')).toBe(true);
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    const identity = engine.characters.get('sub-1');
+
+    // 60 simulated seconds — 4x the removed 15s presentation lifetime.
+    advance(60);
+
+    // Stable identity, no fade, no despawn: server status still `running`.
+    expect(engine.characters.get('sub-1')).toBe(identity);
     expect(engine.isCharacterDying('sub-1')).toBe(false);
-    expect(engine.nowMs).toBe(1_000);
+    expect(engine.characters.get('sub-1')!.fadeAlpha).toBe(1);
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(despawnSpy).not.toHaveBeenCalled();
+  });
 
-    // Frame that crosses SUBAGENT_LIFETIME: should fire exactly one despawn-sound
-    // and apply the first fade decrement.
-    engine.nowMs = 1_000 + SUBAGENT_LIFETIME + 50;
-    engine.update(0.05);
-    expect(engine.nowMs).toBe(1_000 + SUBAGENT_LIFETIME + 50);
+  it('killSubAgent: exactly one despawn sound, monotonic fade, removal', () => {
+    const despawnSpy = vi.mocked(sfx.despawn);
 
+    engine.nowMs = 1_000;
+    engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
+    expect(engine.isCharacterDying('sub-1')).toBe(false);
+
+    // Completion reconciliation kills the sub-agent: one sound, fade starts.
+    engine.killSubAgent('sub-1');
+    expect(despawnSpy).toHaveBeenCalledTimes(1);
     expect(engine.isCharacterDying('sub-1')).toBe(true);
-    expect(despawnSpy).toHaveBeenCalledTimes(1);
-    const fadeAfterFirstDyingTick = engine.characters.get('sub-1')!.fadeAlpha;
-    expect(fadeAfterFirstDyingTick).toBeLessThan(1);
 
-    // Subsequent dying ticks decay fade monotonically and MUST NOT re-emit the sound.
-    const fadeStepMs = 100;
-    engine.nowMs += fadeStepMs;
-    engine.update(fadeStepMs / 1000);
+    // Repeated kills are idempotent — the sound must not replay.
+    engine.killSubAgent('sub-1');
     expect(despawnSpy).toHaveBeenCalledTimes(1);
-    expect(engine.characters.get('sub-1')!.fadeAlpha).toBeLessThan(fadeAfterFirstDyingTick);
+
+    engine.update(0.05);
+    const fadeAfterFirstTick = engine.characters.get('sub-1')!.fadeAlpha;
+    expect(fadeAfterFirstTick).toBeLessThan(1);
+    expect(despawnSpy).toHaveBeenCalledTimes(1);
+
+    // Fade decays monotonically and MUST NOT re-emit the sound.
+    engine.nowMs += 100;
+    engine.update(0.1);
+    expect(engine.characters.get('sub-1')!.fadeAlpha).toBeLessThan(fadeAfterFirstTick);
+    expect(despawnSpy).toHaveBeenCalledTimes(1);
 
     // Exhaust the fade window: bound the loop on the FSM constant, not a magic
     // iteration count, so this stays correct if SUBAGENT_FADE_DURATION changes.
-    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / fadeStepMs) + 1;
+    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / 100) + 1;
     for (let i = 0; i < fadeSteps; i++) {
       if (!engine.characters.has('sub-1')) break;
-      engine.nowMs += fadeStepMs;
-      engine.update(fadeStepMs / 1000);
+      engine.nowMs += 100;
+      engine.update(0.1);
     }
 
     expect(engine.characters.has('sub-1')).toBe(false);
     expect(despawnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reviveSubAgent cancels a mid-fade kill without replaying any sound (issue #102)', () => {
+    const spawnSpy = vi.mocked(sfx.spawn);
+    const despawnSpy = vi.mocked(sfx.despawn);
+
+    engine.nowMs = 1_000;
+    engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
+    engine.killSubAgent('sub-1');
+    engine.update(0.5);
+    expect(engine.isCharacterDying('sub-1')).toBe(true);
+    expect(engine.characters.get('sub-1')!.fadeAlpha).toBeLessThan(1);
+    expect(despawnSpy).toHaveBeenCalledTimes(1);
+
+    // Server status flips back to `running` mid-fade: revive in place.
+    engine.reviveSubAgent('sub-1');
+    expect(engine.isCharacterDying('sub-1')).toBe(false);
+    expect(engine.characters.get('sub-1')!.fadeAlpha).toBe(1);
+
+    // Still alive and stable long past the former presentation lifetime,
+    // with no replayed spawn or despawn sound.
+    advance(60);
+    expect(engine.characters.has('sub-1')).toBe(true);
+    expect(engine.isCharacterDying('sub-1')).toBe(false);
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(despawnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('plays the spawn sound again only for a genuinely new appearance after removal', () => {
+    const spawnSpy = vi.mocked(sfx.spawn);
+
+    engine.nowMs = 1_000;
+    engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
+    engine.killSubAgent('sub-1');
+
+    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / 100) + 1;
+    for (let i = 0; i < fadeSteps; i++) {
+      if (!engine.characters.has('sub-1')) break;
+      engine.nowMs += 100;
+      engine.update(0.1);
+    }
+    expect(engine.characters.has('sub-1')).toBe(false);
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+
+    // The sub-agent fully faded out, so a later `running` reconciliation is
+    // a genuinely new visual appearance — the spawn sound is justified.
+    engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
+    expect(spawnSpy).toHaveBeenCalledTimes(2);
   });
 });
 
