@@ -174,6 +174,24 @@ describe('PixelOffice sub-agent reconciliation contract (issue #102)', () => {
     expect(engineOf().spawnSubAgent).toHaveBeenLastCalledWith('cybera', 'sub-2', 'sub-2');
   });
 
+  it('kills sub-agents when the parent is present but pixel-disabled', async () => {
+    const { rerender } = render(
+      <PixelOffice {...baseProps} agents={[parentWith([sub('sub-1', 'running')])]} />,
+    );
+    await waitFor(() => expect(engineOf().spawnSubAgent).toHaveBeenCalledTimes(1));
+
+    // Parent stays in the list but visualization is toggled off: the parent
+    // character is removed and its sub-agent must not linger (sweep path).
+    rerender(
+      <PixelOffice
+        {...baseProps}
+        agents={[{ ...parentWith([sub('sub-1', 'running')]), pixelEnabled: false }]}
+      />,
+    );
+    expect(engineOf().removeCharacter).toHaveBeenCalledWith('cybera');
+    expect(engineOf().killSubAgent).toHaveBeenCalledWith('sub-1');
+  });
+
   it('kills sub-agents and removes the character when the parent leaves the room', async () => {
     const { rerender } = render(
       <PixelOffice {...baseProps} agents={[parentWith([sub('sub-1', 'running')])]} />,

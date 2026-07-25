@@ -322,6 +322,18 @@ describe('GameEngine integration: sub-agent lifecycle', () => {
     }
   };
 
+  /** Drain a dying sub-agent's fade-out to removal.
+   *  Bounded on the FSM constant (not a magic iteration count), so the loop
+   *  stays correct — and terminates — if SUBAGENT_FADE_DURATION changes. */
+  const fadeOutCompletely = (subId: string) => {
+    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / 100) + 1;
+    for (let i = 0; i < fadeSteps; i++) {
+      if (!engine.characters.has(subId)) break;
+      engine.nowMs += 100;
+      engine.update(0.1);
+    }
+  };
+
   it('keeps a running sub-agent alive and stable through 60 simulated seconds (issue #102)', () => {
     const spawnSpy = vi.mocked(sfx.spawn);
     const despawnSpy = vi.mocked(sfx.despawn);
@@ -369,14 +381,8 @@ describe('GameEngine integration: sub-agent lifecycle', () => {
     expect(engine.characters.get('sub-1')!.fadeAlpha).toBeLessThan(fadeAfterFirstTick);
     expect(despawnSpy).toHaveBeenCalledTimes(1);
 
-    // Exhaust the fade window: bound the loop on the FSM constant, not a magic
-    // iteration count, so this stays correct if SUBAGENT_FADE_DURATION changes.
-    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / 100) + 1;
-    for (let i = 0; i < fadeSteps; i++) {
-      if (!engine.characters.has('sub-1')) break;
-      engine.nowMs += 100;
-      engine.update(0.1);
-    }
+    // Exhaust the fade window.
+    fadeOutCompletely('sub-1');
 
     expect(engine.characters.has('sub-1')).toBe(false);
     expect(despawnSpy).toHaveBeenCalledTimes(1);
@@ -415,12 +421,7 @@ describe('GameEngine integration: sub-agent lifecycle', () => {
     engine.spawnSubAgent('parent', 'sub-1', 'SubOne');
     engine.killSubAgent('sub-1');
 
-    const fadeSteps = Math.ceil(SUBAGENT_FADE_DURATION / 100) + 1;
-    for (let i = 0; i < fadeSteps; i++) {
-      if (!engine.characters.has('sub-1')) break;
-      engine.nowMs += 100;
-      engine.update(0.1);
-    }
+    fadeOutCompletely('sub-1');
     expect(engine.characters.has('sub-1')).toBe(false);
     expect(spawnSpy).toHaveBeenCalledTimes(1);
 
