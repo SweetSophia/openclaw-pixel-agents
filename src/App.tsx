@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { PixelOffice } from './components/PixelOffice';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
@@ -39,6 +39,38 @@ export const App: React.FC = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [sidebarOpen]);
+
+  // Close the drawer when leaving drawer mode (viewport crosses above
+  // 1024px) — otherwise the backdrop would linger over the desktop layout.
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia('(min-width: 1025px)');
+    const onChange = (e: MediaQueryListEvent) => {
+      if (e.matches) setSidebarOpen(false);
+    };
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  // The top bar wraps to two (very narrow: three) rows depending on width,
+  // so --topbar-h is derived from the RENDERED header height rather than a
+  // fixed guess. CSS values in App.css remain the pre-JS fallback. Editor
+  // toolbar, sidebar, and drawer all offset from this var.
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header || typeof ResizeObserver === 'undefined') return;
+    const syncTopbarHeight = () => {
+      document.documentElement.style.setProperty(
+        '--topbar-h',
+        `${Math.ceil(header.getBoundingClientRect().height)}px`,
+      );
+    };
+    syncTopbarHeight();
+    const observer = new ResizeObserver(syncTopbarHeight);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
 
   // Place new furniture
   const handlePlaceFurniture = useCallback((type: string, gridX: number, gridY: number) => {
@@ -117,8 +149,8 @@ export const App: React.FC = () => {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>🖥️ OpenClaw Pixel Agents</h1>
+      <header className="app-header" ref={headerRef}>
+        <h1 aria-label="OpenClaw Pixel Agents"><span aria-hidden="true">🖥️ </span><span className="brand-text">OpenClaw Pixel Agents</span></h1>
         <RoomSwitcher
           activeRoomId={activeRoomId}
           onRoomChange={setActiveRoomId}
@@ -139,8 +171,11 @@ export const App: React.FC = () => {
           >
             {editorMode ? '✏️ Editor ON' : '✏️ Editor'}
           </button>
-          <span className={`connection-status ${connected ? 'connected' : 'disconnected'}`}>
-            {connected ? '● Connected' : '○ Disconnected'}
+          <span
+            className={`connection-status ${connected ? 'connected' : 'disconnected'}`}
+            aria-label={connected ? 'Connected' : 'Disconnected'}
+          >
+            {connected ? '●' : '○'}<span className="status-text">{connected ? ' Connected' : ' Disconnected'}</span>
           </span>
           <SoundControls />
         </div>
@@ -188,24 +223,27 @@ export const App: React.FC = () => {
             onCharacterClick={handleCharacterClick}
           />
         </div>
-        {sidebarOpen && (
-          <div
-            className="sidebar-backdrop"
-            onClick={() => setSidebarOpen(false)}
-            aria-hidden="true"
-          />
-        )}
-        <AgentSidebar
-          agents={agents}
-          onToggle={toggleAgent}
-          onToggleAll={toggleAll}
-          onSelectAgent={setSelectedAgentId}
-          onUpdateTags={updateTags}
-          onUpdateRecipe={updateRecipe}
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-        />
       </main>
+      {sidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      {/* Sidebar + backdrop are direct .app children: inside .app-main's
+          z-10 stacking context they'd be capped below the ticker (150) and
+          top bar (300). position:fixed keeps geometry identical. */}
+      <AgentSidebar
+        agents={agents}
+        onToggle={toggleAgent}
+        onToggleAll={toggleAll}
+        onSelectAgent={setSelectedAgentId}
+        onUpdateTags={updateTags}
+        onUpdateRecipe={updateRecipe}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
       <AgentDetailPanel
         agent={selectedAgentId ? agents.find(a => a.id === selectedAgentId) ?? null : null}
         onClose={() => setSelectedAgentId(null)}

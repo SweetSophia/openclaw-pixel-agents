@@ -135,7 +135,9 @@ input:focus-visible,
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
-/* Backdrop behind the drawer — click / tap dismisses. */
+/* Backdrop behind the drawer — click / tap dismisses. Only ever shown in
+ * drawer mode; hard-hidden above the breakpoint so a stale open state can
+ * never obscure the desktop layout. */
 .sidebar-backdrop {
   position: fixed;
   inset: 0;
@@ -143,6 +145,10 @@ input:focus-visible,
   background: rgba(4, 6, 12, 0.55);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
+}
+
+@media (min-width: 1025px) {
+  .sidebar-backdrop { display: none; }
 }
 
 /* The Editor Toggle */
@@ -187,6 +193,15 @@ input:focus-visible,
 /* Tablet: drawer toggle appears (sidebar becomes a drawer). */
 @media (max-width: 1024px) {
   .sidebar-toggle { display: inline-flex; }
+}
+
+/* Small phones: icon-only brand and status dot keep the top bar to two
+ * rows. Accessible names live on aria-labels, so hiding text is safe. */
+@media (max-width: 480px) {
+  .brand-text,
+  .status-text {
+    display: none;
+  }
 }
 
 /* Mobile: top bar wraps to two rows — brand+controls, then room tabs. */

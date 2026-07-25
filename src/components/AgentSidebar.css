@@ -313,12 +313,18 @@
     border-right: none;
     border-top: none;
     transform: translateX(105%);
-    transition: transform 0.25s ease;
+    /* Closed drawer must leave tab order and the a11y tree, not just the
+     * viewport. visibility:hidden does all three; the delayed visibility
+     * transition lets the slide-out finish before the panel disappears. */
+    visibility: hidden;
+    transition: transform 0.25s ease, visibility 0s linear 0.25s;
     z-index: var(--z-drawer);
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
   }
   .agent-sidebar.open {
     transform: translateX(0);
+    visibility: visible;
+    transition: transform 0.25s ease, visibility 0s;
   }
   .sidebar-close-btn { display: block; }
 }
@@ -331,5 +337,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-sidebar { transition: none; }
+  .agent-sidebar { transition: visibility 0s; }
 }
