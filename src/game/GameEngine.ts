@@ -1696,7 +1696,8 @@ export class GameEngine {
 
   /** Cancel a pending fade-out: the server status flipped back to `running`
    *  mid-fade. The character never left, so no spawn sound and no position
-   *  reset — identity stays stable (issue #102). */
+   *  reset — identity stays stable (issue #102). The spawn glow is likewise
+   *  not replayed (`spawnTime` is untouched): no visual re-emphasis either. */
   reviveSubAgent(subId: string) {
     const sub = this.characters.get(subId);
     if (!sub?.isSubAgent || !sub.dying) return;
