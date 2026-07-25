@@ -22,10 +22,17 @@
   --shadow-neon-pink: 0 0 10px rgba(255, 0, 85, 0.2), inset 0 0 5px rgba(255, 0, 85, 0.1);
   --glass-blur: blur(12px);
 
-  /* Shared mobile HUD geometry keeps independently positioned controls apart. */
-  --mobile-room-switcher-top: 64px;
-  --mobile-room-switcher-height: 46px;
-  --mobile-editor-toolbar-gap: 10px;
+  /* Layout system: one fixed top bar, full-bleed stage, responsive drawers.
+   * Chrome elements compose in flex flow — no absolute islands with magic
+   * offsets (that system collided at every viewport below 1920px). */
+  --topbar-h: 64px;
+  --z-canvas: 10;
+  --z-ticker: 150;
+  --z-editor: 190;
+  --z-backdrop: 240;
+  --z-drawer: 250;
+  --z-topbar: 300;
+  --z-modal: 1000;
   --desktop-agent-sidebar-reserved-width: 316px;
 }
 
@@ -48,40 +55,46 @@ body {
   background-position: center;
 }
 
-/* Floating HUD Header */
+/* Fixed top bar — the single chrome strip. Brand left, room switcher
+ * centered in the remaining flex space, controls right. In-flow composition
+ * makes collisions structurally impossible at any width. */
 .app-header {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  z-index: 100;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-topbar);
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px 24px;
+  gap: 16px;
+  min-height: var(--topbar-h);
+  padding: 8px 16px;
+  box-sizing: border-box;
   background: var(--bg-panel);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  border: var(--border-glass);
-  box-shadow: var(--shadow-neon-cyan);
-  border-radius: 8px; /* Slight rounding for modern feel */
-  /* Remove width to let it fit tightly */
-  gap: 32px;
+  border-bottom: var(--border-glass);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.4), var(--shadow-neon-cyan);
 }
 
 .app-header h1 {
+  flex-shrink: 0;
   font-family: var(--font-pixel);
-  font-size: 18px;
+  font-size: 16px;
   color: var(--acc-cyan);
   text-transform: uppercase;
   letter-spacing: 1px;
   text-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
   margin: 0;
+  white-space: nowrap;
 }
 
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .connection-status {
@@ -92,6 +105,45 @@ body {
 
 .connection-status.connected { color: var(--acc-green); text-shadow: 0 0 5px var(--acc-green); }
 .connection-status.disconnected { color: var(--acc-pink); text-shadow: 0 0 5px var(--acc-pink); }
+
+/* Keyboard navigation: visible focus on every interactive element. */
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--acc-cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Sidebar drawer toggle — drawer mode only (see AgentSidebar.css). */
+.sidebar-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--acc-cyan);
+  border: 1px solid var(--acc-cyan);
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.sidebar-toggle:hover {
+  background: rgba(0, 240, 255, 0.2);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
+/* Backdrop behind the drawer — click / tap dismisses. */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-backdrop);
+  background: rgba(4, 6, 12, 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
 
 /* The Editor Toggle */
 .editor-toggle {
@@ -124,7 +176,7 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 10;
+  z-index: var(--z-canvas);
 }
 .office-wrapper {
   width: 100%;
@@ -132,14 +184,22 @@ body {
   position: relative;
 }
 
-/* Mobile Adjustments for Header HUD */
+/* Tablet: drawer toggle appears (sidebar becomes a drawer). */
+@media (max-width: 1024px) {
+  .sidebar-toggle { display: inline-flex; }
+}
+
+/* Mobile: top bar wraps to two rows — brand+controls, then room tabs. */
 @media (max-width: 768px) {
+  :root { --topbar-h: 104px; }
   .app-header {
-    top: 8px; left: 8px; right: 8px;
-    padding: 8px 12px;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px 12px;
+    padding: 8px 12px;
+    min-height: unset;
   }
-  .app-header h1 { font-size: 14px; }
-  .editor-toggle { min-height: 40px; min-width: 40px; font-size: 10px; }
+  .app-header h1 { font-size: 13px; }
+  .editor-toggle { min-height: 40px; font-size: 10px; padding: 8px 10px; }
+  .sidebar-toggle { min-height: 40px; }
+  .connection-status { font-size: 10px; }
 }

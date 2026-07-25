@@ -13,6 +13,8 @@ export interface LayoutDoc {
   updatedAt: number;
 }
 
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
 type PersistedRevision = { id: string; updatedAt: number };
 
 function isLayoutDoc(value: unknown): value is LayoutDoc {
@@ -93,6 +95,10 @@ export function useLayoutStore() {
   // --- Auto-save state ---
   // isDirty: true when furniture has been changed but not yet persisted.
   const [isDirty, setIsDirty] = useState(false);
+  // saveStatus: user-visible save lifecycle feedback. Purely additive —
+  // nothing in the persistence protocol reads it.
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // skipAutoSaveRef: set to true before programmatic layout changes (load,
   // create, save-response) so the auto-save effect doesn't fire on them.
   // The auto-save effect resets it to false after skipping.
@@ -112,6 +118,22 @@ export function useLayoutStore() {
       autoSaveTimerRef.current = null;
       retry();
     }, delay);
+  }, []);
+
+  // 'saved' auto-clears back to 'idle' so the button returns to its neutral
+  // state; 'saving' and 'error' persist until the next save attempt resolves.
+  const markSaveStatus = useCallback((status: SaveStatus) => {
+    if (saveStatusTimerRef.current) {
+      clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = null;
+    }
+    setSaveStatus(status);
+    if (status === 'saved') {
+      saveStatusTimerRef.current = setTimeout(() => {
+        saveStatusTimerRef.current = null;
+        setSaveStatus('idle');
+      }, 2500);
+    }
   }, []);
 
   const advancePersistedRevision = useCallback((id: string, updatedAt: number) => {
@@ -207,6 +229,7 @@ export function useLayoutStore() {
       // the ref sync.
       const currentLayout = activeLayoutRef.current;
       if (!currentLayout) return;
+      markSaveStatus('saving');
       const editVersionAtSaveStart = furnitureEditVersionRef.current;
       const persistedRevision = persistedRevisionRef.current;
       const baseUpdatedAt = pickBaseUpdatedAt(currentLayout, persistedRevision);
@@ -230,6 +253,7 @@ export function useLayoutStore() {
           } else if (response.status >= 500) {
             scheduleSaveRetry(() => { void saveActiveLayout(); });
           }
+          markSaveStatus('error');
           return;
         }
         const data = await response.json().catch(() => null);
@@ -243,10 +267,12 @@ export function useLayoutStore() {
           if (activeLayoutRef.current?.id === merged.id) {
             scheduleSaveRetry(() => { void saveActiveLayout(); });
           }
+          markSaveStatus('error');
           return;
         }
         // Success — reset retry counter and advance the revision monotonically.
         retryAttemptRef.current = 0;
+        markSaveStatus('saved');
         const currentRevision = persistedRevisionRef.current;
         const responseIsCurrent = currentRevision?.id !== savedLayout.id
           || savedLayout.updatedAt >= currentRevision.updatedAt;
@@ -266,6 +292,7 @@ export function useLayoutStore() {
       } catch (err: any) {
         console.error('Failed to save layout:', err);
         // Network error — retry with backoff
+        markSaveStatus('error');
         scheduleSaveRetry(() => { void saveActiveLayout(); });
       }
     });
@@ -273,6 +300,7 @@ export function useLayoutStore() {
   }, [
     advancePersistedRevision,
     fetchLayouts,
+    markSaveStatus,
     refreshPersistedRevision,
     scheduleSaveRetry,
     setActiveLayoutProgrammatic,
@@ -460,6 +488,7 @@ export function useLayoutStore() {
     layouts,
     activeLayout,
     isDirty,
+    saveStatus,
     catalog,
     loadLayoutById,
     saveActiveLayout,

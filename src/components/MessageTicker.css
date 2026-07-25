@@ -1,12 +1,13 @@
 /* ── Message Ticker - HUD Marquee ──────────────────── */
 
 .ticker-container {
-  position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 80%;
-  max-width: 800px;
+  position: fixed;
+  bottom: 12px;
+  left: 16px;
+  right: calc(var(--desktop-agent-sidebar-reserved-width) + 16px);
+  width: auto;
+  max-width: 760px;
+  margin: 0 auto;
   height: 40px;
   background: var(--bg-panel);
   backdrop-filter: var(--glass-blur);
@@ -20,7 +21,7 @@
   font-family: var(--font-pixel);
   font-size: 11px;
   color: var(--text-main);
-  z-index: 100;
+  z-index: var(--z-ticker);
 }
 
 .ticker-label {
@@ -99,10 +100,20 @@
   100% { transform: translateX(var(--ticker-width, -2000px)); }
 }
 
+@media (max-width: 1024px) {
+  .ticker-container {
+    /* Sidebar is a drawer below this width — reclaim its reserved strip. */
+    right: 16px;
+  }
+}
+
 @media (max-width: 768px) {
   .ticker-container {
-    width: calc(100% - 32px);
-    bottom: 16px;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    max-width: none;
+    height: 36px;
   }
 }
 

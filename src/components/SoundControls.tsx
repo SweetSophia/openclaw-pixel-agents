@@ -46,6 +46,8 @@ export const SoundControls: React.FC = () => {
         className="sound-toggle"
         onClick={toggleMute}
         title={muted ? 'Unmute' : 'Mute'}
+        aria-label={muted ? 'Unmute sounds' : 'Mute sounds'}
+        aria-pressed={muted}
       >
         {muted ? '🔇' : volume > 0.6 ? '🔊' : volume > 0.2 ? '🔉' : '🔈'}
       </button>
@@ -54,6 +56,8 @@ export const SoundControls: React.FC = () => {
         className="sound-expand"
         onClick={() => setExpanded(!expanded)}
         title="Sound settings"
+        aria-label="Sound settings"
+        aria-expanded={expanded}
       >
         ⚙️
       </button>
@@ -76,6 +80,7 @@ export const SoundControls: React.FC = () => {
           <button
             className={`sound-ambience ${ambience ? 'on' : ''}`}
             onClick={toggleAmbience}
+            aria-pressed={ambience}
           >
             {ambience ? '🌐 Ambience ON' : '🌐 Ambience OFF'}
           </button>

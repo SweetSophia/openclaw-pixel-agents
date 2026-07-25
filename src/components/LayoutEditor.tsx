@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import type { PlacedFurniture } from '../../shared/types';
-import type { LayoutDoc } from '../hooks/useLayoutStore';
+import type { LayoutDoc, SaveStatus } from '../hooks/useLayoutStore';
 import './LayoutEditor.css';
 
 interface Props {
   catalog: string[];
   activeLayout: LayoutDoc | null;
   isDirty: boolean;
+  /** Save lifecycle feedback from useLayoutStore (optional for tests). */
+  saveStatus?: SaveStatus;
   layouts: LayoutDoc[];
   editorMode: boolean;
   selectedFurnitureType: string | null;
@@ -107,6 +109,7 @@ export const LayoutEditor: React.FC<Props> = ({
   catalog,
   activeLayout,
   isDirty,
+  saveStatus = 'idle',
   layouts,
   editorMode,
   selectedFurnitureType,
@@ -130,6 +133,26 @@ export const LayoutEditor: React.FC<Props> = ({
   if (!editorMode) return null;
 
   const selectedFurniture = activeLayout?.furniture.find(f => f.id === selectedFurnitureId);
+
+  // Save button doubles as the save-status indicator (aria-live region).
+  const saveLabel =
+    saveStatus === 'saving' ? '💾 Saving…'
+    : saveStatus === 'saved' ? '✓ Saved'
+    : saveStatus === 'error' ? '⚠ Retry save'
+    : isDirty ? '💾 Save ●'
+    : '💾 Save';
+  const saveTitle =
+    saveStatus === 'saving' ? 'Saving layout…'
+    : saveStatus === 'saved' ? 'Layout saved'
+    : saveStatus === 'error' ? 'Couldn\'t save — the app retries automatically; click to retry now'
+    : isDirty ? 'Save layout (unsaved changes)'
+    : 'Save layout (no unsaved changes)';
+  const saveDisabled = saveStatus === 'saving' || (!isDirty && saveStatus !== 'error');
+  const saveClass =
+    saveStatus === 'saved' ? 'saved'
+    : saveStatus === 'error' ? 'error'
+    : isDirty ? 'dirty'
+    : '';
 
   return (
     <div className="layout-editor">
@@ -158,9 +181,16 @@ export const LayoutEditor: React.FC<Props> = ({
           📐 Layouts
         </button>
         <div className="toolbar-separator" />
-        <button className={`toolbar-btn save-btn ${isDirty ? 'dirty' : ''}`} onClick={onSave} title={isDirty ? 'Save layout (unsaved changes)' : 'Save layout'}>
-          {isDirty ? '💾 Save ●' : '💾 Save'}
-        </button>
+        <span role="status" aria-live="polite" className="save-status-region">
+          <button
+            className={`toolbar-btn save-btn ${saveClass}`}
+            onClick={onSave}
+            disabled={saveDisabled}
+            title={saveTitle}
+          >
+            {saveLabel}
+          </button>
+        </span>
         <button className="toolbar-btn" onClick={onToggleEditor} title="Exit editor">
           ✖ Close
         </button>
