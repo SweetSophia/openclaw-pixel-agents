@@ -129,6 +129,7 @@ export const LayoutEditor: React.FC<Props> = ({
   const [showPalette, setShowPalette] = useState(false);
   const [showLayouts, setShowLayouts] = useState(false);
   const [newName, setNewName] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<LayoutDoc | null>(null);
 
   if (!editorMode) return null;
 
@@ -267,9 +268,14 @@ export const LayoutEditor: React.FC<Props> = ({
                   {layout.furniture.length} items · {new Date(layout.updatedAt).toLocaleDateString()}
                 </span>
                 <div className="layout-actions">
-                  <button onClick={() => onLoad(layout.id)}>📂</button>
+                  <button onClick={() => onLoad(layout.id)} title={`Load ${layout.name}`}>📂</button>
                   {layout.id !== 'default' && (
-                    <button className="danger" onClick={() => onDeleteLayout(layout.id)}>🗑️</button>
+                    <button
+                      className="danger"
+                      onClick={() => setPendingDelete(layout)}
+                      aria-label={`Delete ${layout.name}`}
+                      title={`Delete ${layout.name}`}
+                    >🗑️</button>
                   )}
                 </div>
               </div>
@@ -291,6 +297,38 @@ export const LayoutEditor: React.FC<Props> = ({
             <button onClick={() => { if (newName.trim()) { onCreate(newName.trim()); setNewName(''); } }}>
               ➕ Create
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation dialog — Fail-Safe guard (issue #109):
+          irreversible server-side unlinkSync must clear a confirmation barrier
+          before the raw store delete is invoked. The store/server remain
+          unguarded primitives; the component owns the user-facing gate. */}
+      {pendingDelete && (
+        <div className="confirm-overlay" role="alertdialog" aria-modal="true">
+          <div className="confirm-dialog">
+            <p className="confirm-message">
+              Delete <strong>{pendingDelete.name}</strong>? This cannot be undone.
+            </p>
+            <div className="confirm-actions">
+              <button
+                className="confirm-cancel"
+                onClick={() => setPendingDelete(null)}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                className="confirm-delete danger"
+                onClick={() => {
+                  onDeleteLayout(pendingDelete.id);
+                  setPendingDelete(null);
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

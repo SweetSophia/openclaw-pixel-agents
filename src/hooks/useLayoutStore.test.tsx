@@ -100,9 +100,22 @@ function makeFetchMock(
       });
     }
 
+    // DELETE /api/layouts/:id — delete layout (issue #109: explicit branch
+    // so deletion tests cannot pass through a generic GET fallback)
+    const deleteMatch = url.match(/\/api\/layouts\/([^/?]+)$/);
+    if (deleteMatch && init?.method === 'DELETE') {
+      const id = deleteMatch[1];
+      const existed = id in layouts;
+      delete layouts[id];
+      return new Response(JSON.stringify({ ok: existed }), {
+        status: existed ? 200 : 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // GET /api/layouts/:id — load specific layout
     const getMatch = url.match(/\/api\/layouts\/([^/?]+)$/);
-    if (getMatch) {
+    if (getMatch && (!init || init.method === undefined || init.method === 'GET')) {
       const id = getMatch[1];
       const layout = layouts[id];
       if (layout) {
