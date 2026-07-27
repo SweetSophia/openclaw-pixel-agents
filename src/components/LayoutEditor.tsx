@@ -134,14 +134,10 @@ export const LayoutEditor: React.FC<Props> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
 
-  // Focus trap + Escape handling for the confirmation dialog (WAI-ARIA APG).
-  // Runs while pendingDelete is set; restores focus on cleanup.
+  // Focus trap for the confirmation dialog (WAI-ARIA APG). Escape is handled
+  // separately via a document-level listener in the effect below so it fires
+  // reliably regardless of which descendant currently holds focus.
   const handleDialogKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      setPendingDelete(null);
-      return;
-    }
     if (e.key === 'Tab') {
       const dialog = dialogRef.current;
       if (!dialog) return;
@@ -163,16 +159,37 @@ export const LayoutEditor: React.FC<Props> = ({
 
   useEffect(() => {
     if (!pendingDelete) return;
+
+    // Document-level Escape: closes the dialog no matter where focus is. A
+    // listener on the overlay alone misses Escape when focus sits on a button
+    // inside the portaled dialog (P2 fix from Sophie's re-review).
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setPendingDelete(null);
+      }
+    };
+    document.addEventListener('keydown', onDocKeyDown);
+
     // Move focus into the dialog (autoFocus handles the initial focus,
     // but this ensures it even if autoFocus is suppressed by the browser).
     const timer = setTimeout(() => {
       const cancel = dialogRef.current?.querySelector<HTMLElement>('.confirm-cancel');
       cancel?.focus();
     }, 0);
+
     return () => {
       clearTimeout(timer);
-      // Restore focus to the element that opened the dialog.
-      triggerRef.current?.focus();
+      document.removeEventListener('keydown', onDocKeyDown);
+      // Restore focus to the invoking element. After a confirmed delete the
+      // trash button unmounts with the layout row, so its node is detached;
+      // fall back to the Layouts toggle so focus never lands on <body> (P2).
+      if (triggerRef.current && triggerRef.current.isConnected) {
+        triggerRef.current.focus();
+      } else {
+        const layoutsToggle = document.querySelector<HTMLElement>('[title="Layout manager"]');
+        layoutsToggle?.focus();
+      }
     };
   }, [pendingDelete]);
 

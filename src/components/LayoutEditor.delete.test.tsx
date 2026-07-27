@@ -220,6 +220,30 @@ describe('Issue #109 — delete confirmation guard', () => {
     expect(document.activeElement).toBe(deleteBtn);
   });
 
+  // ── Test 11: Confirm-path focus survives the trigger's unmount (P2) ──
+
+  it('restores focus to the Layouts toggle after confirm when the trigger unmounts', () => {
+    const props = makeProps();
+    // Simulate the real lifecycle: confirming deletes the layout row, which
+    // unmounts its trash button. The mock removes the trigger node so the
+    // cleanup's isConnected check falls back to the Layouts toggle instead of
+    // stranding focus on <body> (P2 from Sophie's re-review at b89818e).
+    props.onDeleteLayout = vi.fn(() => {
+      screen.getByLabelText('Delete QA Layout').remove();
+    });
+    openDeleteDialog(props);
+
+    const dialog = screen.getByRole('alertdialog');
+    const confirmBtn = dialog.querySelector('button.confirm-delete')!;
+    fireEvent.click(confirmBtn);
+
+    expect(props.onDeleteLayout).toHaveBeenCalledExactlyOnceWith('qa-layout');
+    // Trigger is detached, so focus must fall back to the Layouts toggle.
+    const layoutsToggle = document.querySelector<HTMLElement>('[title="Layout manager"]');
+    expect(layoutsToggle).toBeTruthy();
+    expect(document.activeElement).toBe(layoutsToggle);
+  });
+
   // ── Regression: confirmation dialog closes after confirm ───────────
 
   it('closes the confirmation dialog after confirmation', () => {
