@@ -1,17 +1,22 @@
 /**
  * Issue #109 — Delete confirmation guard for custom layouts.
  *
- * Semantic anchors: Fail-Safe / Guard Pattern, Defense in Depth.
- * The component owns the user-facing confirmation barrier; the store and
- * server remain raw delete primitives. These tests pin the barrier so it
- * cannot be silently removed.
+ * Semantic anchors: Confirmation Barrier / Guard Pattern with a safe default.
+ * The component owns the sole user-facing confirmation barrier; the store and
+ * server remain raw delete primitives (one independent guard, not Defense in
+ * Depth). These tests pin the barrier so it cannot be silently removed.
  *
- * Test cases (mapped from issue #109):
+ * Test cases (mapped from issue #109 + Sophie's consolidated PR #122 review):
  *   1. Clicking Delete opens confirmation containing the layout name.
  *   2. Cancel retains the row and never calls onDeleteLayout.
  *   3. Confirm calls onDeleteLayout exactly once with the correct id.
  *   4. Default layout exposes no delete control.
  *   5. Store deletion tests use an explicit DELETE mock branch.
+ *   6. Dialog is portaled to document.body (escapes .app-main stacking context).
+ *   7. Escape closes the dialog without deleting.
+ *   8. Dialog has accessible name and description (aria-labelledby/describedby).
+ *   9. Focus is contained within the dialog (Tab trap).
+ *  10. Focus is restored to the invoking element on close.
  */
 
 import React from 'react';
@@ -69,22 +74,23 @@ function makeProps(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+/** Helper: open layout manager and click the delete button for QA Layout. */
+function openDeleteDialog(props: ReturnType<typeof makeProps>) {
+  render(<LayoutEditor {...props} />);
+  fireEvent.click(screen.getByTitle('Layout manager'));
+  const deleteBtn = screen.getByLabelText('Delete QA Layout');
+  fireEvent.click(deleteBtn);
+  return deleteBtn;
+}
+
 describe('Issue #109 — delete confirmation guard', () => {
   afterEach(cleanup);
 
   // ── Test 1: Clicking Delete opens confirmation ─────────────────────
 
   it('opens a confirmation dialog containing the layout name when Delete is clicked', () => {
-    render(<LayoutEditor {...makeProps()} />);
+    openDeleteDialog(makeProps());
 
-    // Open the layout manager
-    fireEvent.click(screen.getByTitle('Layout manager'));
-
-    // Click the delete button for the custom layout
-    const deleteBtn = screen.getByLabelText('Delete QA Layout');
-    fireEvent.click(deleteBtn);
-
-    // Confirmation dialog must be visible and contain the layout name
     const dialog = screen.getByRole('alertdialog');
     expect(dialog.textContent).toContain('QA Layout');
     expect(dialog.textContent).toContain('cannot be undone');
@@ -94,18 +100,11 @@ describe('Issue #109 — delete confirmation guard', () => {
 
   it('does not call onDeleteLayout and keeps the layout row when Cancel is clicked', () => {
     const props = makeProps();
-    render(<LayoutEditor {...props} />);
+    openDeleteDialog(props);
 
-    fireEvent.click(screen.getByTitle('Layout manager'));
-    fireEvent.click(screen.getByLabelText('Delete QA Layout'));
-
-    // Cancel
     fireEvent.click(screen.getByText('Cancel'));
 
-    // Store delete was never called
     expect(props.onDeleteLayout).not.toHaveBeenCalled();
-
-    // Layout row is still present
     expect(screen.getByText('QA Layout')).toBeTruthy();
   });
 
@@ -113,13 +112,8 @@ describe('Issue #109 — delete confirmation guard', () => {
 
   it('calls onDeleteLayout exactly once with the correct id when Delete is confirmed', () => {
     const props = makeProps();
-    render(<LayoutEditor {...props} />);
+    openDeleteDialog(props);
 
-    fireEvent.click(screen.getByTitle('Layout manager'));
-    fireEvent.click(screen.getByLabelText('Delete QA Layout'));
-
-    // Confirm deletion
-    // The confirm button is the one labeled "Delete" inside the dialog
     const dialog = screen.getByRole('alertdialog');
     const confirmBtn = dialog.querySelector('button.confirm-delete')!;
     fireEvent.click(confirmBtn);
@@ -131,58 +125,117 @@ describe('Issue #109 — delete confirmation guard', () => {
 
   it('does not render a delete button for the default layout', () => {
     render(<LayoutEditor {...makeProps()} />);
-
     fireEvent.click(screen.getByTitle('Layout manager'));
 
-    // No accessible label for deleting the Default layout
     expect(screen.queryByLabelText('Delete Default')).toBeNull();
   });
 
   // ── Test 5: Store deletion uses an explicit DELETE mock branch ──────
-  // This test lives alongside the useLayoutStore tests, but we verify here
-  // that the component correctly wires the store's delete through the guard
-  // by asserting the id passed matches what the store would send to DELETE.
 
   it('passes the layout id that the store would use for the DELETE request', () => {
     const props = makeProps();
-    render(<LayoutEditor {...props} />);
-
-    fireEvent.click(screen.getByTitle('Layout manager'));
-    fireEvent.click(screen.getByLabelText('Delete QA Layout'));
+    openDeleteDialog(props);
 
     const dialog = screen.getByRole('alertdialog');
     const confirmBtn = dialog.querySelector('button.confirm-delete')!;
     fireEvent.click(confirmBtn);
 
-    // The id passed to onDeleteLayout is the same id the store uses to
-    // build the DELETE /api/layouts/:id route — verified by the store's
-    // own integration tests with an explicit DELETE mock branch.
     expect(props.onDeleteLayout).toHaveBeenCalledWith('qa-layout');
+  });
+
+  // ── Test 6: Dialog is portaled to document.body (P2 stacking fix) ───
+
+  it('renders the confirmation dialog as a direct child of document.body', () => {
+    openDeleteDialog(makeProps());
+
+    const dialog = screen.getByRole('alertdialog');
+    // The overlay must be portaled out of .app-main's stacking context.
+    expect(dialog.parentElement).toBe(document.body);
+  });
+
+  // ── Test 7: Escape closes the dialog without deleting ──────────────
+
+  it('closes the dialog on Escape without calling onDeleteLayout', () => {
+    const props = makeProps();
+    openDeleteDialog(props);
+
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(props.onDeleteLayout).not.toHaveBeenCalled();
+  });
+
+  // ── Test 8: Accessible name and description (P2 alertdialog fix) ───
+
+  it('has an accessible name via aria-labelledby and description via aria-describedby', () => {
+    openDeleteDialog(makeProps());
+
+    const dialog = screen.getByRole('alertdialog');
+
+    // aria-labelledby must point to an element containing the layout name
+    const labelledBy = dialog.getAttribute('aria-labelledby');
+    expect(labelledBy).toBeTruthy();
+    const titleEl = document.getElementById(labelledBy!);
+    expect(titleEl).toBeTruthy();
+    expect(titleEl!.textContent).toContain('QA Layout');
+
+    // aria-describedby must point to an element describing the consequence
+    const describedBy = dialog.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const descEl = document.getElementById(describedBy!);
+    expect(descEl).toBeTruthy();
+    expect(descEl!.textContent).toContain('permanently');
+  });
+
+  // ── Test 9: Focus is contained within the dialog (Tab trap) ────────
+
+  it('traps Tab focus within the dialog', () => {
+    openDeleteDialog(makeProps());
+
+    const dialog = screen.getByRole('alertdialog');
+    const cancelBtn = dialog.querySelector('.confirm-cancel') as HTMLElement;
+    const deleteBtn = dialog.querySelector('.confirm-delete') as HTMLElement;
+
+    // Focus the last button (Delete), then Tab should wrap to first (Cancel)
+    deleteBtn.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(document.activeElement).toBe(cancelBtn);
+
+    // Focus the first button (Cancel), then Shift+Tab should wrap to last (Delete)
+    cancelBtn.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(deleteBtn);
+  });
+
+  // ── Test 10: Focus is restored to the invoking element on close ────
+
+  it('restores focus to the delete button after cancel', () => {
+    const props = makeProps();
+    const deleteBtn = openDeleteDialog(props);
+
+    fireEvent.click(screen.getByText('Cancel'));
+
+    // Focus should return to the trash button that opened the dialog
+    expect(document.activeElement).toBe(deleteBtn);
   });
 
   // ── Regression: confirmation dialog closes after confirm ───────────
 
   it('closes the confirmation dialog after confirmation', () => {
-    render(<LayoutEditor {...makeProps()} />);
-
-    fireEvent.click(screen.getByTitle('Layout manager'));
-    fireEvent.click(screen.getByLabelText('Delete QA Layout'));
+    openDeleteDialog(makeProps());
 
     const dialog = screen.getByRole('alertdialog');
     const confirmBtn = dialog.querySelector('button.confirm-delete')!;
     fireEvent.click(confirmBtn);
 
-    // Dialog should be gone
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   // ── Regression: confirmation dialog closes after cancel ────────────
 
   it('closes the confirmation dialog after cancel', () => {
-    render(<LayoutEditor {...makeProps()} />);
-
-    fireEvent.click(screen.getByTitle('Layout manager'));
-    fireEvent.click(screen.getByLabelText('Delete QA Layout'));
+    openDeleteDialog(makeProps());
 
     fireEvent.click(screen.getByText('Cancel'));
 

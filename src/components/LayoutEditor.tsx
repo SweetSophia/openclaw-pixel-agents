@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import type { PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc, SaveStatus } from '../hooks/useLayoutStore';
 import './LayoutEditor.css';
@@ -130,6 +131,50 @@ export const LayoutEditor: React.FC<Props> = ({
   const [showLayouts, setShowLayouts] = useState(false);
   const [newName, setNewName] = useState('');
   const [pendingDelete, setPendingDelete] = useState<LayoutDoc | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  // Focus trap + Escape handling for the confirmation dialog (WAI-ARIA APG).
+  // Runs while pendingDelete is set; restores focus on cleanup.
+  const handleDialogKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setPendingDelete(null);
+      return;
+    }
+    if (e.key === 'Tab') {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = dialog.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    // Move focus into the dialog (autoFocus handles the initial focus,
+    // but this ensures it even if autoFocus is suppressed by the browser).
+    const timer = setTimeout(() => {
+      const cancel = dialogRef.current?.querySelector<HTMLElement>('.confirm-cancel');
+      cancel?.focus();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      // Restore focus to the element that opened the dialog.
+      triggerRef.current?.focus();
+    };
+  }, [pendingDelete]);
 
   if (!editorMode) return null;
 
@@ -272,7 +317,10 @@ export const LayoutEditor: React.FC<Props> = ({
                   {layout.id !== 'default' && (
                     <button
                       className="danger"
-                      onClick={() => setPendingDelete(layout)}
+                      onClick={(e) => {
+                        triggerRef.current = e.currentTarget;
+                        setPendingDelete(layout);
+                      }}
                       aria-label={`Delete ${layout.name}`}
                       title={`Delete ${layout.name}`}
                     >🗑️</button>
@@ -301,15 +349,29 @@ export const LayoutEditor: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Delete confirmation dialog — Fail-Safe guard (issue #109):
-          irreversible server-side unlinkSync must clear a confirmation barrier
-          before the raw store delete is invoked. The store/server remain
-          unguarded primitives; the component owns the user-facing gate. */}
-      {pendingDelete && (
-        <div className="confirm-overlay" role="alertdialog" aria-modal="true">
-          <div className="confirm-dialog">
-            <p className="confirm-message">
-              Delete <strong>{pendingDelete.name}</strong>? This cannot be undone.
+      {/* Delete confirmation dialog — Confirmation Barrier / Guard Pattern
+          (issue #109): irreversible server-side unlinkSync must clear a
+          confirmation barrier before the raw store delete is invoked. The
+          store/server remain unguarded primitives; the component owns the
+          sole user-facing gate (not Defense in Depth — one independent guard).
+          Portaled to document.body to escape the .app-main stacking context
+          and use the --z-modal token (P2 fix, Codex + Sophie review). */}
+      {pendingDelete && createPortal(
+        <div
+          className="confirm-overlay"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="confirm-delete-title"
+          aria-describedby="confirm-delete-desc"
+          onKeyDown={handleDialogKeyDown}
+        >
+          <div className="confirm-dialog" ref={dialogRef}>
+            <p className="confirm-message" id="confirm-delete-title">
+              Delete <strong>{pendingDelete.name}</strong>?
+            </p>
+            <p className="confirm-description" id="confirm-delete-desc">
+              This will permanently remove the layout and all its furniture
+              placements. This cannot be undone.
             </p>
             <div className="confirm-actions">
               <button
@@ -330,7 +392,8 @@ export const LayoutEditor: React.FC<Props> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
