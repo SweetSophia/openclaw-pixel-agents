@@ -16,11 +16,18 @@
  *   7. Escape closes the dialog without deleting.
  *   8. Dialog has accessible name and description (aria-labelledby/describedby).
  *   9. Focus is contained within the dialog (Tab trap).
- *  10. Focus is restored to the invoking element on close.
+ *  10. Focus is restored to the invoking element on cancel.
+ *  11. Confirm-path focus survives async row removal via a real parent
+ *      re-render (stateful harness — no imperative .remove()).
+ *  12. Focus escapes are recovered by the document focusin guard (P2).
+ *  13. Escape does not propagate to the App window listener (P3).
+ *  14. A failed delete keeps the barrier open and surfaces an inline error (P3).
+ *  15. Double submission is prevented while a delete is in flight.
+ *  16. Load controls expose an accessible name, not just an emoji (P3).
  */
 
-import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import React, { useState } from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LayoutEditor } from './LayoutEditor';
@@ -110,7 +117,7 @@ describe('Issue #109 — delete confirmation guard', () => {
 
   // ── Test 3: Confirm calls onDeleteLayout exactly once ───────────────
 
-  it('calls onDeleteLayout exactly once with the correct id when Delete is confirmed', () => {
+  it('calls onDeleteLayout exactly once with the correct id when Delete is confirmed', async () => {
     const props = makeProps();
     openDeleteDialog(props);
 
@@ -119,6 +126,8 @@ describe('Issue #109 — delete confirmation guard', () => {
     fireEvent.click(confirmBtn);
 
     expect(props.onDeleteLayout).toHaveBeenCalledExactlyOnceWith('qa-layout');
+    // Flush the async confirm so no state update lingers past cleanup.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
   // ── Test 4: Default layout exposes no delete control ────────────────
@@ -132,7 +141,7 @@ describe('Issue #109 — delete confirmation guard', () => {
 
   // ── Test 5: Store deletion uses an explicit DELETE mock branch ──────
 
-  it('passes the layout id that the store would use for the DELETE request', () => {
+  it('passes the layout id that the store would use for the DELETE request', async () => {
     const props = makeProps();
     openDeleteDialog(props);
 
@@ -141,6 +150,7 @@ describe('Issue #109 — delete confirmation guard', () => {
     fireEvent.click(confirmBtn);
 
     expect(props.onDeleteLayout).toHaveBeenCalledWith('qa-layout');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
   // ── Test 6: Dialog is portaled to document.body (P2 stacking fix) ───
@@ -220,40 +230,140 @@ describe('Issue #109 — delete confirmation guard', () => {
     expect(document.activeElement).toBe(deleteBtn);
   });
 
-  // ── Test 11: Confirm-path focus survives the trigger's unmount (P2) ──
+  // ── Test 11: Confirm-path focus survives async row removal (P2) ─────
+  //
+  // Sophie's re-review at d65fca7 showed the previous version was a false
+  // positive: it imperatively `.remove()`d the trash button to manufacture
+  // `isConnected === false`, an ordering production never produces. In the
+  // real lifecycle the DELETE resolves and `fetchLayouts()` re-renders the
+  // parent WITHOUT the deleted row, unmounting the trash button later. This
+  // harness reproduces that with a stateful parent re-render — React owns
+  // the row removal, never an imperative DOM mutation.
 
-  it('restores focus to the Layouts toggle after confirm when the trigger unmounts', () => {
-    const props = makeProps();
-    // Simulate the real lifecycle: confirming deletes the layout row, which
-    // unmounts its trash button. The mock removes the trigger node so the
-    // cleanup's isConnected check falls back to the Layouts toggle instead of
-    // stranding focus on <body> (P2 from Sophie's re-review at b89818e).
-    props.onDeleteLayout = vi.fn(() => {
-      screen.getByLabelText('Delete QA Layout').remove();
-    });
+  it('restores focus to a surviving control after the parent re-renders without the deleted row', async () => {
+    function Harness() {
+      const [layouts, setLayouts] = useState([defaultLayout, customLayout]);
+      const [active, setActive] = useState<LayoutDoc | null>(defaultLayout);
+      const handleDelete = (id: string) => {
+        // Mirrors fetchLayouts() dropping the deleted layout from state.
+        setLayouts(prev => prev.filter(l => l.id !== id));
+        setActive(prev => (prev?.id === id ? null : prev));
+      };
+      return (
+        <LayoutEditor
+          {...makeProps({ layouts, activeLayout: active, onDeleteLayout: handleDelete })}
+        />
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByTitle('Layout manager'));
+    fireEvent.click(screen.getByLabelText('Delete QA Layout'));
+
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(dialog.querySelector('button.confirm-delete')!);
+
+    // The async confirm closes the dialog and the parent drops the row.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('QA Layout')).toBeNull());
+
+    // Focus must land on a surviving control (the Layouts toggle), never on
+    // <body> or the now-unmounted trash button.
+    const layoutsToggle = screen.getByTitle('Layout manager');
+    expect(document.activeElement).toBe(layoutsToggle);
+  });
+
+  // ── Test 12: Focus escapes are recovered (P2 containment guard) ─────
+
+  it('returns focus inside the dialog when an outside control gains focus', () => {
+    openDeleteDialog(makeProps());
+    const dialog = screen.getByRole('alertdialog');
+    const cancelBtn = dialog.querySelector('.confirm-cancel') as HTMLElement;
+
+    // Focus escapes to a toolbar control outside the portaled overlay.
+    const outside = screen.getByTitle('Furniture palette');
+    fireEvent.focusIn(outside);
+
+    // The document focusin guard must immediately pull focus back inside.
+    expect(document.activeElement).toBe(cancelBtn);
+  });
+
+  // ── Test 13: Escape does not propagate to the App drawer (P3) ───────
+
+  it('stops Escape propagation so a window-level listener is not also invoked', () => {
+    openDeleteDialog(makeProps());
+
+    const windowSpy = vi.fn();
+    window.addEventListener('keydown', windowSpy);
+    try {
+      fireEvent.keyDown(document, { key: 'Escape', bubbles: true });
+    } finally {
+      window.removeEventListener('keydown', windowSpy);
+    }
+
+    // The document handler closed the dialog…
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    // …and the same event never reached the window listener (App drawer).
+    expect(windowSpy).not.toHaveBeenCalled();
+  });
+
+  // ── Test 14: Failed delete keeps the barrier open + inline error (P3) ──
+
+  it('keeps the dialog open and surfaces an error when deletion fails', async () => {
+    const onDeleteLayout = vi.fn().mockResolvedValue(false);
+    const props = makeProps({ onDeleteLayout });
     openDeleteDialog(props);
 
     const dialog = screen.getByRole('alertdialog');
-    const confirmBtn = dialog.querySelector('button.confirm-delete')!;
-    fireEvent.click(confirmBtn);
+    fireEvent.click(dialog.querySelector('button.confirm-delete')!);
 
-    expect(props.onDeleteLayout).toHaveBeenCalledExactlyOnceWith('qa-layout');
-    // Trigger is detached, so focus must fall back to the Layouts toggle.
-    const layoutsToggle = document.querySelector<HTMLElement>('[title="Layout manager"]');
-    expect(layoutsToggle).toBeTruthy();
-    expect(document.activeElement).toBe(layoutsToggle);
+    // The failure is announced inline and the barrier stays up.
+    await screen.findByRole('alert');
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(onDeleteLayout).toHaveBeenCalledExactlyOnceWith('qa-layout');
+  });
+
+  // ── Test 15: Double submission prevented while in flight ────────────
+
+  it('calls onDeleteLayout only once for repeated clicks during an in-flight delete', async () => {
+    let resolveDelete: (v: boolean) => void = () => {};
+    const pending = new Promise<boolean>(resolve => { resolveDelete = resolve; });
+    const onDeleteLayout = vi.fn().mockReturnValue(pending);
+    const props = makeProps({ onDeleteLayout });
+    openDeleteDialog(props);
+
+    const dialog = screen.getByRole('alertdialog');
+    const confirmBtn = dialog.querySelector('button.confirm-delete') as HTMLElement;
+    fireEvent.click(confirmBtn);
+    fireEvent.click(confirmBtn); // second click while the first is in flight
+
+    expect(onDeleteLayout).toHaveBeenCalledTimes(1);
+
+    resolveDelete(true);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  // ── Test 16: Load controls expose an accessible name (P3) ───────────
+
+  it('gives the Load button an accessible name beyond the folder emoji', () => {
+    render(<LayoutEditor {...makeProps()} />);
+    fireEvent.click(screen.getByTitle('Layout manager'));
+
+    // The emoji-only content must be backed by an aria-label.
+    const loadBtn = screen.getByRole('button', { name: 'Load QA Layout' });
+    expect(loadBtn).toBeTruthy();
   });
 
   // ── Regression: confirmation dialog closes after confirm ───────────
 
-  it('closes the confirmation dialog after confirmation', () => {
+  it('closes the confirmation dialog after confirmation', async () => {
     openDeleteDialog(makeProps());
 
     const dialog = screen.getByRole('alertdialog');
     const confirmBtn = dialog.querySelector('button.confirm-delete')!;
     fireEvent.click(confirmBtn);
 
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+    // Confirm is async (awaits the delete); the dialog closes on success.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
   // ── Regression: confirmation dialog closes after cancel ────────────

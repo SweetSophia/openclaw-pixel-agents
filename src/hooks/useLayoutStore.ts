@@ -325,20 +325,25 @@ export function useLayoutStore() {
     }
   }, [fetchLayouts, setActiveLayoutProgrammatic]);
 
-  const deleteLayout = useCallback(async (id: string) => {
+  // Returns true on success and false on failure so the confirmation barrier
+  // in LayoutEditor can keep the dialog open and surface an error instead of
+  // closing optimistically on a silent store failure (PR #122 P3 fix).
+  const deleteLayout = useCallback(async (id: string): Promise<boolean> => {
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Failed to delete layout' }));
         console.error('Failed to delete layout:', err.error);
-        return;
+        return false;
       }
       if (activeLayout?.id === id) {
         setActiveLayoutProgrammatic(null);
       }
       fetchLayouts();
+      return true;
     } catch (err) {
       console.error('Failed to delete layout:', err);
+      return false;
     }
   }, [activeLayout, fetchLayouts, setActiveLayoutProgrammatic]);
 
