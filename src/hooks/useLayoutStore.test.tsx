@@ -100,9 +100,22 @@ function makeFetchMock(
       });
     }
 
+    // DELETE /api/layouts/:id — delete layout (issue #109: explicit branch
+    // so deletion tests cannot pass through a generic GET fallback)
+    const deleteMatch = url.match(/\/api\/layouts\/([^/?]+)$/);
+    if (deleteMatch && init?.method === 'DELETE') {
+      const id = deleteMatch[1];
+      const existed = id in layouts;
+      delete layouts[id];
+      return new Response(JSON.stringify({ ok: existed }), {
+        status: existed ? 200 : 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // GET /api/layouts/:id — load specific layout
     const getMatch = url.match(/\/api\/layouts\/([^/?]+)$/);
-    if (getMatch) {
+    if (getMatch && (!init || init.method === undefined || init.method === 'GET')) {
       const id = getMatch[1];
       const layout = layouts[id];
       if (layout) {
@@ -220,6 +233,44 @@ describe('useLayoutStore', () => {
     );
     // The only PUTs should be from before the deleteLayout, if any
     expect(putCalls.length).toBe(0);
+  });
+
+  // ── deleteLayout result contract (Sophie review @78f2bc3, fail-safe) ──
+  //
+  // The confirmation barrier in LayoutEditor closes ONLY on a strict `true`,
+  // so the store must return a real boolean for every outcome. These pin that
+  // contract — success → true, non-2xx → false, rejected fetch → false — so a
+  // future route change can't turn the destructive delete into a fail-open.
+
+  describe('deleteLayout result contract', () => {
+    it('resolves true on a successful (2xx) delete', async () => {
+      await renderStoreProbe();
+      let result: boolean | undefined;
+      await act(async () => {
+        result = await latest(snapshots).deleteLayout('default');
+      });
+      expect(result).toBe(true);
+    });
+
+    it('resolves false on a non-2xx response', async () => {
+      await renderStoreProbe();
+      let result: boolean | undefined;
+      await act(async () => {
+        // 'missing' is not in the mock store, so DELETE returns 404.
+        result = await latest(snapshots).deleteLayout('missing');
+      });
+      expect(result).toBe(false);
+    });
+
+    it('resolves false when the fetch rejects (network error)', async () => {
+      await renderStoreProbe();
+      (fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('network down'));
+      let result: boolean | undefined;
+      await act(async () => {
+        result = await latest(snapshots).deleteLayout('default');
+      });
+      expect(result).toBe(false);
+    });
   });
 
   it('updateFurniture applies functional updater to current layout', async () => {

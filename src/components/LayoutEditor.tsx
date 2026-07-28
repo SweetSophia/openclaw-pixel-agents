@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import type { PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc, SaveStatus } from '../hooks/useLayoutStore';
 import './LayoutEditor.css';
@@ -24,7 +25,7 @@ interface Props {
   onSave: () => void;
   onLoad: (id: string) => void;
   onCreate: (name: string) => void;
-  onDeleteLayout: (id: string) => void;
+  onDeleteLayout: (id: string) => boolean | Promise<boolean>;
   onToggleEditor: () => void;
 }
 
@@ -129,6 +130,142 @@ export const LayoutEditor: React.FC<Props> = ({
   const [showPalette, setShowPalette] = useState(false);
   const [showLayouts, setShowLayouts] = useState(false);
   const [newName, setNewName] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<LayoutDoc | null>(null);
+  // Confirm lifecycle: disables the buttons while the async delete is in
+  // flight (double-submit guard) and surfaces a failure without closing.
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(false);
+  const deletingRef = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  // Stable toolbar toggle used as the focus-restore target after a confirmed
+  // delete, when the trash button unmounts with its layout row (P2).
+  const layoutsToggleRef = useRef<HTMLButtonElement>(null);
+  // The control to refocus on close, chosen by CLOSE REASON rather than by
+  // probing DOM connectedness at cleanup time (P2 close-reason fix):
+  //   cancel / escape → the invoking trash button (still mounted)
+  //   confirm         → the stable Layouts toggle (survives the row removal)
+  const restoreTargetRef = useRef<HTMLElement | null>(null);
+
+  // Focus trap for the confirmation dialog (WAI-ARIA APG). Escape is handled
+  // separately via a document-level listener in the effect below so it fires
+  // reliably regardless of which descendant currently holds focus.
+  const handleDialogKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Tab') {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter(el => !el.hasAttribute('disabled')); // skip disabled controls (Sophie review)
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
+
+  // Real-browser focus containment (P2, Sophie review @78f2bc3): disabling the
+  // focused Delete button makes Chromium move focus to <body> with NO focusin
+  // event for the document guard to intercept — jsdom never reproduces that
+  // blur, so the suite looked green while the live browser stranded focus
+  // outside the aria-modal dialog for the whole in-flight request. Re-anchor
+  // focus to the always-focusable overlay the moment the disabled state
+  // commits. useLayoutEffect runs synchronously after the DOM mutation and
+  // before paint, so the correction is invisible and lands before any Tab key.
+  useLayoutEffect(() => {
+    if (deleting && overlayRef.current) {
+      overlayRef.current.focus();
+    }
+  }, [deleting]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+
+    // Reset transient confirm state for each fresh dialog open.
+    deletingRef.current = false;
+    setDeleting(false);
+    setDeleteError(false);
+    // Default restore target is the invoking control; the confirm path
+    // overrides it to a stable surviving control before closing.
+    restoreTargetRef.current = triggerRef.current;
+
+    // Document-level Escape: closes the dialog no matter where focus is. A
+    // listener on the overlay alone misses Escape when focus sits on a button
+    // inside the portaled dialog (P2 fix from Sophie's re-review).
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // Stop the same Escape from also closing the App agents drawer, whose
+        // window-level listener sits above document in the bubble path (P3).
+        e.stopPropagation();
+        // While a delete is in flight the work is irreversible and cannot be
+        // cancelled; dismissing the barrier would hide the pending result,
+        // strand focus when the row later unmounts, and let a stale handler
+        // close a newly opened confirmation. Mirror the disabled Cancel button
+        // and ignore Escape until the request settles (P2, Sophie review).
+        if (deletingRef.current) return;
+        setPendingDelete(null);
+      }
+    };
+    document.addEventListener('keydown', onDocKeyDown);
+
+    // Focus-containment guard (P2): the Tab trap on the overlay only wraps
+    // while focus is already on the first/last dialog control. If focus
+    // escapes the portaled overlay entirely (programmatic focus, a stray
+    // Tab, or a browser quirk), pull it straight back inside so the
+    // aria-modal dialog never strands focus on <body> or an outside control.
+    const onFocusIn = (e: FocusEvent) => {
+      const overlay = overlayRef.current;
+      if (overlay && e.target instanceof Node && !overlay.contains(e.target)) {
+        const cancel = overlay.querySelector<HTMLButtonElement>('.confirm-cancel');
+        // Cancel is disabled while a delete is in flight, and a disabled
+        // button cannot receive focus — so fall back to the focusable
+        // overlay itself (tabIndex={-1}) to guarantee containment (Kody
+        // review @09653e5).
+        if (cancel && !cancel.disabled) {
+          cancel.focus();
+        } else {
+          overlay.focus();
+        }
+      }
+    };
+    document.addEventListener('focusin', onFocusIn);
+
+    // Move focus into the dialog (autoFocus handles the initial focus,
+    // but this ensures it even if autoFocus is suppressed by the browser).
+    const timer = setTimeout(() => {
+      const cancel = dialogRef.current?.querySelector<HTMLElement>('.confirm-cancel');
+      cancel?.focus();
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+      // Remove the containment guard BEFORE moving focus so the restore
+      // target (which lives outside the overlay) is not intercepted.
+      document.removeEventListener('keydown', onDocKeyDown);
+      document.removeEventListener('focusin', onFocusIn);
+      // Restore focus to the control chosen at close time. After a confirmed
+      // delete the trash button unmounts with its layout row, so the confirm
+      // path points restoreTargetRef at the stable Layouts toggle; cancel and
+      // Escape keep the original trigger. The isConnected probe is now only a
+      // defensive fallback, not the selection mechanism (P2 close-reason fix).
+      const target = restoreTargetRef.current;
+      if (target && target.isConnected) {
+        target.focus();
+      } else {
+        layoutsToggleRef.current?.focus();
+      }
+    };
+  }, [pendingDelete]);
 
   if (!editorMode) return null;
 
@@ -174,6 +311,7 @@ export const LayoutEditor: React.FC<Props> = ({
           🗑️ Delete
         </button>
         <button
+          ref={layoutsToggleRef}
           className={`toolbar-btn ${showLayouts ? 'active' : ''}`}
           onClick={() => { setShowLayouts(!showLayouts); setShowPalette(false); }}
           title="Layout manager"
@@ -267,9 +405,17 @@ export const LayoutEditor: React.FC<Props> = ({
                   {layout.furniture.length} items · {new Date(layout.updatedAt).toLocaleDateString()}
                 </span>
                 <div className="layout-actions">
-                  <button onClick={() => onLoad(layout.id)}>📂</button>
+                  <button onClick={() => onLoad(layout.id)} title={`Load ${layout.name}`} aria-label={`Load ${layout.name}`}>📂</button>
                   {layout.id !== 'default' && (
-                    <button className="danger" onClick={() => onDeleteLayout(layout.id)}>🗑️</button>
+                    <button
+                      className="danger"
+                      onClick={(e) => {
+                        triggerRef.current = e.currentTarget;
+                        setPendingDelete(layout);
+                      }}
+                      aria-label={`Delete ${layout.name}`}
+                      title={`Delete ${layout.name}`}
+                    >🗑️</button>
                   )}
                 </div>
               </div>
@@ -293,6 +439,91 @@ export const LayoutEditor: React.FC<Props> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {/* Delete confirmation dialog — Confirmation Barrier / Guard Pattern
+          (issue #109): irreversible server-side unlinkSync must clear a
+          confirmation barrier before the raw store delete is invoked. The
+          store/server remain unguarded primitives; the component owns the
+          sole user-facing gate (not Defense in Depth — one independent guard).
+          Portaled to document.body to escape the .app-main stacking context
+          and use the --z-modal token (P2 fix, Codex + Sophie review). */}
+      {pendingDelete && createPortal(
+        <div
+          className="confirm-overlay"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="confirm-delete-title"
+          aria-describedby="confirm-delete-desc"
+          onKeyDown={handleDialogKeyDown}
+          ref={overlayRef}
+          tabIndex={-1}
+        >
+          <div className="confirm-dialog" ref={dialogRef}>
+            <p className="confirm-message" id="confirm-delete-title">
+              Delete <strong>{pendingDelete.name}</strong>?
+            </p>
+            <p className="confirm-description" id="confirm-delete-desc">
+              This will permanently remove the layout and all its furniture
+              placements. This cannot be undone.
+            </p>
+            {deleteError && (
+              <p className="confirm-error" role="alert">
+                Couldn't delete the layout. Please try again.
+              </p>
+            )}
+            <div className="confirm-actions">
+              <button
+                className="confirm-cancel"
+                onClick={() => {
+                  // Cancel/Escape keep the original trigger as the restore
+                  // target — it stays mounted because nothing is deleted.
+                  restoreTargetRef.current = triggerRef.current;
+                  setPendingDelete(null);
+                }}
+                disabled={deleting}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                className="confirm-delete danger"
+                disabled={deleting}
+                onClick={async () => {
+                  if (deletingRef.current) return; // double-submit guard
+                  deletingRef.current = true;
+                  setDeleting(true);
+                  setDeleteError(false);
+                  let ok = false;
+                  try {
+                    ok = (await Promise.resolve(onDeleteLayout(pendingDelete.id))) === true;
+                  } catch {
+                    ok = false;
+                  }
+                  deletingRef.current = false;
+                  setDeleting(false);
+                  // Fail closed: only a strict `true` closes the barrier. Any
+                  // other result — false, undefined, a thrown error — keeps it
+                  // open and surfaces the inline alert, so a future adapter or
+                  // mock that forgets to return a boolean can never delete
+                  // without confirmation (P3 fail-safe defaults, Sophie review).
+                  if (ok !== true) {
+                    setDeleteError(true);
+                    return;
+                  }
+                  // Success: the layout row will unmount, taking its trash
+                  // button with it. Restore focus to the stable Layouts toggle
+                  // so focus never lands on <body> (P2 close-reason fix).
+                  restoreTargetRef.current = layoutsToggleRef.current;
+                  setPendingDelete(null);
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

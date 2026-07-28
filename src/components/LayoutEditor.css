@@ -272,6 +272,98 @@
 }
 .layout-create button:hover { background: rgba(0, 240, 255, 0.3); }
 
+/* Delete confirmation dialog — Confirmation Barrier / Guard Pattern (issue #109).
+   Portaled to document.body so it escapes the .app-main stacking context and
+   can use the --z-modal token to sit above all app chrome (P2 fix). */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+}
+.confirm-dialog {
+  background: var(--bg-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--border-glass);
+  box-shadow: var(--shadow-neon-cyan);
+  border-radius: 8px;
+  box-sizing: border-box; /* keep padding+border inside the width cap on narrow viewports (P3) */
+  padding: 24px;
+  width: min(340px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px); /* keep the dialog on-screen in short landscape viewports (Sophie review) */
+  overflow-y: auto;
+  text-align: center;
+}
+.confirm-message {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--text-main);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.confirm-message strong { color: var(--acc-pink); overflow-wrap: anywhere; }
+.confirm-description {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+  line-height: 1.4;
+}
+.confirm-error {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--acc-pink);
+  margin: 0 0 12px;
+}
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.confirm-actions button {
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.2);
+  transition: all 0.15s;
+}
+/* Visible disabled treatment: drop the pointer/hover affordances while a
+   delete is in flight so "Deleting…" reads as non-interactive (Sophie review). */
+.confirm-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.confirm-cancel:disabled:hover {
+  background: rgba(0,0,0,0.3);
+  border-color: rgba(255,255,255,0.2);
+}
+.confirm-delete:disabled:hover {
+  background: rgba(255, 0, 85, 0.15);
+  border-color: var(--acc-pink);
+}
+.confirm-cancel {
+  background: rgba(0,0,0,0.3);
+  color: var(--text-main);
+}
+.confirm-cancel:hover {
+  background: rgba(0, 240, 255, 0.1);
+  border-color: var(--acc-cyan);
+}
+.confirm-delete {
+  background: rgba(255, 0, 85, 0.15);
+  color: var(--acc-pink);
+  border-color: var(--acc-pink);
+}
+.confirm-delete:hover {
+  background: rgba(255, 0, 85, 0.3);
+}
+
 /* Scrollbars */
 .furniture-palette::-webkit-scrollbar, .layout-list::-webkit-scrollbar { width: 4px; }
 .furniture-palette::-webkit-scrollbar-track, .layout-list::-webkit-scrollbar-track { background: transparent; }

@@ -217,3 +217,25 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     expect(screen.getByText('Default')).toBeTruthy();
   });
 });
+
+describe('Issue #109 — confirmation-dialog responsive contract', () => {
+  // Pins the narrow/short-viewport dialog fixes from PR #122 so they can't
+  // silently regress (Sophie review @78f2bc3). Scoped to the .confirm-dialog
+  // rule block (raw CSS text, not CSSOM) so a same-named declaration elsewhere
+  // can't satisfy the assertion by accident, and so min()/calc() serialization
+  // quirks in jsdom don't interfere.
+  const dialogBlock = layoutEditorCss.match(/\.confirm-dialog\s*\{([^}]*)\}/)?.[1] ?? '';
+
+  it('keeps padding and border inside the capped width (box-sizing)', () => {
+    expect(dialogBlock).toContain('box-sizing: border-box');
+  });
+
+  it('caps the dialog width to the viewport on narrow screens', () => {
+    expect(dialogBlock).toContain('width: min(340px, calc(100vw - 32px))');
+  });
+
+  it('caps height and scrolls on short landscape viewports', () => {
+    expect(dialogBlock).toContain('max-height: calc(100vh - 32px)');
+    expect(dialogBlock).toContain('overflow-y: auto');
+  });
+});
