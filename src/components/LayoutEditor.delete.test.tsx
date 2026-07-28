@@ -287,6 +287,40 @@ describe('Issue #109 — delete confirmation guard', () => {
     expect(document.activeElement).toBe(cancelBtn);
   });
 
+  // ── Test 12b: Containment holds while a delete is in flight (Kody) ───
+  //
+  // Kody review @09653e5: both dialog buttons carry disabled={deleting}, so
+  // during the async delete the guard's .confirm-cancel.focus() is a silent
+  // no-op (disabled buttons can't take focus) and focus strands on <body> —
+  // the exact regression the guard exists to prevent. The fix focuses the
+  // tabIndex={-1} overlay itself as the fallback target.
+
+  it('keeps focus contained (on the overlay) when it escapes during an in-flight delete', async () => {
+    let resolveDelete: (v: boolean) => void = () => {};
+    const pending = new Promise<boolean>(resolve => { resolveDelete = resolve; });
+    const onDeleteLayout = vi.fn().mockReturnValue(pending);
+    const props = makeProps({ onDeleteLayout });
+    openDeleteDialog(props);
+
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(dialog.querySelector('button.confirm-delete')!);
+
+    // deleting === true now, so both buttons are disabled.
+    const cancel = dialog.querySelector('.confirm-cancel') as HTMLButtonElement;
+    expect(cancel.disabled).toBe(true);
+
+    // Focus escapes outside the overlay while the delete is in flight.
+    fireEvent.focusIn(screen.getByTitle('Furniture palette'));
+
+    // Cancel can't take focus, so the guard must fall back to the focusable
+    // overlay itself. Focus stays contained — never on <body>.
+    expect(document.activeElement).toBe(dialog);
+    expect(document.activeElement).not.toBe(document.body);
+
+    resolveDelete(true);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
   // ── Test 13: Escape does not propagate to the App drawer (P3) ───────
 
   it('stops Escape propagation so a window-level listener is not also invoked', () => {

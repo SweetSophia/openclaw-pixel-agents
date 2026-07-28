@@ -204,7 +204,16 @@ export const LayoutEditor: React.FC<Props> = ({
     const onFocusIn = (e: FocusEvent) => {
       const overlay = overlayRef.current;
       if (overlay && e.target instanceof Node && !overlay.contains(e.target)) {
-        overlay.querySelector<HTMLElement>('.confirm-cancel')?.focus();
+        const cancel = overlay.querySelector<HTMLButtonElement>('.confirm-cancel');
+        // Cancel is disabled while a delete is in flight, and a disabled
+        // button cannot receive focus — so fall back to the focusable
+        // overlay itself (tabIndex={-1}) to guarantee containment (Kody
+        // review @09653e5).
+        if (cancel && !cancel.disabled) {
+          cancel.focus();
+        } else {
+          overlay.focus();
+        }
       }
     };
     document.addEventListener('focusin', onFocusIn);
@@ -426,6 +435,7 @@ export const LayoutEditor: React.FC<Props> = ({
           aria-describedby="confirm-delete-desc"
           onKeyDown={handleDialogKeyDown}
           ref={overlayRef}
+          tabIndex={-1}
         >
           <div className="confirm-dialog" ref={dialogRef}>
             <p className="confirm-message" id="confirm-delete-title">
