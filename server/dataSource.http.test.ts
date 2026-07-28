@@ -6,6 +6,8 @@ import type { Server as SocketIOServer } from "socket.io";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+const TEST_INGEST_TOKEN = "data-source-http-test-token";
+
 describe("data-source HTTP contract", () => {
   let app: Express;
   let io: SocketIOServer;
@@ -15,7 +17,7 @@ describe("data-source HTTP contract", () => {
     dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-data-source-test-"));
     vi.stubEnv("DATA_DIR", dataDir);
     vi.stubEnv("DATA_SOURCE", "cli");
-    vi.stubEnv("INGEST_API_TOKEN", "test-secret");
+    vi.stubEnv("INGEST_API_TOKEN", TEST_INGEST_TOKEN);
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
 
@@ -43,7 +45,7 @@ describe("data-source HTTP contract", () => {
   it("rejects authenticated ingest before payload validation while CLI owns state", async () => {
     await request(app)
       .post("/api/ingest/agents")
-      .set("Authorization", "Bearer test-secret")
+      .set("Authorization", `Bearer ${TEST_INGEST_TOKEN}`)
       .send({ invalid: true })
       .expect(409)
       .expect({ error: "Ingest unavailable while CLI polling is active" });
