@@ -75,7 +75,9 @@ function makeProps(overrides: Partial<Record<string, unknown>> = {}) {
     onSave: vi.fn(),
     onLoad: vi.fn(),
     onCreate: vi.fn(),
-    onDeleteLayout: vi.fn(),
+    // Strict-boolean result contract (Sophie review @78f2bc3): the barrier
+    // closes only on a literal `true`, so the default mock must resolve true.
+    onDeleteLayout: vi.fn().mockResolvedValue(true),
     onToggleEditor: vi.fn(),
     ...overrides,
   };
@@ -244,10 +246,12 @@ describe('Issue #109 — delete confirmation guard', () => {
     function Harness() {
       const [layouts, setLayouts] = useState([defaultLayout, customLayout]);
       const [active, setActive] = useState<LayoutDoc | null>(defaultLayout);
-      const handleDelete = (id: string) => {
+      const handleDelete = (id: string): boolean => {
         // Mirrors fetchLayouts() dropping the deleted layout from state.
         setLayouts(prev => prev.filter(l => l.id !== id));
         setActive(prev => (prev?.id === id ? null : prev));
+        // Strict-boolean contract: report success so the barrier closes.
+        return true;
       };
       return (
         <LayoutEditor
@@ -350,6 +354,33 @@ describe('Issue #109 — delete confirmation guard', () => {
     resolveDelete(true);
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(document.activeElement).toBe(screen.getByTitle('Layout manager'));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  // ── Test 12d: Focus is anchored inside the dialog the instant a delete
+  //    goes in flight — before any Tab key (P2, Sophie review @78f2bc3) ──
+  //
+  // Real Chromium moves focus to <body> when the focused Delete button is
+  // disabled, with no focusin for the guard to catch; jsdom does not reproduce
+  // that blur, which is how the defect hid behind a green suite. This pins the
+  // POSITIVE invariant the useLayoutEffect fix guarantees: the moment
+  // `deleting` commits, focus lands on the always-focusable overlay inside the
+  // alertdialog — no Tab press required.
+
+  it('anchors focus to the overlay immediately after an in-flight delete begins (no Tab)', () => {
+    const onDeleteLayout = vi.fn().mockReturnValue(new Promise<boolean>(() => {}));
+    const props = makeProps({ onDeleteLayout });
+    openDeleteDialog(props);
+
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(dialog.querySelector('button.confirm-delete')!);
+
+    // In flight: the Delete control is disabled, yet focus is already inside
+    // the alertdialog (on the focusable overlay) — never on <body>, and no Tab
+    // key was pressed to get it there.
+    expect((dialog.querySelector('.confirm-delete') as HTMLButtonElement).disabled).toBe(true);
+    expect(document.activeElement).toBe(dialog);
+    expect(dialog.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).not.toBe(document.body);
   });
 

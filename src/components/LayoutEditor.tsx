@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc, SaveStatus } from '../hooks/useLayoutStore';
@@ -172,6 +172,20 @@ export const LayoutEditor: React.FC<Props> = ({
       }
     }
   }, []);
+
+  // Real-browser focus containment (P2, Sophie review @78f2bc3): disabling the
+  // focused Delete button makes Chromium move focus to <body> with NO focusin
+  // event for the document guard to intercept — jsdom never reproduces that
+  // blur, so the suite looked green while the live browser stranded focus
+  // outside the aria-modal dialog for the whole in-flight request. Re-anchor
+  // focus to the always-focusable overlay the moment the disabled state
+  // commits. useLayoutEffect runs synchronously after the DOM mutation and
+  // before paint, so the correction is invisible and lands before any Tab key.
+  useLayoutEffect(() => {
+    if (deleting && overlayRef.current) {
+      overlayRef.current.focus();
+    }
+  }, [deleting]);
 
   useEffect(() => {
     if (!pendingDelete) return;
@@ -480,17 +494,20 @@ export const LayoutEditor: React.FC<Props> = ({
                   deletingRef.current = true;
                   setDeleting(true);
                   setDeleteError(false);
-                  let ok = true;
+                  let ok = false;
                   try {
-                    ok = await Promise.resolve(onDeleteLayout(pendingDelete.id));
+                    ok = (await Promise.resolve(onDeleteLayout(pendingDelete.id))) === true;
                   } catch {
                     ok = false;
                   }
                   deletingRef.current = false;
                   setDeleting(false);
-                  if (ok === false) {
-                    // Keep the barrier open and surface the failure instead of
-                    // closing optimistically on a silent store error (P3).
+                  // Fail closed: only a strict `true` closes the barrier. Any
+                  // other result — false, undefined, a thrown error — keeps it
+                  // open and surfaces the inline alert, so a future adapter or
+                  // mock that forgets to return a boolean can never delete
+                  // without confirmation (P3 fail-safe defaults, Sophie review).
+                  if (ok !== true) {
                     setDeleteError(true);
                     return;
                   }

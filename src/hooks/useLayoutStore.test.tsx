@@ -235,6 +235,44 @@ describe('useLayoutStore', () => {
     expect(putCalls.length).toBe(0);
   });
 
+  // ── deleteLayout result contract (Sophie review @78f2bc3, fail-safe) ──
+  //
+  // The confirmation barrier in LayoutEditor closes ONLY on a strict `true`,
+  // so the store must return a real boolean for every outcome. These pin that
+  // contract — success → true, non-2xx → false, rejected fetch → false — so a
+  // future route change can't turn the destructive delete into a fail-open.
+
+  describe('deleteLayout result contract', () => {
+    it('resolves true on a successful (2xx) delete', async () => {
+      await renderStoreProbe();
+      let result: boolean | undefined;
+      await act(async () => {
+        result = await latest(snapshots).deleteLayout('default');
+      });
+      expect(result).toBe(true);
+    });
+
+    it('resolves false on a non-2xx response', async () => {
+      await renderStoreProbe();
+      let result: boolean | undefined;
+      await act(async () => {
+        // 'missing' is not in the mock store, so DELETE returns 404.
+        result = await latest(snapshots).deleteLayout('missing');
+      });
+      expect(result).toBe(false);
+    });
+
+    it('resolves false when the fetch rejects (network error)', async () => {
+      await renderStoreProbe();
+      (fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('network down'));
+      let result: boolean | undefined;
+      await act(async () => {
+        result = await latest(snapshots).deleteLayout('default');
+      });
+      expect(result).toBe(false);
+    });
+  });
+
   it('updateFurniture applies functional updater to current layout', async () => {
     await renderStoreProbe();
 
