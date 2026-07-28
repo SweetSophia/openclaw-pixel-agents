@@ -25,7 +25,7 @@ interface Props {
   onSave: () => void;
   onLoad: (id: string) => void;
   onCreate: (name: string) => void;
-  onDeleteLayout: (id: string) => void | Promise<unknown>;
+  onDeleteLayout: (id: string) => boolean | Promise<boolean>;
   onToggleEditor: () => void;
 }
 
@@ -155,9 +155,11 @@ export const LayoutEditor: React.FC<Props> = ({
     if (e.key === 'Tab') {
       const dialog = dialogRef.current;
       if (!dialog) return;
-      const focusable = dialog.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter(el => !el.hasAttribute('disabled')); // skip disabled controls (Sophie review)
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -191,6 +193,12 @@ export const LayoutEditor: React.FC<Props> = ({
         // Stop the same Escape from also closing the App agents drawer, whose
         // window-level listener sits above document in the bubble path (P3).
         e.stopPropagation();
+        // While a delete is in flight the work is irreversible and cannot be
+        // cancelled; dismissing the barrier would hide the pending result,
+        // strand focus when the row later unmounts, and let a stale handler
+        // close a newly opened confirmation. Mirror the disabled Cancel button
+        // and ignore Escape until the request settles (P2, Sophie review).
+        if (deletingRef.current) return;
         setPendingDelete(null);
       }
     };
@@ -472,7 +480,7 @@ export const LayoutEditor: React.FC<Props> = ({
                   deletingRef.current = true;
                   setDeleting(true);
                   setDeleteError(false);
-                  let ok: unknown = true;
+                  let ok = true;
                   try {
                     ok = await Promise.resolve(onDeleteLayout(pendingDelete.id));
                   } catch {

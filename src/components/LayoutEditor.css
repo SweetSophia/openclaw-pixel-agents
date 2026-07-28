@@ -294,6 +294,8 @@
   box-sizing: border-box; /* keep padding+border inside the width cap on narrow viewports (P3) */
   padding: 24px;
   width: min(340px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px); /* keep the dialog on-screen in short landscape viewports (Sophie review) */
+  overflow-y: auto;
   text-align: center;
 }
 .confirm-message {
@@ -330,6 +332,20 @@
   cursor: pointer;
   border: 1px solid rgba(255,255,255,0.2);
   transition: all 0.15s;
+}
+/* Visible disabled treatment: drop the pointer/hover affordances while a
+   delete is in flight so "Deleting…" reads as non-interactive (Sophie review). */
+.confirm-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.confirm-cancel:disabled:hover {
+  background: rgba(0,0,0,0.3);
+  border-color: rgba(255,255,255,0.2);
+}
+.confirm-delete:disabled:hover {
+  background: rgba(255, 0, 85, 0.15);
+  border-color: var(--acc-pink);
 }
 .confirm-cancel {
   background: rgba(0,0,0,0.3);

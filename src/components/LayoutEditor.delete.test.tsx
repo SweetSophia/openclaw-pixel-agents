@@ -321,6 +321,38 @@ describe('Issue #109 — delete confirmation guard', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
+  // ── Test 12c: Escape is ignored while a delete is in flight (P2) ─────
+  //
+  // Sophie's final review: onDocKeyDown dismissed the barrier on Escape even
+  // while deletingRef was true. The DELETE is irreversible and uncancellable,
+  // so Escape posing as a cancellation hid the pending result, stranded focus
+  // when the row later unmounted, and could let a stale handler close a newer
+  // dialog. The fix mirrors the disabled Cancel button: ignore Escape in flight.
+
+  it('ignores Escape during an in-flight delete, then lands focus stably on success', async () => {
+    let resolveDelete: (v: boolean) => void = () => {};
+    const pending = new Promise<boolean>(resolve => { resolveDelete = resolve; });
+    const onDeleteLayout = vi.fn().mockReturnValue(pending);
+    const props = makeProps({ onDeleteLayout });
+    openDeleteDialog(props);
+
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(dialog.querySelector('button.confirm-delete')!);
+
+    // deleting === true: Escape is swallowed, the barrier stays up, and the
+    // request is NOT re-fired.
+    fireEvent.keyDown(document, { key: 'Escape', bubbles: true });
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(onDeleteLayout).toHaveBeenCalledTimes(1);
+
+    // On success the dialog closes and focus lands on the stable Layouts
+    // toggle — never on <body>, even though Escape was pressed mid-flight.
+    resolveDelete(true);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(document.activeElement).toBe(screen.getByTitle('Layout manager'));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
   // ── Test 13: Escape does not propagate to the App drawer (P3) ───────
 
   it('stops Escape propagation so a window-level listener is not also invoked', () => {
