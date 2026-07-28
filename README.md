@@ -224,7 +224,9 @@ The server follows a finite-state machine and the single-writer principle: CLI p
 
 `auto` starts with CLI polling. When an ingest token is configured and CLI execution fails specifically because `OPENCLAW_BIN` is missing (`ENOENT` or `ENOTDIR`), the server makes an at-most-once, sticky transition to ingest-only. This hysteresis prevents later polling from taking ownership back. Transient failures—including non-zero exits, timeouts, permission errors, malformed output, and unknown errors—preserve the previous snapshot and do not switch modes. Without an ingest token, `auto` remains in CLI mode even when the executable is missing.
 
-While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports the compatibility `dataSource` field (`cli-poll` or `ingest`) plus `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
+While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
+
+The legacy `dataSource` field remains a compatibility alias for **effective ownership**: `cli-poll` while polling owns state, and `ingest` while ingest-only owns state. It no longer means that an ingest push happened at any point in the process lifetime; use `lastIngestAt` for accepted-push history and migrate mode checks to `dataSourceEffective`.
 
 ### Reverse-proxy deployments
 
