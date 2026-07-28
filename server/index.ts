@@ -18,6 +18,15 @@ import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
 import { createCorsConfig, isOriginAllowed } from "./cors";
+import {
+  applyCliFailure,
+  classifyCliExecError,
+  createInitialDataSourceState,
+  isCliPollingActive,
+  isIngestWritesActive,
+  type CliFailureKind,
+  type ConfiguredDataSource,
+} from "./dataSource";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
 import {
   isTranscriptPathContained,
@@ -101,6 +110,7 @@ const ACTIVE_THRESHOLD_MIN = parseInt(process.env.ACTIVE_MINUTES || "30", 10);
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
 const DATA_DIR = process.env.DATA_DIR || join(__dirname, "data");
 const PERSIST_PATH = join(DATA_DIR, "agent-prefs.json");
+const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
 /** Base directory for OpenClaw agent session transcripts */
 const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "/root", ".openclaw", "agents");
 
@@ -110,7 +120,13 @@ const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "
  *   "cli"     — always poll via local openclaw CLI (original behavior)
  *   "ingest"  — only accept pushed data via the ingest API (no local CLI needed)
  */
-const DATA_SOURCE = (process.env.DATA_SOURCE || "auto").toLowerCase() as "auto" | "cli" | "ingest";
+const configuredDataSource = (process.env.DATA_SOURCE || "auto").toLowerCase();
+// Unknown values fail safe to auto, which keeps CLI as the initial writer.
+const DATA_SOURCE: ConfiguredDataSource = configuredDataSource === "cli"
+  || configuredDataSource === "ingest"
+  ? configuredDataSource
+  : "auto";
+let dataSourceState = createInitialDataSourceState(DATA_SOURCE, !!INGEST_TOKEN);
 
 // ---- Known agents from config ----
 
@@ -208,6 +224,7 @@ interface CliSessionsResult {
   sessions: CliSession[];
   count: number;
   sourceError?: boolean;
+  cliFailureKind?: CliFailureKind;
 }
 
 /**
@@ -227,8 +244,9 @@ function pollSessions(): Promise<CliSessionsResult> {
 
     execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
       if (err) {
+        const cliFailureKind = classifyCliExecError(err);
         logger.error({ err, subsystem: "poll" }, "cli error");
-        resolve({ sessions: [], count: 0, sourceError: true });
+        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind });
         return;
       }
 
@@ -240,7 +258,7 @@ function pollSessions(): Promise<CliSessionsResult> {
         });
       } catch (parseErr) {
         logger.error({ err: parseErr, subsystem: "poll" }, "json parse error");
-        resolve({ sessions: [], count: 0, sourceError: true });
+        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind: "transient" });
       }
     });
   });
@@ -603,11 +621,27 @@ async function pollMessages(): Promise<void> {
 let isPolling = false;
 
 async function pollAndBroadcast(): Promise<void> {
-  if (isPolling) return;
+  if (!isCliPollingActive(dataSourceState) || isPolling) return;
   isPolling = true;
   const cycleLog = logger.child({ cycleId: randomUUID(), subsystem: "poll" });
   try {
-    const { sessions, sourceError } = await pollSessions();
+    const { sessions, sourceError, cliFailureKind } = await pollSessions();
+    if (sourceError && cliFailureKind) {
+      const nextState = applyCliFailure(dataSourceState, cliFailureKind);
+      if (nextState !== dataSourceState) {
+        dataSourceState = nextState;
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = undefined;
+        }
+        cycleLog.warn({
+          configured: dataSourceState.configured,
+          effective: dataSourceState.effective,
+          failureKind: cliFailureKind,
+        }, "CLI executable unavailable; transitioned permanently to ingest-only");
+        return;
+      }
+    }
     const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
@@ -629,7 +663,6 @@ async function pollAndBroadcast(): Promise<void> {
 
 // ---- Ingest API (receives data from OpenClaw host collector) ----
 
-const INGEST_TOKEN = process.env.INGEST_API_TOKEN || "";
 export type IngestTokenCrypto = Readonly<{
   digestToken: (token: string) => Buffer;
   compareDigests: (configured: Buffer, provided: Buffer) => boolean;
@@ -703,6 +736,12 @@ app.post("/api/ingest/agents", (req, res) => {
   }
   if (!authenticateIngest(req, res)) {
     res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  // Single-writer principle: authenticated pushes cannot race CLI snapshots.
+  if (!isIngestWritesActive(dataSourceState)) {
+    res.status(409).json({ error: "Ingest unavailable while CLI polling is active" });
     return;
   }
 
@@ -782,16 +821,18 @@ app.get("/api/agents", (_req, res) => {
 
 app.get("/api/status", (_req, res) => {
   const agents = Array.from(agentStates.values());
-  const effectiveSource = useCli && !ingestExplicit ? "cli-poll" : "ingest";
+  const cliPolling = isCliPollingActive(dataSourceState);
   res.json({
     connected: true,
     agentCount: agents.length,
     activeCount: agents.filter((a) => a.active).length,
     uptime: process.uptime(),
-    dataSource: lastIngestAt > 0 ? "ingest" : effectiveSource,
-    dataSourceConfig: DATA_SOURCE,
+    dataSource: cliPolling ? "cli-poll" : "ingest",
+    dataSourceConfig: dataSourceState.configured,
+    dataSourceEffective: dataSourceState.effective,
+    dataSourceTransitioned: dataSourceState.transitioned,
     lastIngestAt: lastIngestAt || null,
-    cliPolling: useCli && !ingestExplicit,
+    cliPolling,
   });
 });
 
@@ -1164,12 +1205,6 @@ app.use(apiErrorHandler);
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 
-// Determine effective data source
-const hasIngestToken = !!INGEST_TOKEN;
-const cliExplicit = DATA_SOURCE === "cli";
-const ingestExplicit = DATA_SOURCE === "ingest";
-const useCli = cliExplicit || (DATA_SOURCE === "auto" && !ingestExplicit);
-
 // ---- Graceful Shutdown ----
 
 let isShuttingDown = false;
@@ -1237,20 +1272,20 @@ function startServer(): void {
   server.listen(PORT, () => {
     logger.info({
       port: PORT,
-      dataSource: DATA_SOURCE,
-      effective: useCli && !ingestExplicit ? "cli-poll" : "ingest-only",
+      dataSource: dataSourceState.configured,
+      effective: dataSourceState.effective,
       subsystem: "server",
     }, "🖥️  OpenClaw Pixel Agents server running");
 
-    if (useCli && !ingestExplicit) {
+    if (isCliPollingActive(dataSourceState)) {
       logger.info({
         bin: OPENCLAW_BIN,
         activeThresholdMin: ACTIVE_THRESHOLD_MIN,
         pollIntervalMs: POLL_INTERVAL,
         subsystem: "server",
       }, "📡 Polling via CLI");
-      pollAndBroadcast();
       pollTimer = setInterval(pollAndBroadcast, POLL_INTERVAL);
+      void pollAndBroadcast();
     } else {
       logger.info({ subsystem: "server" }, "📡 Awaiting ingest data from collector (no local CLI polling)");
     }
