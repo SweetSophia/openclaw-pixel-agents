@@ -210,13 +210,21 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `PORT` | `3001` | Backend server port (`3000` in production) |
 | `NODE_ENV` | *(set to `production` by `npm start`)* | Runtime mode; production requires `CORS_ORIGIN` for WebSocket origin checks |
 | `CORS_ORIGIN` | *(none)* | Comma-separated browser origins allowed to open Socket.IO connections and to send state-mutating REST requests in production |
-| `DATA_SOURCE` | `auto` | Data mode: `auto`, `cli` (local polling), or `ingest` (push-based) |
-| `OPENCLAW_CLI` | `openclaw` | Path to OpenClaw CLI binary (cli mode only) |
+| `DATA_SOURCE` | `auto` | Data mode: `auto`, `cli` (local polling), or `ingest` (push-based); invalid values fail safe to `auto` |
+| `OPENCLAW_BIN` | `openclaw` | Path to OpenClaw CLI binary (CLI polling modes only) |
 | `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
 | `ACTIVE_MINUTES` | `30` | Session staleness threshold |
 | `INGEST_API_TOKEN` | *(none)* | Shared secret for ingest API auth (required for ingest mode) |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
+
+### Agent data-source modes
+
+The server follows a finite-state machine and the single-writer principle: CLI polling and ingest writes are never active at the same time. `cli` always keeps CLI polling active, and `ingest` starts ingest-only without polling. Ingest mode requires `INGEST_API_TOKEN`.
+
+`auto` starts with CLI polling. When an ingest token is configured and CLI execution fails specifically because `OPENCLAW_BIN` is missing (`ENOENT` or `ENOTDIR`), the server makes an at-most-once, sticky transition to ingest-only. This hysteresis prevents later polling from taking ownership back. Transient failures—including non-zero exits, timeouts, permission errors, malformed output, and unknown errors—preserve the previous snapshot and do not switch modes. Without an ingest token, `auto` remains in CLI mode even when the executable is missing.
+
+While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports the compatibility `dataSource` field (`cli-poll` or `ingest`) plus `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
 
 ### Reverse-proxy deployments
 
