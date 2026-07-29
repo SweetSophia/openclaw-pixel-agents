@@ -2,7 +2,7 @@
 
 ## Runtime and Commands
 
-- Use Node.js 20+ and `npm ci`; this is one package, not a workspace/monorepo.
+- Use Node.js 22.12+ and `npm ci`; the floor is declared in `package.json#engines` and enforced via `.npmrc` (`engine-strict=true`). This is one package, not a workspace/monorepo.
 - `npm run dev` starts Vite on `:3000` and the Express/Socket.IO server on `:3001`; Vite proxies `/api` and `/socket.io` with `changeOrigin: true`.
 
 ```bash

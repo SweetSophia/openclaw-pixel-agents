@@ -1189,8 +1189,11 @@ io.on("connection", (socket) => {
   });
 });
 
-// SPA fallback: serve index.html for any non-API/non-asset route
-app.get("*", (_req, res) => {
+// SPA fallback: serve index.html for any non-API/non-asset route.
+// Express 5 (path-to-regexp v8) rejects a bare "*" wildcard at registration
+// time; the named "*splat" wildcard is the documented migration form and
+// still matches every unmatched GET path, including "/".
+app.get("*splat", (_req, res) => {
   const indexPath = join(FRONTEND_DIR, "index.html");
   if (existsSync(indexPath)) {
     res.sendFile(indexPath);
