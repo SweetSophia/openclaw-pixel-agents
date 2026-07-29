@@ -4,7 +4,7 @@
   "description": "Pixel art office dashboard for OpenClaw agents",
   "private": false,
   "engines": {
-    "node": ">=22.12.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",

@@ -5,7 +5,7 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 # .npmrc carries engine-strict=true; copy it before `npm ci` so the Node floor
-# (>=22.12.0) is actually enforced during the image build, not just documented.
+# (22.22.2 on this Node 22 image) is enforced during the image build.
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 COPY . .
