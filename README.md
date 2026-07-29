@@ -45,7 +45,7 @@ The app runs at `http://localhost:3000` with the backend API on port 3001.
 
 ### Requirements
 
-- **Node.js** 20+
+- **Node.js** 22.12+ (required by the build toolchain — `vite@8`, `@vitejs/plugin-react@6`, `@testing-library/jest-dom@7`, and `concurrently@10` all need Node ≥22; enforced via the `engines` field)
 - **One of:**
   - **OpenClaw** running locally with CLI in PATH (for `cli`/`auto` data mode)
   - **Ingest API** — set `DATA_SOURCE=ingest` + `INGEST_API_TOKEN` and push data from a collector script on the OpenClaw host

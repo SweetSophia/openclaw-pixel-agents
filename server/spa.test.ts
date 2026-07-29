@@ -54,4 +54,18 @@ describe("SPA fallback catch-all (Express 5 *splat)", () => {
       expect(response.headers["content-type"]).toMatch(/text\/html/);
     }
   });
+
+  it("serves the SPA at the root path '/' (documented contract)", async () => {
+    const response = await request(app).get("/");
+
+    // Same contract as the deep route: the catch-all must match "/", serving
+    // index.html (200) or the explicit "Not found" text (404) when no build
+    // artifact exists — never Express's default "Cannot GET /" 404.
+    expect([200, 404]).toContain(response.status);
+    if (response.status === 404) {
+      expect(response.text).toBe("Not found");
+    } else {
+      expect(response.headers["content-type"]).toMatch(/text\/html/);
+    }
+  });
 });

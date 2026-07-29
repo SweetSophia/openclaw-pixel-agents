@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Pixel art office dashboard for OpenClaw agents",
   "private": false,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite",
