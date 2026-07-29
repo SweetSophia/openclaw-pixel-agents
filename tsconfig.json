@@ -13,7 +13,10 @@
     "isolatedModules": true,
     "noEmit": true,
     "moduleDetection": "force",
-    "types": ["node"]
+    // Browser code gets Vite client types (import.meta.env, CSS module
+    // declarations) but NOT Node globals — enforcing the ambient boundary.
+    "types": ["vite/client"]
   },
-  "include": ["src", "shared"]
+  "include": ["src", "shared"],
+  "exclude": ["**/*.test.*", "**/*.spec.*", "src/test"]
 }

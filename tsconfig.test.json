@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Test files run in Node (vitest + jsdom), so they legitimately need
+    // Node globals (process, Buffer, node:fs, etc.). The browser config
+    // (root tsconfig.json) intentionally omits these to enforce the
+    // Node/browser ambient boundary — code that uses process.cwd() in a
+    // React component will fail typecheck there, catching the class of bug
+    // that passes Vite's build but explodes at browser runtime.
+    "types": ["node", "vite/client"],
+    // Server code uses Error.cause, while jsdom-backed client tests need DOM.
+    "lib": ["ES2020", "ES2022.Error", "DOM"]
+  },
+  "include": [
+    "**/*.test.*",
+    "**/*.spec.*",
+    "src/test"
+  ],
+  // Override the parent's exclude (which strips test files from the browser
+  // config) while mirroring Vitest's repository-wide discovery boundaries.
+  "exclude": ["node_modules", "dist", ".worktrees"]
+}
