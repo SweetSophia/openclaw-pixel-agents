@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import type { Server as SocketIOServer } from "socket.io";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ describe("API auth boundaries", () => {
   let app: Express;
   let io: SocketIOServer;
   let dataDir: string;
-  let authenticateIngest: (req: Express.Request, res: Express.Response) => boolean;
+  let authenticateIngest: (req: Request, res: Response) => boolean;
   let createIngestAuthenticator: typeof import("./index").createIngestAuthenticator;
   let defaultIngestTokenCrypto: typeof import("./index").defaultIngestTokenCrypto;
   let ingestTokenDigestContext: typeof import("./index").INGEST_TOKEN_DIGEST_CONTEXT;
@@ -212,19 +212,19 @@ describe("API auth boundaries", () => {
     const authenticate = authenticateIngest;
     expect(authenticate).toBeDefined();
 
-    const makeReq = (token: string): Express.Request =>
-      ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Express.Request;
+    const makeReq = (token: string): Request =>
+      ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Request;
 
     // Correct token (matches INGEST_API_TOKEN="test-secret" from beforeAll)
-    expect(authenticate(makeReq("test-secret"), {} as Express.Response)).toBe(true);
+    expect(authenticate(makeReq("test-secret"), {} as Response)).toBe(true);
 
     // Wrong content, same length — the comparison must still reject
-    expect(authenticate(makeReq("not-a-secr"), {} as Express.Response)).toBe(false);
+    expect(authenticate(makeReq("not-a-secr"), {} as Response)).toBe(false);
 
     // Shorter, longer, much longer
-    expect(authenticate(makeReq("X"), {} as Express.Response)).toBe(false);
-    expect(authenticate(makeReq("X".repeat(100)), {} as Express.Response)).toBe(false);
-    expect(authenticate(makeReq("X".repeat(1000)), {} as Express.Response)).toBe(false);
+    expect(authenticate(makeReq("X"), {} as Response)).toBe(false);
+    expect(authenticate(makeReq("X".repeat(100)), {} as Response)).toBe(false);
+    expect(authenticate(makeReq("X".repeat(1000)), {} as Response)).toBe(false);
 
     // Unicode token (UTF-8 must be handled consistently between env var
     // and Bearer header — both are normalized through HMAC-SHA-256, whose
@@ -233,8 +233,8 @@ describe("API auth boundaries", () => {
     vi.resetModules();
     return import("./index").then((mod) => {
       const unicodeAuth = mod.authenticateIngest;
-      expect(unicodeAuth(makeReq("café-secret"), {} as Express.Response)).toBe(true);
-      expect(unicodeAuth(makeReq("cafe-secret"), {} as Express.Response)).toBe(false);
+      expect(unicodeAuth(makeReq("café-secret"), {} as Response)).toBe(true);
+      expect(unicodeAuth(makeReq("cafe-secret"), {} as Response)).toBe(false);
 
       // Restore the test secret for the deterministic crypto-path test below.
       vi.stubEnv("INGEST_API_TOKEN", "test-secret");
@@ -243,9 +243,9 @@ describe("API auth boundaries", () => {
         // Re-bind the describe-scoped binding to the re-imported function
         // so the crypto-path test sees the restored token.
         authenticateIngest = mod2.authenticateIngest;
-        expect(authenticateIngest(makeReq("test-secret"), {} as Express.Response)).toBe(true);
-        expect(authenticateIngest(makeReq("not-a-secr"), {} as Express.Response)).toBe(false);
-        expect(authenticateIngest(makeReq("X"), {} as Express.Response)).toBe(false);
+        expect(authenticateIngest(makeReq("test-secret"), {} as Response)).toBe(true);
+        expect(authenticateIngest(makeReq("not-a-secr"), {} as Response)).toBe(false);
+        expect(authenticateIngest(makeReq("X"), {} as Response)).toBe(false);
       });
     });
   });
@@ -255,8 +255,8 @@ describe("API auth boundaries", () => {
     // valid Bearer token must reach the same hash-and-compare path regardless
     // of its length or content. Wall-clock ratios are too sensitive to runner
     // contention to serve as a reliable correctness oracle.
-    const makeReq = (token: string): Express.Request =>
-      ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Express.Request;
+    const makeReq = (token: string): Request =>
+      ({ headers: { authorization: `Bearer ${token}` } }) as unknown as Request;
 
     const digestToken = vi.fn((token: string) =>
       createHmac("sha256", token)
@@ -275,7 +275,7 @@ describe("API auth boundaries", () => {
 
     const tokens = ["", "X", "not-a-secr", "test-secret", "café-secret", "X".repeat(1000)];
     const results = tokens.map((token) =>
-      authenticate(makeReq(token), {} as Express.Response),
+      authenticate(makeReq(token), {} as Response),
     );
 
     expect(results).toEqual([false, false, false, true, false, false]);

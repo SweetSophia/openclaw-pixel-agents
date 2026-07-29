@@ -7,16 +7,16 @@
     // Node/browser ambient boundary — code that uses process.cwd() in a
     // React component will fail typecheck there, catching the class of bug
     // that passes Vite's build but explodes at browser runtime.
-    "types": ["node", "vite/client"]
+    "types": ["node", "vite/client"],
+    // Server code uses Error.cause, while jsdom-backed client tests need DOM.
+    "lib": ["ES2020", "ES2022.Error", "DOM"]
   },
   "include": [
-    "src/**/*.test.ts",
-    "src/**/*.test.tsx",
-    "src/**/*.spec.ts",
-    "src/**/*.spec.tsx",
+    "**/*.test.*",
+    "**/*.spec.*",
     "src/test"
   ],
   // Override the parent's exclude (which strips test files from the browser
-  // config) so this config actually sees them.
-  "exclude": []
+  // config) while mirroring Vitest's repository-wide discovery boundaries.
+  "exclude": ["node_modules", "dist", ".worktrees"]
 }
