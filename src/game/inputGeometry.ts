@@ -23,8 +23,10 @@ export interface GridPoint {
 }
 
 /** Map client coordinates into the canvas grid, accounting for object-fit bars. */
-// `Readonly<CanvasMetrics>` enforces the pure-helper contract: screenToGrid
-// reads its inputs and returns a fresh GridPoint, never mutating them (issue #82).
+// `Readonly<CanvasMetrics>` enforces top-level immutability at compile time:
+// screenToGrid cannot reassign metrics.rect, .canvasWidth, etc. Nested fields
+// (e.g. metrics.rect.left) remain mutable under shallow Readonly — deep-freezing
+// is tracked in #132 (follow-up to #82).
 export function screenToGrid(
   clientX: number,
   clientY: number,
