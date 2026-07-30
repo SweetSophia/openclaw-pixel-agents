@@ -23,10 +23,12 @@ export interface GridPoint {
 }
 
 /** Map client coordinates into the canvas grid, accounting for object-fit bars. */
+// `Readonly<CanvasMetrics>` enforces the pure-helper contract: screenToGrid
+// reads its inputs and returns a fresh GridPoint, never mutating them (issue #82).
 export function screenToGrid(
   clientX: number,
   clientY: number,
-  metrics: CanvasMetrics,
+  metrics: Readonly<CanvasMetrics>,
 ): GridPoint | null {
   const { rect, canvasWidth, canvasHeight, tileSize } = metrics;
   const cssRatio = rect.width / rect.height;
@@ -67,7 +69,7 @@ export function screenToGrid(
 }
 
 /** Euclidean distance between two client-coordinate points. */
-export function touchDistance(a: ClientPoint, b: ClientPoint): number {
+export function touchDistance(a: Readonly<ClientPoint>, b: Readonly<ClientPoint>): number {
   const dx = a.clientX - b.clientX;
   const dy = a.clientY - b.clientY;
   return Math.sqrt(dx * dx + dy * dy);

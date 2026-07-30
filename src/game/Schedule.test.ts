@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { getDayPhase } from './Schedule';
+import { describe, it, expect, expectTypeOf } from 'vitest';
+import { getDayPhase, DAY_PHASES, type DayPhase } from './Schedule';
 
 describe('Schedule.getDayPhase', () => {
   it('returns exact Morning values at progress=0', () => {
@@ -60,5 +60,30 @@ describe('Schedule.getDayPhase', () => {
     expect(phase.alpha.toString()).toMatch(/^0\.135$/);
     // And the overlay string embeds the formatted alpha
     expect(phase.overlay).toContain('0.135');
+  });
+});
+
+describe('Schedule pure-module contract (issue #82)', () => {
+  it('DAY_PHASES is an immutable readonly table (compile-time contract)', () => {
+    // Compile-time: DAY_PHASES must be a readonly array. If it is ever
+    // reverted to a mutable DayPhase[], this assertion fails `tsc --noEmit`
+    // (test files are typechecked via tsconfig.test.json — see #129).
+    expectTypeOf(DAY_PHASES).toEqualTypeOf<readonly DayPhase[]>();
+    // Runtime: the table is the fixed 7-phase schedule.
+    expect(DAY_PHASES).toHaveLength(7);
+    expect(DAY_PHASES[0].label).toBe('Morning');
+    expect(DAY_PHASES[DAY_PHASES.length - 1].label).toBe('Late Night');
+  });
+
+  it('getDayPhase returns a fresh object per call (no shared aliasing)', () => {
+    const a = getDayPhase(0.3);
+    const b = getDayPhase(0.3);
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b); // distinct references, not a shared cached object
+    a.light = -999;
+    a.r = -1;
+    const c = getDayPhase(0.3);
+    expect(c.light).not.toBe(-999); // module state is unaffected by mutation
+    expect(c.r).not.toBe(-1);
   });
 });
