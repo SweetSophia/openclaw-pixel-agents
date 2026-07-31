@@ -411,13 +411,20 @@ export function getSpriteFrame(
   return frame?.canvas ?? null;
 }
 
-/** Access cached characters */
-export function getCachedCharacters(): LoadedCharacter[] {
+/** Access cached characters. Returns a readonly view — consumers must not
+ * mutate the returned array or any of its elements. The cache is owned by
+ * SpriteLoader and is the single source of truth for asset lookups; treating
+ * the return value as a frozen snapshot prevents cross-consumer aliasing of
+ * shared mutable references (issue #132). */
+export function getCachedCharacters(): readonly LoadedCharacter[] {
   return cachedCharacters;
 }
 
-/** Access cached furniture */
-export function getCachedFurniture(): Map<string, LoadedFurnitureItem> {
+/** Access cached furniture. Returns a readonly view — consumers must not
+ * mutate the returned Map or any of its values. The cache is owned by
+ * SpriteLoader; consumers that need to extend or filter should build their
+ * own structure from the snapshot (issue #132). */
+export function getCachedFurniture(): ReadonlyMap<string, Readonly<LoadedFurnitureItem>> {
   return cachedFurniture;
 }
 

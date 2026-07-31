@@ -65,7 +65,7 @@ describe('SUBAGENT_FADE_DURATION constant', () => {
   });
 });
 
-describe('tickSubAgent pure-module contract (issue #82)', () => {
+describe('tickSubAgent pure-module contract (issue #82 + #132)', () => {
   it('accepts a Readonly input (compile-time no-mutation contract)', () => {
     // tickSubAgent must take Readonly<SubAgentInput>: the planner reads its
     // input and never mutates the caller's character. Reverting the parameter
@@ -85,6 +85,22 @@ describe('tickSubAgent pure-module contract (issue #82)', () => {
     expect(t1).not.toBe(t2);
     t1.fadeAlpha = -42;
     const t3 = tickSubAgent({ dying: true, fadeAlpha: 1 }, 0.5);
+    expect(t3.fadeAlpha).not.toBe(-42);
+  });
+
+  it('returns a fresh tick in the dying: false early-return branch (issue #132 parity)', () => {
+    // The no-aliasing guard above covers only the dying: true fade path.
+    // Mirror it for the dying: false early-return (SubAgentFSM.ts:30-34) so
+    // a future regression that caches or aliases the literal at that branch
+    // is caught. tickSubAgent constructs a fresh { fadeAlpha, dying,
+    // shouldRemove } object on both branches, so distinct calls must return
+    // distinct references and mutation must not alias the next call.
+    const t1 = tickSubAgent({ dying: false, fadeAlpha: 0.7 }, 0.016);
+    const t2 = tickSubAgent({ dying: false, fadeAlpha: 0.7 }, 0.016);
+    expect(t1).toEqual(t2);
+    expect(t1).not.toBe(t2);
+    t1.fadeAlpha = -42;
+    const t3 = tickSubAgent({ dying: false, fadeAlpha: 0.7 }, 0.016);
     expect(t3.fadeAlpha).not.toBe(-42);
   });
 });

@@ -54,15 +54,55 @@ describe('touchDistance', () => {
   });
 });
 
-describe('inputGeometry pure-module contract (issue #82)', () => {
-  it('screenToGrid accepts Readonly<CanvasMetrics> (compile-time no-mutation contract)', () => {
-    // Reverting screenToGrid's metrics param to mutable CanvasMetrics makes this
-    // fail `tsc --noEmit` (test files are typechecked via tsconfig.test.json — #129).
-    expectTypeOf(screenToGrid).parameter(2).toEqualTypeOf<Readonly<CanvasMetrics>>();
+describe('inputGeometry pure-module contract (issue #82 + #132)', () => {
+  it('screenToGrid accepts a deep-Readonly<CanvasMetrics> (compile-time contract, issue #132)', () => {
+    // The assertion compares against an inline literal with `readonly` at every
+    // field level — including the nested ScreenRect — so reverting ANY
+    // `readonly` modifier on CanvasMetrics, ScreenRect, or the array itself
+    // fails `tsc --noEmit` (test files are typechecked via tsconfig.test.json
+    // — see #129). The inline literal pins the deep contract.
+    expectTypeOf(screenToGrid).parameter(2).toEqualTypeOf<Readonly<{
+      rect: {
+        readonly left: number;
+        readonly top: number;
+        readonly width: number;
+        readonly height: number;
+      };
+      readonly canvasWidth: number;
+      readonly canvasHeight: number;
+      readonly tileSize: number;
+    }>>();
   });
 
   it('touchDistance accepts Readonly<ClientPoint> for both params (compile-time no-mutation contract)', () => {
-    expectTypeOf(touchDistance).parameter(0).toEqualTypeOf<Readonly<ClientPoint>>();
-    expectTypeOf(touchDistance).parameter(1).toEqualTypeOf<Readonly<ClientPoint>>();
+    // ClientPoint is flat / primitive-only, so Readonly<ClientPoint> is
+    // effectively deep — inline literal pins the readonly modifier on each
+    // primitive field so reverting them fails tsc.
+    expectTypeOf(touchDistance).parameter(0).toEqualTypeOf<Readonly<{
+      readonly clientX: number;
+      readonly clientY: number;
+    }>>();
+    expectTypeOf(touchDistance).parameter(1).toEqualTypeOf<Readonly<{
+      readonly clientX: number;
+      readonly clientY: number;
+    }>>();
+  });
+
+  it('screenToGrid returns a fresh GridPoint per call (no shared aliasing, issue #132 parity)', () => {
+    // Mirrors the no-aliasing guards in Schedule.test.ts and SubAgentFSM.test.ts.
+    // screenToGrid always constructs a fresh { gridX, gridY } literal (inputGeometry.ts),
+    // so distinct calls must return distinct references — and mutating one must
+    // not affect a subsequent call. Pin non-null so a future regression that
+    // returns null for these coords is caught.
+    const a = screenToGrid(35, 55, BASE_METRICS);
+    const b = screenToGrid(35, 55, BASE_METRICS);
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    (a as { gridX: number }).gridX = -999;
+    const c = screenToGrid(35, 55, BASE_METRICS);
+    expect(c).not.toBeNull();
+    expect((c as { gridX: number }).gridX).not.toBe(-999);
   });
 });
