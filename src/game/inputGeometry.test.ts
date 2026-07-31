@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import { screenToGrid, touchDistance, type CanvasMetrics } from './inputGeometry';
+import { screenToGrid, touchDistance, type CanvasMetrics, type ClientPoint } from './inputGeometry';
 
 const BASE_METRICS: CanvasMetrics = {
   rect: { left: 10, top: 20, width: 240, height: 160 },
@@ -51,5 +51,18 @@ describe('screenToGrid', () => {
 describe('touchDistance', () => {
   it('returns Euclidean distance between client points', () => {
     expect(touchDistance({ clientX: 1, clientY: 2 }, { clientX: 4, clientY: 6 })).toBe(5);
+  });
+});
+
+describe('inputGeometry pure-module contract (issue #82)', () => {
+  it('screenToGrid accepts Readonly<CanvasMetrics> (compile-time no-mutation contract)', () => {
+    // Reverting screenToGrid's metrics param to mutable CanvasMetrics makes this
+    // fail `tsc --noEmit` (test files are typechecked via tsconfig.test.json — #129).
+    expectTypeOf(screenToGrid).parameter(2).toEqualTypeOf<Readonly<CanvasMetrics>>();
+  });
+
+  it('touchDistance accepts Readonly<ClientPoint> for both params (compile-time no-mutation contract)', () => {
+    expectTypeOf(touchDistance).parameter(0).toEqualTypeOf<Readonly<ClientPoint>>();
+    expectTypeOf(touchDistance).parameter(1).toEqualTypeOf<Readonly<ClientPoint>>();
   });
 });

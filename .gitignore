@@ -13,3 +13,6 @@ collector/.env.collector
 .codegraph/
 .cortexkit/
 .slim/
+
+# graphify analysis artifacts (never commit)
+graphify-out/

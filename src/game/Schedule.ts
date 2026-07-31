@@ -21,7 +21,11 @@ interface ParsedDayPhase {
   label: string;
 }
 
-export const DAY_PHASES: DayPhase[] = [
+// `readonly` enforces array-shape immutability at compile time: the table
+// cannot be reassigned or structurally mutated (push/splice/index-assign).
+// Element fields (DayPhase.overlay, .light, .label) remain mutable under
+// shallow readonly — deep-readonly typing (readonly fields / DeepReadonly) is tracked in #132.
+export const DAY_PHASES: readonly DayPhase[] = [
   { overlay: 'rgba(255, 200, 100, 0.06)', light: 0.95, label: 'Morning' },
   { overlay: 'rgba(255, 255, 240, 0.02)', light: 1.0, label: 'Midday' },
   { overlay: 'rgba(255, 160, 60, 0.08)', light: 0.9, label: 'Afternoon' },
@@ -31,7 +35,7 @@ export const DAY_PHASES: DayPhase[] = [
   { overlay: 'rgba(15, 10, 40, 0.3)', light: 0.25, label: 'Late Night' },
 ];
 
-const PARSED_PHASES: ParsedDayPhase[] = DAY_PHASES.map(p => {
+const PARSED_PHASES: readonly ParsedDayPhase[] = DAY_PHASES.map(p => {
   const [r, g, b, a] = parseRgbaStatic(p.overlay);
   return { r, g, b, a, light: p.light, label: p.label };
 });

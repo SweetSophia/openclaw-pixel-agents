@@ -21,8 +21,11 @@ export interface SubAgentTick {
   shouldRemove: boolean;
 }
 
+// `Readonly<SubAgentInput>` makes the pure-planner contract compiler-enforced:
+// tickSubAgent reads its input and returns a fresh tick, never mutating the
+// caller's character (issue #82).
 export function tickSubAgent(
-  char: SubAgentInput,
+  char: Readonly<SubAgentInput>,
   dtSec: number,
 ): SubAgentTick {
   if (!char.dying) {

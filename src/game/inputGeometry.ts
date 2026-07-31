@@ -23,10 +23,14 @@ export interface GridPoint {
 }
 
 /** Map client coordinates into the canvas grid, accounting for object-fit bars. */
+// `Readonly<CanvasMetrics>` enforces top-level immutability at compile time:
+// screenToGrid cannot reassign metrics.rect, .canvasWidth, etc. Nested fields
+// (e.g. metrics.rect.left) remain mutable under shallow Readonly — deep-readonly
+// typing (a DeepReadonly type) is tracked in #132.
 export function screenToGrid(
   clientX: number,
   clientY: number,
-  metrics: CanvasMetrics,
+  metrics: Readonly<CanvasMetrics>,
 ): GridPoint | null {
   const { rect, canvasWidth, canvasHeight, tileSize } = metrics;
   const cssRatio = rect.width / rect.height;
@@ -67,7 +71,7 @@ export function screenToGrid(
 }
 
 /** Euclidean distance between two client-coordinate points. */
-export function touchDistance(a: ClientPoint, b: ClientPoint): number {
+export function touchDistance(a: Readonly<ClientPoint>, b: Readonly<ClientPoint>): number {
   const dx = a.clientX - b.clientX;
   const dy = a.clientY - b.clientY;
   return Math.sqrt(dx * dx + dy * dy);
