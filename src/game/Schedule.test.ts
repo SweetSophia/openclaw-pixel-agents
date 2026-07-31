@@ -64,7 +64,7 @@ describe('Schedule.getDayPhase', () => {
 });
 
 describe('Schedule pure-module contract (issue #82)', () => {
-  it('DAY_PHASES is an immutable readonly table (compile-time contract)', () => {
+  it('DAY_PHASES is a shallow-readonly table (compile-time contract)', () => {
     // Compile-time: DAY_PHASES must be a readonly array. If it is ever
     // reverted to a mutable DayPhase[], this assertion fails `tsc --noEmit`
     // (test files are typechecked via tsconfig.test.json — see #129).

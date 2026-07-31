@@ -74,9 +74,11 @@ describe('tickSubAgent pure-module contract (issue #82)', () => {
   });
 
   it('returns a fresh tick per call (no shared reference)', () => {
-    // Guards against the stale EMPTY_ACTIONS shared-return pattern: each call
-    // must yield a distinct tick object, and mutating one must not alias state
-    // observed by a later call.
+    // Top-level freshness guard: each call returns a distinct tick object, and
+    // mutating a returned tick does not alias state seen by a later call. This
+    // pins top-level non-aliasing only — the historical EMPTY_ACTIONS bug was a
+    // shared *nested* actions array (removed in #102), which this test would not
+    // detect; that field no longer exists.
     const t1 = tickSubAgent({ dying: true, fadeAlpha: 1 }, 0.5);
     const t2 = tickSubAgent({ dying: true, fadeAlpha: 1 }, 0.5);
     expect(t1).toEqual(t2);
