@@ -5,6 +5,7 @@ import {
   loadCharacters,
   loadFloors,
   loadFurniture,
+  recomposeAgent,
   type ReadonlyAssets,
   type ReadonlyLoadedCharacter,
   type ReadonlyLoadedFloor,
@@ -43,17 +44,110 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
     expectTypeOf(loadAllAssets).returns.toEqualTypeOf<Promise<ReadonlyAssets>>();
   });
 
+  it('recomposeAgent returns a readonly view per element (issue #132)', () => {
+    // The single-character recompose path must enforce the same readonly
+    // contract as the bulk loaders. If a future regression widens this
+    // back to the mutable `LoadedCharacter` builder type, callers would
+    // receive a type that lets them mutate `sprite.down`, `.splice(0)`,
+    // and `frame.width` — the exact defect Sophie flagged in the
+    // 2026-08-01 Fagan inspection (issuecomment-5152033381, finding #1).
+    expectTypeOf(recomposeAgent).returns.toEqualTypeOf<
+      ReadonlyLoadedCharacter | null
+    >();
+  });
+
+  it('recomposeAgent mutation probes — every assignment is type-rejected (issue #132)', () => {
+    // Compile-time negative controls. Each `@ts-expect-error` line
+    // suppresses a known TS2540 / TS2551 error that is *expected* to
+    // occur against the readonly view. If a future regression removes
+    // `readonly` from `ReadonlyLoadedCharacter.down`, from the
+    // `readonly ReadonlySpriteFrame[]` shape, or from the
+    // `readonly canvas / width / height` fields of `ReadonlySpriteFrame`,
+    // the corresponding `@ts-expect-error` directive will have nothing
+    // to suppress and `tsc` will emit TS2578 ("Unused '@ts-expect-error'
+    // directive"), failing `npm run typecheck`. The probes are
+    // type-only — they are never executed at runtime.
+    type _ProbeSprite = ReadonlyLoadedCharacter | null;
+    const probe = (sprite: _ProbeSprite) => {
+      if (!sprite) return;
+      // @ts-expect-error TS2540 — 'down' is readonly
+      sprite.down = [];
+      // @ts-expect-error TS2551 — 'splice' on readonly array
+      sprite.down.splice(0);
+      // @ts-expect-error TS2540 — 'width' is readonly
+      sprite.down[0]!.width = 0;
+    };
+    void probe;
+  });
+
+  it('ReadonlySpriteFrame is independently deep (issue #132)', () => {
+    // Independent oracle pinned with INLINE object literals. If this
+    // assertion compared the named type against `ReadonlySpriteFrame`
+    // itself, a future regression that drops `readonly` from any field
+    // of `ReadonlySpriteFrame` would move both sides together and the
+    // assertion would still pass. Inline literals break that coupling
+    // — the named type's readonly modifiers are checked against the
+    // literal's readonly modifiers, and any mismatch fails
+    // `tsc --noEmit`.
+    expectTypeOf<ReadonlySpriteFrame>().toEqualTypeOf<{
+      readonly canvas: HTMLCanvasElement;
+      readonly width: number;
+      readonly height: number;
+    }>();
+  });
+
+  it('ReadonlySpriteFrame field-level mutation probes are type-rejected (issue #132)', () => {
+    // Compile-time negative controls for each individual field of
+    // `ReadonlySpriteFrame`. As with `recomposeAgent` above, each line
+    // is expected to produce a TS2540 error; the `@ts-expect-error`
+    // directive suppresses it. If `canvas`, `width`, or `height` loses
+    // `readonly`, the corresponding directive becomes unused and `tsc`
+    // fails with TS2578, catching the regression.
+    const probeCanvas = (s: ReadonlySpriteFrame) => {
+      // @ts-expect-error TS2540 — 'canvas' is readonly
+      s.canvas = {} as HTMLCanvasElement;
+    };
+    const probeWidth = (s: ReadonlySpriteFrame) => {
+      // @ts-expect-error TS2540 — 'width' is readonly
+      s.width = 0;
+    };
+    const probeHeight = (s: ReadonlySpriteFrame) => {
+      // @ts-expect-error TS2540 — 'height' is readonly
+      s.height = 0;
+    };
+    void probeCanvas;
+    void probeWidth;
+    void probeHeight;
+  });
+
   it('ReadonlyLoadedCharacter is fully deep (frames, direction arrays, fields) (issue #132)', () => {
-    // Inline literal pins every array and field as readonly so the contract
-    // is enforced at every nesting level — any missing readonly modifier
-    // fails `tsc --noEmit`. The internal `LoadedCharacter` / `SpriteFrame`
-    // builder types are un-exported; the public readonly view is what
-    // consumers see.
+    // Inline frame literals pin every array and field as readonly so
+    // the contract is enforced at every nesting level — any missing
+    // readonly modifier anywhere in the chain (frame level, field
+    // level, array level, direction level) fails `tsc --noEmit`. The
+    // internal `LoadedCharacter` / `SpriteFrame` builder types are
+    // un-exported; the public readonly view is what consumers see.
     expectTypeOf<ReadonlyLoadedCharacter>().toEqualTypeOf<{
-      readonly down: readonly ReadonlySpriteFrame[];
-      readonly up: readonly ReadonlySpriteFrame[];
-      readonly right: readonly ReadonlySpriteFrame[];
-      readonly left: readonly ReadonlySpriteFrame[];
+      readonly down: readonly {
+        readonly canvas: HTMLCanvasElement;
+        readonly width: number;
+        readonly height: number;
+      }[];
+      readonly up: readonly {
+        readonly canvas: HTMLCanvasElement;
+        readonly width: number;
+        readonly height: number;
+      }[];
+      readonly right: readonly {
+        readonly canvas: HTMLCanvasElement;
+        readonly width: number;
+        readonly height: number;
+      }[];
+      readonly left: readonly {
+        readonly canvas: HTMLCanvasElement;
+        readonly width: number;
+        readonly height: number;
+      }[];
     }>();
   });
 
