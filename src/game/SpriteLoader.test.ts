@@ -71,9 +71,21 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
     >();
   });
 
+  it('ReadonlyComposedCharacter is independently deep (issue #132)', () => {
+    // Keep the expected shape inline so it cannot drift with the named
+    // interface under test. This catches a dropped readonly modifier even
+    // when getComposedCharacter and its return-type oracle change together.
+    expectTypeOf<ReadonlyComposedCharacter>().toEqualTypeOf<{
+      readonly down: readonly HTMLCanvasElement[];
+      readonly up: readonly HTMLCanvasElement[];
+      readonly right: readonly HTMLCanvasElement[];
+      readonly portrait: HTMLCanvasElement;
+    }>();
+  });
+
   it('getComposedCharacter mutation probes are type-rejected (issue #132)', () => {
     // Compile-time negative controls. Each `@ts-expect-error` line
-    // suppresses a known TS2540 / TS2502 error that is *expected* to
+    // suppresses a known TS2540 / TS2339 error that is *expected* to
     // occur against the readonly view. If a future regression widens
     // the return type back to `ComposedCharacter | null`, or drops
     // `readonly` from any field of `ReadonlyComposedCharacter`, the
