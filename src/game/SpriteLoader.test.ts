@@ -1,12 +1,14 @@
 import { describe, expectTypeOf, it } from 'vitest';
 
 import {
+  getComposedCharacter,
   loadAllAssets,
   loadCharacters,
   loadFloors,
   loadFurniture,
   recomposeAgent,
   type ReadonlyAssets,
+  type ReadonlyComposedCharacter,
   type ReadonlyLoadedCharacter,
   type ReadonlyLoadedFloor,
   type ReadonlyLoadedFurnitureItem,
@@ -54,6 +56,43 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
     expectTypeOf(recomposeAgent).returns.toEqualTypeOf<
       ReadonlyLoadedCharacter | null
     >();
+  });
+
+  it('getComposedCharacter returns a readonly composed view (issue #132)', () => {
+    // `getComposedCharacter` exposes the underlying `cachedComposed`
+    // entry. Without the readonly view, a caller could reassign
+    // `composed.down`, `.splice(0)` the direction array, mutate frame
+    // canvas dimensions through the cached array, or replace the
+    // portrait — escaping the cache boundary that this PR hardens
+    // (Sophie's final review 2026-08-01, issuecomment-5152941112,
+    // blocking finding on `getComposedCharacter()`).
+    expectTypeOf(getComposedCharacter).returns.toEqualTypeOf<
+      ReadonlyComposedCharacter | null
+    >();
+  });
+
+  it('getComposedCharacter mutation probes are type-rejected (issue #132)', () => {
+    // Compile-time negative controls. Each `@ts-expect-error` line
+    // suppresses a known TS2540 / TS2502 error that is *expected* to
+    // occur against the readonly view. If a future regression widens
+    // the return type back to `ComposedCharacter | null`, or drops
+    // `readonly` from any field of `ReadonlyComposedCharacter`, the
+    // corresponding directive becomes unused and `tsc` emits TS2578
+    // ("Unused '@ts-expect-error' directive"), failing
+    // `npm run typecheck`. Probes are type-only — never executed.
+    const probe = (composed: ReadonlyComposedCharacter) => {
+      // @ts-expect-error TS2540 — 'down' is readonly
+      composed.down = [];
+      // @ts-expect-error TS2540 — 'up' is readonly
+      composed.up = [];
+      // @ts-expect-error TS2540 — 'right' is readonly
+      composed.right = [];
+      // @ts-expect-error TS2339 — no `splice` on readonly array
+      composed.down.splice(0);
+      // @ts-expect-error TS2540 — 'portrait' is readonly
+      composed.portrait = document.createElement('canvas');
+    };
+    void probe;
   });
 
   it('recomposeAgent mutation probes — every assignment is type-rejected (issue #132)', () => {
