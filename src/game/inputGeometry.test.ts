@@ -56,13 +56,15 @@ describe('touchDistance', () => {
 
 describe('inputGeometry pure-module contract (issue #82 + #132)', () => {
   it('screenToGrid accepts a deep-Readonly<CanvasMetrics> (compile-time contract, issue #132)', () => {
-    // The assertion compares against an inline literal with `readonly` at every
-    // field level — including the nested ScreenRect — so reverting ANY
-    // `readonly` modifier on CanvasMetrics, ScreenRect, or the array itself
-    // fails `tsc --noEmit` (test files are typechecked via tsconfig.test.json
-    // — see #129). The inline literal pins the deep contract.
-    expectTypeOf(screenToGrid).parameter(2).toEqualTypeOf<Readonly<{
-      rect: {
+    // Two assertions: pin the contract on `CanvasMetrics` itself (so removing
+    // any `readonly` on `rect`, `canvasWidth`, `canvasHeight`, or `tileSize`
+    // fails `tsc --noEmit`), and pin that the function parameter widens to
+    // `Readonly<CanvasMetrics>`. The inline literal pins the deep contract;
+    // an outer `Readonly<...>` would re-apply readonly to top-level scalars
+    // and mask scalar regressions — so the first assertion is made directly
+    // on `CanvasMetrics` (NOT on `Readonly<CanvasMetrics>`).
+    expectTypeOf<CanvasMetrics>().toEqualTypeOf<{
+      readonly rect: {
         readonly left: number;
         readonly top: number;
         readonly width: number;
@@ -71,7 +73,8 @@ describe('inputGeometry pure-module contract (issue #82 + #132)', () => {
       readonly canvasWidth: number;
       readonly canvasHeight: number;
       readonly tileSize: number;
-    }>>();
+    }>();
+    expectTypeOf(screenToGrid).parameter(2).toEqualTypeOf<Readonly<CanvasMetrics>>();
   });
 
   it('touchDistance accepts Readonly<ClientPoint> for both params (compile-time no-mutation contract)', () => {
@@ -100,9 +103,9 @@ describe('inputGeometry pure-module contract (issue #82 + #132)', () => {
     expect(a).not.toBe(b);
     expect(a).not.toBeNull();
     expect(b).not.toBeNull();
-    (a as { gridX: number }).gridX = -999;
+    a!.gridX = -999;
     const c = screenToGrid(35, 55, BASE_METRICS);
     expect(c).not.toBeNull();
-    expect((c as { gridX: number }).gridX).not.toBe(-999);
+    expect(c!.gridX).not.toBe(-999);
   });
 });

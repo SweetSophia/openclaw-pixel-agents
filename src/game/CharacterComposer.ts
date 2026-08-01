@@ -235,11 +235,11 @@ export function composeAll(
 
 // ── Default recipes for the agent roster ───────────────────
 
-// `Readonly<Record<...>>` prevents reassignment of the table (no `DELETE
-// recipes[k] = ...`), and `Readonly<CharacterRecipe>` prevents mutation of
-// any individual recipe (no `recipes.cybera.bodyIndex = ...`). The table is
-// effectively deep-immutable at the type level — `getRecipe` is the only
-// legitimate escape hatch and returns a fresh spread (issue #132).
+// `Readonly<Record<...>>` prevents reassignment of the table (no
+// `delete recipes[k]`, no `recipes[k] = ...`), and `Readonly<CharacterRecipe>`
+// prevents mutation of any individual recipe (no `recipes.cybera.bodyIndex = ...`).
+// The table is effectively deep-immutable at the type level — `getRecipe` is
+// the only legitimate escape hatch and returns a fresh spread (issue #132).
 export const DEFAULT_RECIPES: Readonly<Record<string, Readonly<CharacterRecipe>>> = {
   main:       { bodyIndex: 3, hairIndex: 0, outfitIndex: 2 },  // Shodan: darker skin, short hair, casual
   cybera:     { bodyIndex: 1, hairIndex: 2, outfitIndex: 0 },  // Cybera: lighter skin, longer hair, shirt

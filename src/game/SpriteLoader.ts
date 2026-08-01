@@ -32,21 +32,35 @@ import {
 } from './CharacterComposer';
 
 // ── Types ──────────────────────────────────────────────────
+//
+// Mutable builder types (internal-only, not exported). The loader code
+// mutates these freely during construction. The cache is declared in these
+// mutable types so the builder code can write to them.
+//
+// Public readonly view types (exported). The loader return types and the
+// GameEngine fields use these so consumers cannot mutate the returned asset
+// cache. `Readonly<T>` widens the readonly view structurally on return —
+// callers receive a frozen view, the cache retains the mutable builder type.
+//
+// issue #132: the live loader path (`loadCharacters` / `loadFurniture` /
+// `loadAllAssets`) is the only application path into the cache, so the
+// readonly contract must be enforced on those return types, not on a
+// dead-code getter.
 
-export interface SpriteFrame {
+interface SpriteFrame {
   canvas: HTMLCanvasElement;
   width: number;
   height: number;
 }
 
-export interface LoadedCharacter {
+interface LoadedCharacter {
   down: SpriteFrame[];
   up: SpriteFrame[];
   right: SpriteFrame[];
   left: SpriteFrame[]; // Pre-flipped for performance
 }
 
-export interface LoadedFurnitureItem {
+interface LoadedFurnitureItem {
   id: string;
   canvas: HTMLCanvasElement;
   width: number;
@@ -55,14 +69,52 @@ export interface LoadedFurnitureItem {
   footprintH: number;
 }
 
-export interface LoadedFloor {
+interface LoadedFloor {
   canvas: HTMLCanvasElement;
 }
 
-// ── Asset cache ────────────────────────────────────────────
+export interface ReadonlySpriteFrame {
+  readonly canvas: HTMLCanvasElement;
+  readonly width: number;
+  readonly height: number;
+}
 
-let cachedCharacters: LoadedCharacter[] = [];
-let cachedFloors: LoadedFloor[] = [];
+export interface ReadonlyLoadedCharacter {
+  readonly down: readonly ReadonlySpriteFrame[];
+  readonly up: readonly ReadonlySpriteFrame[];
+  readonly right: readonly ReadonlySpriteFrame[];
+  readonly left: readonly ReadonlySpriteFrame[]; // Pre-flipped for performance
+}
+
+export interface ReadonlyLoadedFurnitureItem {
+  readonly id: string;
+  readonly canvas: HTMLCanvasElement;
+  readonly width: number;
+  readonly height: number;
+  readonly footprintW: number;
+  readonly footprintH: number;
+}
+
+export interface ReadonlyLoadedFloor {
+  readonly canvas: HTMLCanvasElement;
+}
+
+export interface ReadonlyAssets {
+  readonly characters: readonly ReadonlyLoadedCharacter[];
+  readonly floors: readonly ReadonlyLoadedFloor[];
+  readonly furniture: ReadonlyMap<string, ReadonlyLoadedFurnitureItem>;
+}
+
+// ── Asset cache ────────────────────────────────────────────
+// The cache stores the readonly view types so consumers cannot mutate the
+// shared state. The builder code constructs fresh mutable locals and
+// assigns them to the cache; the cache itself is never mutated in place.
+// `cachedFurniture` remains a mutable `Map` because the loader uses
+// `.set()` to populate entries during the load sequence; the public
+// return type is the readonly view.
+
+let cachedCharacters: readonly ReadonlyLoadedCharacter[] = [];
+let cachedFloors: readonly ReadonlyLoadedFloor[] = [];
 const cachedFurniture: Map<string, LoadedFurnitureItem> = new Map();
 const cachedComposed: Map<string, ComposedCharacter> = new Map();
 
@@ -120,12 +172,17 @@ function createLeftFrames(rightFrames: SpriteFrame[]): SpriteFrame[] {
 /**
  * Load all 6 character sprite sheets from /assets/characters/char_0..5.png
  *
- * Returns array of LoadedCharacter objects with frames for each direction.
+ * Returns a readonly view of the cached characters. The cache is owned by
+ * SpriteLoader; consumers must not mutate the returned array or any of
+ * its elements (issue #132). `HTMLCanvasElement` references remain
+ * shared-mutable capabilities — draw calls and `getContext` are unaffected
+ * by the type-level contract; cloning canvases would impose allocation
+ * cost and is explicitly not done here.
  */
 export async function loadCharacters(
   basePath = '/assets/characters/',
   signal?: AbortSignal,
-): Promise<LoadedCharacter[]> {
+): Promise<readonly ReadonlyLoadedCharacter[]> {
   const characters: LoadedCharacter[] = [];
 
   for (let i = 0; i < 6; i++) {
@@ -165,11 +222,14 @@ export async function loadCharacters(
 
 /**
  * Load floor tiles from /assets/floors/floor_0..8.png
+ *
+ * Returns a readonly view of the cached floors. The cache is owned by
+ * SpriteLoader; consumers must not mutate the returned array (issue #132).
  */
 export async function loadFloors(
   basePath = '/assets/floors/',
   signal?: AbortSignal
-): Promise<LoadedFloor[]> {
+): Promise<readonly ReadonlyLoadedFloor[]> {
   const floors: LoadedFloor[] = [];
 
   for (let i = 0; i < 9; i++) {
@@ -222,11 +282,15 @@ function findLeafAsset(node: ManifestNode): LeafAsset | null {
 /**
  * Load furniture sprites from /assets/furniture/{TYPE}/
  * Reads manifest.json for each type to find sprite dimensions.
+ *
+ * Returns a readonly view of the cached furniture map. The cache is owned
+ * by SpriteLoader; consumers must not mutate the returned map or any of
+ * its values (issue #132).
  */
 export async function loadFurniture(
   basePath = '/assets/furniture/',
   signal?: AbortSignal,
-): Promise<Map<string, LoadedFurnitureItem>> {
+): Promise<ReadonlyMap<string, ReadonlyLoadedFurnitureItem>> {
   const furnitureTypes = [
     'BIN', 'BOOKSHELF', 'CACTUS', 'CLOCK', 'COFFEE', 'COFFEE_TABLE',
     'CUSHIONED_BENCH', 'CUSHIONED_CHAIR', 'DESK', 'DOUBLE_BOOKSHELF',
@@ -309,20 +373,20 @@ function withAssetFallback<T>(promise: Promise<T>, label: string, fallback: T): 
 /**
  * Load all assets in parallel. Tries the paperdoll compositor first;
  * falls back to legacy pre-composited sprites if source sheets are missing.
+ *
+ * Returns a readonly view of the asset bundle. The cache is owned by
+ * SpriteLoader; consumers must not mutate the returned structure
+ * (issue #132).
  */
-export async function loadAllAssets(signal?: AbortSignal): Promise<{
-  characters: LoadedCharacter[];
-  floors: LoadedFloor[];
-  furniture: Map<string, LoadedFurnitureItem>;
-}> {
+export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAssets> {
   // Load floors and furniture in parallel
   const [floors, furniture] = await Promise.all([
-    withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as LoadedFloor[]),
+    withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as readonly ReadonlyLoadedFloor[]),
     withAssetFallback(loadFurniture(undefined, signal), 'Furniture', cachedFurniture),
   ]);
 
   // Try paperdoll compositor
-  let characters: LoadedCharacter[] = [];
+  let characters: readonly ReadonlyLoadedCharacter[] = [];
   try {
     await loadSourceSheets();
     for (const prev of cachedComposed.values()) disposeComposed(prev);
@@ -343,11 +407,15 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<{
     console.log(`[SpriteLoader] Composed ${cachedComposed.size} characters from source sheets`);
   } catch (err) {
     console.warn('[SpriteLoader] Compositor failed, falling back to pre-composited sprites:', err);
-    characters = await loadCharacters(undefined, signal).catch(err2 => {
+    // `loadCharacters` returns a readonly view; spread into a mutable
+    // builder array for the cache. The cache is internal; the spread is
+    // one-time at the loader boundary.
+    const fallback = await loadCharacters(undefined, signal).catch(err2 => {
       if (err2.name === 'AbortError') throw err2;
       console.error('[SpriteLoader] Legacy character loading also failed:', err2);
-      return [] as LoadedCharacter[];
+      return [] as readonly ReadonlyLoadedCharacter[];
     });
+    characters = [...fallback];
   }
 
   cachedCharacters = characters;
@@ -398,7 +466,7 @@ const FRAME_RANGES: Record<AnimState, [number, number]> = {
  * Get the correct sprite frame canvas for a character's current state.
  */
 export function getSpriteFrame(
-  character: LoadedCharacter,
+  character: ReadonlyLoadedCharacter,
   state: AnimState,
   dir: Direction,
   frameTick: number,
@@ -416,7 +484,7 @@ export function getSpriteFrame(
  * SpriteLoader and is the single source of truth for asset lookups; treating
  * the return value as a frozen snapshot prevents cross-consumer aliasing of
  * shared mutable references (issue #132). */
-export function getCachedCharacters(): readonly LoadedCharacter[] {
+export function getCachedCharacters(): readonly ReadonlyLoadedCharacter[] {
   return cachedCharacters;
 }
 
@@ -424,7 +492,7 @@ export function getCachedCharacters(): readonly LoadedCharacter[] {
  * mutate the returned Map or any of its values. The cache is owned by
  * SpriteLoader; consumers that need to extend or filter should build their
  * own structure from the snapshot (issue #132). */
-export function getCachedFurniture(): ReadonlyMap<string, Readonly<LoadedFurnitureItem>> {
+export function getCachedFurniture(): ReadonlyMap<string, ReadonlyLoadedFurnitureItem> {
   return cachedFurniture;
 }
 
