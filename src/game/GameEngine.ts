@@ -10,9 +10,9 @@ import {
   loadAllAssets,
   loadCharacters,
   getSpriteFrame,
-  type LoadedCharacter,
-  type LoadedFloor,
-  type LoadedFurnitureItem,
+  type ReadonlyLoadedCharacter,
+  type ReadonlyLoadedFloor,
+  type ReadonlyLoadedFurnitureItem,
   type AnimState,
   type Direction,
 } from './SpriteLoader';
@@ -167,10 +167,10 @@ export class GameEngine {
   private assetsLoaded = false;
   private _renderDiagLogged = false;
   private _furnitureDiagLogged = false;
-  private characters_sprites: LoadedCharacter[] = [];
-  private characterSpriteOverrides: Map<string, LoadedCharacter> = new Map();
-  private floors: LoadedFloor[] = [];
-  private furniture: Map<string, LoadedFurnitureItem> = new Map();
+  private characters_sprites: readonly ReadonlyLoadedCharacter[] = [];
+  private characterSpriteOverrides: Map<string, ReadonlyLoadedCharacter> = new Map();
+  private floors: readonly ReadonlyLoadedFloor[] = [];
+  private furniture: ReadonlyMap<string, ReadonlyLoadedFurnitureItem> = new Map();
   private zoom: number;
 
   // Layout data
@@ -848,7 +848,7 @@ export class GameEngine {
     gridH: number,
     tileSize: number,
     hasFloor: boolean,
-    floors: LoadedFloor[],
+    floors: readonly ReadonlyLoadedFloor[],
   ) {
     if (hasFloor) {
       // Set once per call: the flag applies to the whole target context, so
@@ -1578,7 +1578,7 @@ export class GameEngine {
   // ── Public API ──────────────────────────────────────────
 
   /** Replace the sprite for a specific agent (e.g. after recipe change). */
-  setCharacterSprite(agentId: string, sprite: LoadedCharacter) {
+  setCharacterSprite(agentId: string, sprite: ReadonlyLoadedCharacter) {
     this.characterSpriteOverrides.set(agentId, sprite);
   }
 

@@ -4,17 +4,17 @@ export interface ClientPoint {
 }
 
 export interface ScreenRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
 }
 
 export interface CanvasMetrics {
-  rect: ScreenRect;
-  canvasWidth: number;
-  canvasHeight: number;
-  tileSize: number;
+  readonly rect: ScreenRect;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly tileSize: number;
 }
 
 export interface GridPoint {
@@ -23,10 +23,9 @@ export interface GridPoint {
 }
 
 /** Map client coordinates into the canvas grid, accounting for object-fit bars. */
-// `Readonly<CanvasMetrics>` enforces top-level immutability at compile time:
-// screenToGrid cannot reassign metrics.rect, .canvasWidth, etc. Nested fields
-// (e.g. metrics.rect.left) remain mutable under shallow Readonly — deep-readonly
-// typing (a DeepReadonly type) is tracked in #132.
+// `Readonly<CanvasMetrics>` widens the readonly view structurally — consumed
+// as a guarantee that no consumer can reassign `metrics.rect`, `canvasWidth`,
+// `canvasHeight`, `tileSize`, or any nested field on `ScreenRect` (issue #132).
 export function screenToGrid(
   clientX: number,
   clientY: number,

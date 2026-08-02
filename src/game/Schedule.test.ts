@@ -63,12 +63,20 @@ describe('Schedule.getDayPhase', () => {
   });
 });
 
-describe('Schedule pure-module contract (issue #82)', () => {
-  it('DAY_PHASES is a shallow-readonly table (compile-time contract)', () => {
-    // Compile-time: DAY_PHASES must be a readonly array. If it is ever
-    // reverted to a mutable DayPhase[], this assertion fails `tsc --noEmit`
+describe('Schedule pure-module contract (issue #82 + #132)', () => {
+  it('DAY_PHASES is a deep-readonly table (compile-time contract)', () => {
+    // Compile-time: DAY_PHASES must be a readonly array of records whose
+    // element fields are themselves readonly. The assertion compares against
+    // an inline literal type, so reverting ANY `readonly` modifier on the
+    // DayPhase fields, or on the array itself, fails `tsc --noEmit`
     // (test files are typechecked via tsconfig.test.json — see #129).
-    expectTypeOf(DAY_PHASES).toEqualTypeOf<readonly DayPhase[]>();
+    expectTypeOf(DAY_PHASES).toEqualTypeOf<
+      readonly {
+        readonly overlay: string;
+        readonly light: number;
+        readonly label: string;
+      }[]
+    >();
     // Runtime: the table is the fixed 7-phase schedule.
     expect(DAY_PHASES).toHaveLength(7);
     expect(DAY_PHASES[0].label).toBe('Morning');
