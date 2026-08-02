@@ -135,6 +135,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
                 </button>
                 <button
                   className="tag-edit-btn"
+                  data-focus-return={`customizer-${agent.id}`}
                   onClick={() => onOpenCustomizer(agent)}
                   title="Customize appearance"
                   aria-label={`Customize appearance for ${agent.name}`}
@@ -158,6 +159,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
               <div className="card-actions">
                 <button
                   className="tag-edit-btn"
+                  data-focus-return={`customizer-${agent.id}`}
                   onClick={() => onOpenCustomizer(agent)}
                   title="Customize appearance"
                   aria-label={`Customize appearance for ${agent.name}`}

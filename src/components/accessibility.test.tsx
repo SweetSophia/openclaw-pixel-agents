@@ -1,8 +1,10 @@
 import React, { StrictMode, useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentState, AgentTag, CharacterRecipe } from '../../shared/types';
+import { AgentDetailPanel } from './AgentDetailPanel';
 import { AgentSidebar } from './AgentSidebar';
 import { CharacterCustomizer } from './CharacterCustomizer';
 import { SoundControls } from './SoundControls';
@@ -184,10 +186,53 @@ function SidebarTagBoundaryHarness() {
   );
 }
 
+function AgentDetailsHarness() {
+  const [selectedAgent, setSelectedAgent] = useState<AgentState | null>(null);
+  return (
+    <>
+      <AgentSidebar
+        agents={[agent]}
+        onToggle={vi.fn()}
+        onToggleAll={vi.fn()}
+        onSelectAgent={agentId => setSelectedAgent(agentId === agent.id ? agent : null)}
+      />
+      {selectedAgent && (
+        <AgentDetailPanel
+          agent={selectedAgent}
+          onClose={() => setSelectedAgent(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function SidebarCustomizerBoundaryHarness() {
+  const [agents, setAgents] = useState([agent]);
+  return (
+    <>
+      <button
+        onClick={() => setAgents(current => current.map(item => ({
+          ...item,
+          tags: item.tags?.length ? [] : ['coding'],
+        })))}
+      >
+        Toggle live tags
+      </button>
+      <AgentSidebar
+        agents={agents}
+        onToggle={vi.fn()}
+        onToggleAll={vi.fn()}
+        onUpdateRecipe={async () => {}}
+      />
+    </>
+  );
+}
+
 function expectModalContract(
   triggerName: string,
   dialogName: string,
-  cancelName: string,
+  getInitialFocus: () => HTMLElement,
+  initialFocusOutsideTabOrder = false,
 ) {
   const trigger = screen.getByRole('button', { name: triggerName });
   // Testing Library's low-level fireEvent.click does not perform the browser's
@@ -197,20 +242,26 @@ function expectModalContract(
   fireEvent.click(trigger);
 
   const dialog = screen.getByRole('dialog', { name: dialogName });
-  const cancel = screen.getByRole('button', { name: cancelName });
-  expect(cancel).toHaveFocus();
+  const initialFocus = getInitialFocus();
+  expect(initialFocus).toHaveFocus();
 
   const appRoot = trigger.closest('div')!;
   expect(appRoot).toHaveAttribute('inert');
   expect(document.body.contains(dialog)).toBe(true);
   expect(appRoot.contains(dialog)).toBe(false);
 
-  trigger.focus();
-  expect(cancel).toHaveFocus();
-
   const controls = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
   const first = controls[0];
   const last = controls[controls.length - 1];
+  if (initialFocusOutsideTabOrder) {
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true, bubbles: true });
+    expect(last).toHaveFocus();
+    initialFocus.focus();
+  }
+
+  trigger.focus();
+  expect(initialFocus).toHaveFocus();
+
   last.focus();
   fireEvent.keyDown(document, { key: 'Tab', bubbles: true });
   expect(first).toHaveFocus();
@@ -230,6 +281,37 @@ function expectModalContract(
 }
 
 describe('shared modal focus contract (issue #105)', () => {
+  it('opens agent details from Enter and Space, contains focus, and restores the trigger', async () => {
+    const user = userEvent.setup();
+    render(<AgentDetailsHarness />);
+
+    const trigger = screen.getByRole('button', { name: 'Open details for Cybera' });
+    const appRoot = trigger.closest('.agent-sidebar')!.parentElement!;
+    trigger.focus();
+    await user.keyboard('[Enter]');
+
+    const dialog = screen.getByRole('dialog', { name: 'Cybera' });
+    const close = screen.getByRole('button', { name: 'Close details for Cybera' });
+    expect(close).toHaveFocus();
+    expect(appRoot).toHaveAttribute('inert');
+    expect(document.body.contains(dialog)).toBe(true);
+    expect(appRoot.contains(dialog)).toBe(false);
+
+    trigger.focus();
+    expect(close).toHaveFocus();
+    await user.keyboard('[Tab]');
+    expect(close).toHaveFocus();
+    await user.keyboard('[Escape]');
+    expect(screen.queryByRole('dialog', { name: 'Cybera' })).toBeNull();
+    expect(trigger).toHaveFocus();
+    expect(appRoot).not.toHaveAttribute('inert');
+
+    await user.keyboard('[Space]');
+    expect(screen.getByRole('dialog', { name: 'Cybera' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Close details for Cybera' }));
+    expect(trigger).toHaveFocus();
+  });
+
   it('serializes the sidebar-owned tag and character dialogs', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     render(
@@ -255,7 +337,11 @@ describe('shared modal focus contract (issue #105)', () => {
 
   it('contains TagEditor focus, makes the background inert, and restores its trigger', () => {
     render(<TagEditorHarness />);
-    expectModalContract('Open tag editor', 'Tags for Cybera', 'Cancel');
+    expectModalContract(
+      'Open tag editor',
+      'Tags for Cybera',
+      () => screen.getByRole('button', { name: 'Cancel' }),
+    );
   });
 
   it('falls back to an enabled background control when the invoking control becomes disabled', () => {
@@ -272,7 +358,12 @@ describe('shared modal focus contract (issue #105)', () => {
   it('contains CharacterCustomizer focus, makes the background inert, and restores its trigger', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     render(<CharacterCustomizerHarness />);
-    expectModalContract('Open character customizer', 'Customize Cybera', 'Cancel');
+    expectModalContract(
+      'Open character customizer',
+      'Customize Cybera',
+      () => screen.getByRole('heading', { name: 'Customize Cybera' }),
+      true,
+    );
   });
 
   it('re-anchors TagEditor focus when the focused Save button becomes disabled', async () => {
@@ -323,5 +414,21 @@ describe('shared modal focus contract (issue #105)', () => {
       expect(screen.queryByRole('dialog', { name: 'Tags for Cybera' })).toBeNull();
       expect(screen.getByRole('button', { name: 'Add tags for Cybera' })).toHaveFocus();
     });
+  });
+
+  it('restores the replacement customizer trigger after live tags swap its branch', () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    render(<SidebarCustomizerBoundaryHarness />);
+
+    const customizer = screen.getByRole('button', { name: 'Customize appearance for Cybera' });
+    customizer.focus();
+    fireEvent.click(customizer);
+    expect(screen.getByRole('dialog', { name: 'Customize Cybera' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle live tags' }));
+    fireEvent.keyDown(document, { key: 'Escape', bubbles: true });
+
+    expect(screen.queryByRole('dialog', { name: 'Customize Cybera' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Customize appearance for Cybera' })).toHaveFocus();
   });
 });

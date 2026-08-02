@@ -40,9 +40,9 @@ export const CharacterCustomizer: React.FC<Props> = ({
   const [error, setError] = useState<string | null>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
-  useModalFocus({ overlayRef, initialFocusRef: cancelRef, onClose });
+  useModalFocus({ overlayRef, initialFocusRef: headingRef, onClose });
 
   // Live preview: render the composed character on a canvas
   useEffect(() => {
@@ -145,7 +145,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
         aria-labelledby={headingId}
         onClick={e => e.stopPropagation()}
       >
-        <h3 id={headingId}> Customize {agentName}</h3>
+        <h3 ref={headingRef} id={headingId} tabIndex={-1}>Customize {agentName}</h3>
 
         {/* Live preview */}
         <div className="customizer-preview">
@@ -235,7 +235,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
           <button className="customizer-save" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Apply'}
           </button>
-          <button ref={cancelRef} className="customizer-cancel" onClick={onClose} disabled={saving}>
+          <button className="customizer-cancel" onClick={onClose} disabled={saving}>
             Cancel
           </button>
         </div>

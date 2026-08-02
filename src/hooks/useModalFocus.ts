@@ -85,10 +85,19 @@ export function useModalFocus({ overlayRef, initialFocusRef, onClose }: ModalFoc
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       const active = document.activeElement;
-      if (event.shiftKey && (active === first || !overlay.contains(active))) {
+      const activeIsTabbable = active instanceof HTMLElement && focusable.includes(active);
+      if (event.shiftKey && (
+        active === first
+        || !overlay.contains(active)
+        || !activeIsTabbable
+      )) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && (active === last || !overlay.contains(active))) {
+      } else if (!event.shiftKey && (
+        active === last
+        || !overlay.contains(active)
+        || !activeIsTabbable
+      )) {
         event.preventDefault();
         first.focus();
       }
