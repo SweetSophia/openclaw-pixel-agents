@@ -1,14 +1,43 @@
 [Unit]
 Description=Push OpenClaw session data to pixel-agents server
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
-User=niya
-WorkingDirectory=/path/to/openclaw-pixel-agents
-EnvironmentFile=/path/to/openclaw-pixel-agents/collector/.env.collector
-ExecStart=/usr/bin/node collector/push-pixel-agents.mjs
-Environment=PATH=/home/niya/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
-Environment=HOME=/home/niya
+# Replace this account and these installation paths before installing the unit.
+# The account must be the non-root user that owns the OpenClaw state queried by
+# `openclaw sessions`; systemd derives HOME from that account.
+User=openclaw
+WorkingDirectory=/opt/openclaw-pixel-agents
+EnvironmentFile=/etc/openclaw-pixel-agents/collector.env
+ExecStart=/usr/bin/node /opt/openclaw-pixel-agents/collector/push-pixel-agents.mjs
+# Keep this minimal and reviewed. Its first entry must contain the Node binary
+# selected for ExecStart so npm launchers using `#!/usr/bin/env node` work.
+Environment=PATH=/usr/bin:/bin
+
+# The collector bounds the CLI and HTTP operations to 10 seconds each. Give
+# their combined normal failure path 5 seconds of headroom, then bound the
+# termination phase too so the complete outer recovery limit is 30 seconds.
+TimeoutStartSec=25s
+TimeoutStopSec=5s
+KillMode=control-group
+SendSIGKILL=true
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+UMask=0077
 StandardOutput=journal
 StandardError=journal

@@ -124,11 +124,12 @@ Just run it on the same machine as OpenClaw. No extra configuration needed.
 
 1. Set `DATA_SOURCE=ingest` and `INGEST_API_TOKEN=<secret>` on the pixel-agents server
 2. On the OpenClaw host, copy `collector/.env.collector.example` to `.env.collector` and configure:
-   - `PIXEL_AGENTS_URL` — URL of the pixel-agents server
+   - `PIXEL_AGENTS_URL` — HTTPS URL of the pixel-agents server (loopback HTTP is allowed for local development)
    - `PIXEL_INGEST_TOKEN` — same secret as `INGEST_API_TOKEN`
+   - `OPENCLAW_BIN` — absolute path returned by `command -v openclaw`
 3. Install the systemd timer from `collector/systemd/`:
    ```bash
-   # Edit the .service file to match your install path
+   # Edit User and all installation paths in the .service file first
    sudo cp collector/systemd/openclaw-pixel-collector.* /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now openclaw-pixel-collector.timer
