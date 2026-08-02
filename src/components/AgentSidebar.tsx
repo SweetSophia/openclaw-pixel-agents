@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import type { AgentState, AgentActivity, AgentTag, CharacterRecipe } from '../../shared/types';
 import { TAG_COLORS } from '../../shared/types';
 import { TagEditor } from './TagEditor';
@@ -177,6 +177,14 @@ export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onT
   const enabledCount = agents.filter(a => a.pixelEnabled).length;
   const [tagEditorAgent, setTagEditorAgent] = useState<AgentState | null>(null);
   const [customizerAgent, setCustomizerAgent] = useState<AgentState | null>(null);
+  const openTagEditor = useCallback((agent: AgentState) => {
+    setCustomizerAgent(null);
+    setTagEditorAgent(agent);
+  }, []);
+  const openCustomizer = useCallback((agent: AgentState) => {
+    setTagEditorAgent(null);
+    setCustomizerAgent(agent);
+  }, []);
 
   const agentCards = useMemo(() => agents.map(agent => (
     <AgentCard
@@ -184,10 +192,10 @@ export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onT
       agent={agent}
       onToggle={onToggle}
       onSelectAgent={onSelectAgent}
-      onOpenTagEditor={setTagEditorAgent}
-      onOpenCustomizer={setCustomizerAgent}
+      onOpenTagEditor={openTagEditor}
+      onOpenCustomizer={openCustomizer}
     />
-  )), [agents, onToggle, onSelectAgent]);
+  )), [agents, onToggle, onSelectAgent, openTagEditor, openCustomizer]);
 
   return (
     <aside className={`agent-sidebar ${open ? 'open' : ''}`} aria-label="Agents">

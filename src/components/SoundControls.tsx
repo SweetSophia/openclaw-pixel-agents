@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import { sfx } from '../audio/SoundFX';
 import './SoundControls.css';
 
@@ -7,6 +7,7 @@ export const SoundControls: React.FC = () => {
   const [volume, setVolume] = useState(sfx.volume);
   const [ambience, setAmbience] = useState(sfx.ambienceOn);
   const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
   // Unlock AudioContext on first user interaction
   useEffect(() => {
     const unlock = () => {
@@ -57,13 +58,13 @@ export const SoundControls: React.FC = () => {
         title="Sound settings"
         aria-label="Sound settings"
         aria-expanded={expanded}
-        aria-controls="sound-settings-panel"
+        aria-controls={panelId}
       >
         ⚙️
       </button>
 
       {expanded && (
-        <div className="sound-panel" id="sound-settings-panel">
+        <div className="sound-panel" id={panelId}>
           <label className="sound-slider-row">
             <span>Volume</span>
             <input

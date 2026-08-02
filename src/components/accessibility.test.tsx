@@ -73,11 +73,12 @@ describe('SoundControls disclosure relationship (issue #105)', () => {
     render(<SoundControls />);
     const settings = screen.getByRole('button', { name: 'Sound settings' });
     expect(settings).toHaveAttribute('aria-expanded', 'false');
-    expect(settings).toHaveAttribute('aria-controls', 'sound-settings-panel');
+    const panelId = settings.getAttribute('aria-controls');
+    expect(panelId).toBeTruthy();
 
     fireEvent.click(settings);
     expect(settings).toHaveAttribute('aria-expanded', 'true');
-    expect(document.getElementById('sound-settings-panel')).toBeTruthy();
+    expect(document.getElementById(panelId!)).toBeTruthy();
   });
 
   it('reinstalls the one-shot unlock listener during a StrictMode effect replay', () => {
@@ -229,6 +230,29 @@ function expectModalContract(
 }
 
 describe('shared modal focus contract (issue #105)', () => {
+  it('serializes the sidebar-owned tag and character dialogs', () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    render(
+      <AgentSidebar
+        agents={[agent]}
+        onToggle={vi.fn()}
+        onToggleAll={vi.fn()}
+        onUpdateTags={async () => {}}
+        onUpdateRecipe={async () => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add tags for Cybera' }));
+    expect(screen.getByRole('dialog', { name: 'Tags for Cybera' })).toBeTruthy();
+
+    const customizer = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Customize appearance for Cybera"]',
+    )!;
+    fireEvent.click(customizer);
+    expect(screen.queryByRole('dialog', { name: 'Tags for Cybera' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Customize Cybera' })).toBeTruthy();
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+  });
+
   it('contains TagEditor focus, makes the background inert, and restores its trigger', () => {
     render(<TagEditorHarness />);
     expectModalContract('Open tag editor', 'Tags for Cybera', 'Cancel');

@@ -35,7 +35,9 @@ function isDisabledFormControl(element: Element | null): boolean {
  * the hook make every background body child inert without hiding or disabling
  * the dialog itself. Focus enters the dialog on mount, wraps on Tab, is pulled
  * back after an unexpected escape, and returns to the invoking control when
- * the dialog unmounts (issue #105).
+ * the dialog unmounts. Callers must serialize modal entry; this hook does not
+ * manage a modal stack. A trigger's `data-focus-return` identity is sampled at
+ * mount and must remain stable for that open lifecycle (issue #105).
  */
 export function useModalFocus({ overlayRef, initialFocusRef, onClose }: ModalFocusOptions) {
   const onCloseRef = useRef(onClose);
