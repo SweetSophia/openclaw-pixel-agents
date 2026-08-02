@@ -99,6 +99,7 @@ function TagEditorHarness() {
   return (
     <>
       <button onClick={() => setOpen(true)}>Open tag editor</button>
+      <button>Secondary target</button>
       {open && (
         <TagEditor
           agentId="cybera"
@@ -231,6 +232,17 @@ describe('shared modal focus contract (issue #105)', () => {
   it('contains TagEditor focus, makes the background inert, and restores its trigger', () => {
     render(<TagEditorHarness />);
     expectModalContract('Open tag editor', 'Tags for Cybera', 'Cancel');
+  });
+
+  it('falls back to an enabled background control when the invoking control becomes disabled', () => {
+    render(<TagEditorHarness />);
+    const trigger = screen.getByRole<HTMLButtonElement>('button', { name: 'Open tag editor' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    trigger.disabled = true;
+    fireEvent.keyDown(document, { key: 'Escape', bubbles: true });
+    expect(trigger).not.toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Secondary target' })).toHaveFocus();
   });
 
   it('contains CharacterCustomizer focus, makes the background inert, and restores its trigger', () => {

@@ -19,6 +19,15 @@ function getFocusableElements(overlay: HTMLElement): HTMLElement[] {
   return Array.from(overlay.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
 }
 
+function isDisabledFormControl(element: Element | null): boolean {
+  return (
+    element instanceof HTMLButtonElement
+    || element instanceof HTMLInputElement
+    || element instanceof HTMLSelectElement
+    || element instanceof HTMLTextAreaElement
+  ) && element.disabled;
+}
+
 /**
  * Enforces the shared keyboard contract for simple modal dialogs.
  *
@@ -91,13 +100,7 @@ export function useModalFocus({ overlayRef, initialFocusRef, onClose }: ModalFoc
     document.addEventListener('focusin', onFocusIn);
     const focusabilityObserver = new MutationObserver(() => {
       const active = document.activeElement;
-      const activeIsDisabled = (
-        active instanceof HTMLButtonElement
-        || active instanceof HTMLInputElement
-        || active instanceof HTMLSelectElement
-        || active instanceof HTMLTextAreaElement
-      ) && active.disabled;
-      if (!active || !overlay.contains(active) || activeIsDisabled) focusInside();
+      if (!active || !overlay.contains(active) || isDisabledFormControl(active)) focusInside();
     });
     focusabilityObserver.observe(overlay, {
       subtree: true,
@@ -113,14 +116,20 @@ export function useModalFocus({ overlayRef, initialFocusRef, onClose }: ModalFoc
       for (const { element, wasInert } of background) {
         if (!wasInert) element.removeAttribute('inert');
       }
-      if (previousFocus?.isConnected) {
-        previousFocus.focus();
-      } else if (focusReturnId) {
-        const replacement = Array.from(
+      const replacement = focusReturnId
+        ? Array.from(
           document.querySelectorAll<HTMLElement>('[data-focus-return]'),
-        ).find(element => element.dataset.focusReturn === focusReturnId);
-        replacement?.focus();
-      }
+        ).find(element => (
+          element.dataset.focusReturn === focusReturnId && !isDisabledFormControl(element)
+        ))
+        : null;
+      const fallback = Array.from(
+        document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).find(element => !overlay.contains(element));
+      const restoreTarget = previousFocus?.isConnected && !isDisabledFormControl(previousFocus)
+        ? previousFocus
+        : replacement ?? fallback;
+      restoreTarget?.focus();
     };
   }, [initialFocusRef, overlayRef]);
 }
