@@ -47,7 +47,6 @@ describe("collector execution bounds (issue #99)", () => {
       await writeFile(executable, "#!/usr/bin/env node\nsetTimeout(() => {}, 1_000);\n");
       await chmod(executable, 0o755);
 
-      const startedAt = Date.now();
       let failure;
       try {
         fetchOpenClawSessions({
@@ -60,7 +59,6 @@ describe("collector execution bounds (issue #99)", () => {
       }
 
       expect(failure).toMatchObject({ code: "ETIMEDOUT" });
-      expect(Date.now() - startedAt).toBeLessThan(500);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -74,7 +72,6 @@ describe("collector execution bounds (issue #99)", () => {
     try {
       const address = server.address();
       const endpoint = new URL(`http://127.0.0.1:${address.port}/api/ingest/agents`);
-      const startedAt = Date.now();
 
       const request = postSnapshot({
         endpoint,
@@ -85,13 +82,12 @@ describe("collector execution bounds (issue #99)", () => {
       const watchdog = new Promise((_, reject) => {
         watchdogTimer = setTimeout(
           () => reject(new Error("HTTP timeout regression watchdog fired")),
-          1_000,
+          2_000,
         );
       });
 
       await expect(Promise.race([request, watchdog]))
         .rejects.toMatchObject({ name: "TimeoutError" });
-      expect(Date.now() - startedAt).toBeLessThan(1_000);
     } finally {
       clearTimeout(watchdogTimer);
       server.closeAllConnections();

@@ -23,6 +23,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -40,14 +41,7 @@ function parseArgs(argv) {
 function isLoopbackHostname(hostname) {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (normalized === "localhost" || normalized === "::1") return true;
-
-  const octets = normalized.split(".");
-  if (octets.length !== 4 || octets.some((octet) => !/^\d{1,3}$/.test(octet))) {
-    return false;
-  }
-
-  const numbers = octets.map(Number);
-  return numbers[0] === 127 && numbers.every((octet) => octet <= 255);
+  return isIP(normalized) === 4 && Number(normalized.split(".", 1)[0]) === 127;
 }
 
 export function getIngestEndpoint(pixelUrl) {
