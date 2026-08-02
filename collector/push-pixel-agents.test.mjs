@@ -119,6 +119,32 @@ describe("collector execution bounds (issue #99)", () => {
     ]]);
   });
 
+  it("keeps session metadata out of dry-run output", async () => {
+    const output = [];
+    await runCollector({
+      argv: ["--dry-run"],
+      env: {
+        PIXEL_AGENTS_URL: "http://localhost:3000",
+        PIXEL_INGEST_TOKEN: "test-token",
+        OPENCLAW_BIN: "/opt/openclaw/bin/openclaw",
+      },
+      execFile: () => JSON.stringify({
+        sessions: [{ sessionId: "private-session-metadata" }],
+      }),
+      fetchImpl: () => {
+        throw new Error("dry-run must not send an HTTP request");
+      },
+      stdout: (...parts) => output.push(parts.join(" ")),
+      stderr: () => {},
+    });
+
+    expect(output).toEqual([
+      "[dry-run] Would POST to: http://localhost:3000/api/ingest/agents",
+      "[dry-run] Payload sessions: 1",
+    ]);
+    expect(JSON.stringify(output)).not.toContain("private-session-metadata");
+  });
+
   it("rejects a PATH-resolved OpenClaw executable", async () => {
     await expect(runCollector({
       argv: ["--dry-run"],

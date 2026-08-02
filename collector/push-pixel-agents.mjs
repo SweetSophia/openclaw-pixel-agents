@@ -155,7 +155,6 @@ export async function runCollector({
   if (dryRun) {
     stdout("[dry-run] Would POST to:", ingestEndpoint.href);
     stdout("[dry-run] Payload sessions:", sessions.length);
-    stdout(JSON.stringify(payload, null, 2));
     return;
   }
 
