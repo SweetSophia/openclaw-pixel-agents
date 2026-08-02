@@ -7,7 +7,7 @@ The collector reads live OpenClaw sessions on the OpenClaw host and sends them t
 - A Node.js version allowed by the repository's `package.json#engines`
 - A non-root OS account that can read the required OpenClaw state
 - The absolute paths returned by `command -v node` and `command -v openclaw`
-- HTTPS access to the pixel-agents server; plain HTTP is accepted only for `localhost`, `127.0.0.0/8`, and `::1`
+- HTTPS access to the pixel-agents server; plain HTTP is accepted only for `localhost`, `127.0.0.0/8`, and `::1`. Ingest redirects are rejected, so configure the final server URL directly.
 
 ## Configure the collector
 

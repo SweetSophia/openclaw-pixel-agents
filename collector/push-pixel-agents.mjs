@@ -25,7 +25,6 @@
 import { execFileSync } from "node:child_process";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-import { pathToFileURL } from "node:url";
 
 export const OPENCLAW_TIMEOUT_MS = 10_000;
 export const INGEST_TIMEOUT_MS = 10_000;
@@ -70,9 +69,13 @@ export function getIngestEndpoint(pixelUrl) {
 export function fetchOpenClawSessions({
   openclawBin,
   activeMinutes,
+  env = process.env,
   execFile = execFileSync,
   timeoutMs = OPENCLAW_TIMEOUT_MS,
 }) {
+  const childEnv = { ...env };
+  delete childEnv.PIXEL_INGEST_TOKEN;
+
   const raw = execFile(openclawBin, [
     "sessions",
     "--all-agents",
@@ -83,10 +86,14 @@ export function fetchOpenClawSessions({
     maxBuffer: 10 * 1024 * 1024,
     timeout: timeoutMs,
     killSignal: "SIGKILL",
+    env: childEnv,
   });
 
   const data = JSON.parse(raw);
-  return data.sessions || [];
+  if (!Array.isArray(data?.sessions)) {
+    throw new Error("OpenClaw sessions JSON must contain a sessions array");
+  }
+  return data.sessions;
 }
 
 export async function postSnapshot({
@@ -104,9 +111,16 @@ export async function postSnapshot({
     },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(timeoutMs),
+    redirect: "error",
   });
 
-  const result = await response.json().catch(() => ({}));
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    if (response.ok) throw error;
+    result = {};
+  }
   if (!response.ok) {
     throw new Error(`Ingest failed (${response.status}): ${JSON.stringify(result)}`);
   }
@@ -142,6 +156,7 @@ export async function runCollector({
   const sessions = fetchOpenClawSessions({
     openclawBin,
     activeMinutes,
+    env,
     execFile,
   });
 
@@ -168,7 +183,7 @@ export async function runCollector({
   stdout(`Pixel agents ingest OK: ${result.agents} agents from ${result.received} sessions`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (import.meta.main) {
   runCollector().catch((error) => {
     console.error("Pixel agents collector failed:", error.message);
     process.exitCode = 1;
