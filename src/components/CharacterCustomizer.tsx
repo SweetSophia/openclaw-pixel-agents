@@ -6,7 +6,9 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import type { CharacterRecipe } from '../../shared/types';
+import { useModalFocus } from '../hooks/useModalFocus';
 import './CharacterCustomizer.css';
 
 interface Props {
@@ -37,6 +39,10 @@ export const CharacterCustomizer: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useModalFocus({ overlayRef, initialFocusRef: cancelRef, onClose });
 
   // Live preview: render the composed character on a canvas
   useEffect(() => {
@@ -128,17 +134,10 @@ export const CharacterCustomizer: React.FC<Props> = ({
     }
   }, [agentId, recipe, onUpdateRecipe, onClose]);
 
-  // Escape key
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
-
   const headingId = `customizer-heading-${agentId}`;
 
-  return (
-    <div className="customizer-overlay" onClick={onClose}>
+  return createPortal(
+    <div className="customizer-overlay" onClick={onClose} ref={overlayRef} tabIndex={-1}>
       <div
         className="customizer"
         role="dialog"
@@ -236,12 +235,13 @@ export const CharacterCustomizer: React.FC<Props> = ({
           <button className="customizer-save" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Apply'}
           </button>
-          <button className="customizer-cancel" onClick={onClose} disabled={saving}>
+          <button ref={cancelRef} className="customizer-cancel" onClick={onClose} disabled={saving}>
             Cancel
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

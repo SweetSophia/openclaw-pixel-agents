@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { sfx } from '../audio/SoundFX';
 import './SoundControls.css';
 
@@ -7,13 +7,8 @@ export const SoundControls: React.FC = () => {
   const [volume, setVolume] = useState(sfx.volume);
   const [ambience, setAmbience] = useState(sfx.ambienceOn);
   const [expanded, setExpanded] = useState(false);
-  const initRef = useRef(false);
-
   // Unlock AudioContext on first user interaction
   useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
-
     const unlock = () => {
       sfx.click(); // triggers ensureCtx → resume
       document.removeEventListener('click', unlock);
@@ -21,6 +16,10 @@ export const SoundControls: React.FC = () => {
     };
     document.addEventListener('click', unlock, { once: true });
     document.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+    };
   }, []);
 
   const toggleMute = () => {
@@ -58,12 +57,13 @@ export const SoundControls: React.FC = () => {
         title="Sound settings"
         aria-label="Sound settings"
         aria-expanded={expanded}
+        aria-controls="sound-settings-panel"
       >
         ⚙️
       </button>
 
       {expanded && (
-        <div className="sound-panel">
+        <div className="sound-panel" id="sound-settings-panel">
           <label className="sound-slider-row">
             <span>Volume</span>
             <input
