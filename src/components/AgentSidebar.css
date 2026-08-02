@@ -81,6 +81,25 @@
   flex-shrink: 0;
 }
 
+.agent-card.has-details { cursor: pointer; }
+
+/* Native button owns the card's primary action while the visible controls
+ * remain sibling buttons above it. This preserves valid HTML and gives Enter /
+ * Space behavior without duplicating browser keyboard semantics (issue #105). */
+.agent-details-button {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.agent-details-button:focus-visible {
+  outline: 2px solid var(--acc-cyan);
+  outline-offset: -3px;
+}
+
 /* Glow effect underneath active cards */
 .agent-card.active {
   border-color: var(--acc-green);
@@ -95,10 +114,15 @@
 }
 
 .agent-card-inner {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
   display: flex;
   gap: 12px;
   align-items: flex-start;
 }
+
+.agent-card-inner button { pointer-events: auto; }
 
 .agent-portrait-wrapper {
   flex-shrink: 0;

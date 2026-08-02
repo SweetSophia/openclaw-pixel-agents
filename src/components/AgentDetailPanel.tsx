@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { AgentState, AgentActivity, SubAgentInfo } from '../../shared/types';
+import { useModalFocus } from '../hooks/useModalFocus';
 import './AgentDetailPanel.css';
 
 interface Props {
-  agent: AgentState | null;
+  agent: AgentState;
   onClose: () => void;
 }
 
@@ -30,7 +32,11 @@ const activityColors: Record<AgentActivity, string> = {
 };
 
 export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
-  if (!agent) return null;
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const headingId = useId();
+
+  useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
 
   const lastActivityDate = agent.lastActivity
     ? new Date(agent.lastActivity).toLocaleTimeString()
@@ -40,10 +46,24 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
     ? Math.round((agent.tokens.used / agent.tokens.limit) * 100)
     : null;
 
-  return (
-    <div className="detail-overlay" onClick={onClose}>
-      <div className="detail-panel" onClick={e => e.stopPropagation()}>
-        <button className="detail-close" onClick={onClose}>✕</button>
+  return createPortal(
+    <div className="detail-overlay" onClick={onClose} ref={overlayRef} tabIndex={-1}>
+      <div
+        className="detail-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        onClick={e => e.stopPropagation()}
+      >
+        <button
+          ref={closeRef}
+          type="button"
+          className="detail-close"
+          aria-label={`Close details for ${agent.name}`}
+          onClick={onClose}
+        >
+          ✕
+        </button>
 
         {/* Header */}
         <div className="detail-header">
@@ -54,7 +74,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
             {agent.name.charAt(0)}
           </div>
           <div className="detail-title">
-            <h2>{agent.name}</h2>
+            <h2 id={headingId}>{agent.name}</h2>
             <span className="detail-id">{agent.id}</span>
           </div>
         </div>
@@ -150,7 +170,8 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

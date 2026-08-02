@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import type { AgentState, AgentActivity, AgentTag, CharacterRecipe } from '../../shared/types';
 import { TAG_COLORS } from '../../shared/types';
 import { TagEditor } from './TagEditor';
@@ -57,7 +57,15 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
       : 'agent-card inactive';
 
   return (
-    <div className={cardClass} onClick={() => onSelectAgent?.(agent.id)} style={{ cursor: onSelectAgent ? 'pointer' : 'default' }}>
+    <div className={`${cardClass}${onSelectAgent ? ' has-details' : ''}`}>
+      {onSelectAgent && (
+        <button
+          type="button"
+          className="agent-details-button"
+          aria-label={`Open details for ${agent.name}`}
+          onClick={() => onSelectAgent(agent.id)}
+        />
+      )}
       <div className="agent-card-inner">
         <div className="agent-portrait-wrapper">
           <AgentPortrait recipe={agent.recipe} size={44} />
@@ -67,7 +75,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
             <span className="agent-name">{agent.name}</span>
             <button
               className={`toggle-btn ${agent.pixelEnabled ? 'on' : 'off'}`}
-              onClick={(e) => { e.stopPropagation(); onToggle(agent.id, !agent.pixelEnabled); }}
+              onClick={() => onToggle(agent.id, !agent.pixelEnabled)}
               title={agent.pixelEnabled ? 'Hide from office' : 'Show in office'}
               aria-label={agent.pixelEnabled ? `Hide ${agent.name} from office` : `Show ${agent.name} in office`}
               aria-pressed={agent.pixelEnabled}
@@ -118,7 +126,8 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
               <div className="card-actions">
                 <button
                   className="tag-edit-btn"
-                  onClick={(e) => { e.stopPropagation(); onOpenTagEditor(agent); }}
+                  data-focus-return={`tags-${agent.id}`}
+                  onClick={() => onOpenTagEditor(agent)}
                   title="Edit tags"
                   aria-label={`Edit tags for ${agent.name}`}
                 >
@@ -126,7 +135,8 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
                 </button>
                 <button
                   className="tag-edit-btn"
-                  onClick={(e) => { e.stopPropagation(); onOpenCustomizer(agent); }}
+                  data-focus-return={`customizer-${agent.id}`}
+                  onClick={() => onOpenCustomizer(agent)}
                   title="Customize appearance"
                   aria-label={`Customize appearance for ${agent.name}`}
                 >
@@ -139,7 +149,8 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
             <div className="agent-tags">
               <button
                 className="tag-add-btn"
-                onClick={(e) => { e.stopPropagation(); onOpenTagEditor(agent); }}
+                data-focus-return={`tags-${agent.id}`}
+                onClick={() => onOpenTagEditor(agent)}
                 title="Add tags"
                 aria-label={`Add tags for ${agent.name}`}
               >
@@ -148,7 +159,8 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
               <div className="card-actions">
                 <button
                   className="tag-edit-btn"
-                  onClick={(e) => { e.stopPropagation(); onOpenCustomizer(agent); }}
+                  data-focus-return={`customizer-${agent.id}`}
+                  onClick={() => onOpenCustomizer(agent)}
                   title="Customize appearance"
                   aria-label={`Customize appearance for ${agent.name}`}
                 >
@@ -167,6 +179,14 @@ export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onT
   const enabledCount = agents.filter(a => a.pixelEnabled).length;
   const [tagEditorAgent, setTagEditorAgent] = useState<AgentState | null>(null);
   const [customizerAgent, setCustomizerAgent] = useState<AgentState | null>(null);
+  const openTagEditor = useCallback((agent: AgentState) => {
+    setCustomizerAgent(null);
+    setTagEditorAgent(agent);
+  }, []);
+  const openCustomizer = useCallback((agent: AgentState) => {
+    setTagEditorAgent(null);
+    setCustomizerAgent(agent);
+  }, []);
 
   const agentCards = useMemo(() => agents.map(agent => (
     <AgentCard
@@ -174,10 +194,10 @@ export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onT
       agent={agent}
       onToggle={onToggle}
       onSelectAgent={onSelectAgent}
-      onOpenTagEditor={setTagEditorAgent}
-      onOpenCustomizer={setCustomizerAgent}
+      onOpenTagEditor={openTagEditor}
+      onOpenCustomizer={openCustomizer}
     />
-  )), [agents, onToggle, onSelectAgent]);
+  )), [agents, onToggle, onSelectAgent, openTagEditor, openCustomizer]);
 
   return (
     <aside className={`agent-sidebar ${open ? 'open' : ''}`} aria-label="Agents">

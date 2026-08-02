@@ -6,7 +6,9 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import type { CharacterRecipe } from '../../shared/types';
+import { useModalFocus } from '../hooks/useModalFocus';
 import './CharacterCustomizer.css';
 
 interface Props {
@@ -37,6 +39,10 @@ export const CharacterCustomizer: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useModalFocus({ overlayRef, initialFocusRef: headingRef, onClose });
 
   // Live preview: render the composed character on a canvas
   useEffect(() => {
@@ -128,17 +134,10 @@ export const CharacterCustomizer: React.FC<Props> = ({
     }
   }, [agentId, recipe, onUpdateRecipe, onClose]);
 
-  // Escape key
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
-
   const headingId = `customizer-heading-${agentId}`;
 
-  return (
-    <div className="customizer-overlay" onClick={onClose}>
+  return createPortal(
+    <div className="customizer-overlay" onClick={onClose} ref={overlayRef} tabIndex={-1}>
       <div
         className="customizer"
         role="dialog"
@@ -146,7 +145,7 @@ export const CharacterCustomizer: React.FC<Props> = ({
         aria-labelledby={headingId}
         onClick={e => e.stopPropagation()}
       >
-        <h3 id={headingId}> Customize {agentName}</h3>
+        <h3 ref={headingRef} id={headingId} tabIndex={-1}>Customize {agentName}</h3>
 
         {/* Live preview */}
         <div className="customizer-preview">
@@ -241,7 +240,8 @@ export const CharacterCustomizer: React.FC<Props> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

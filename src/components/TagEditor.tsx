@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
+import { useModalFocus } from '../hooks/useModalFocus';
 import './TagEditor.css';
 
 interface Props {
@@ -14,6 +16,10 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
   const [selectedTags, setSelectedTags] = useState<AgentTag[]>([...currentTags]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useModalFocus({ overlayRef, initialFocusRef: cancelRef, onClose });
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -28,15 +34,6 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
     }
   }, [agentId, selectedTags, onUpdateTags, onClose]);
 
-  // Escape key handling
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
   const toggleTag = (tag: AgentTag) => {
     setSelectedTags(prev => {
       if (prev.includes(tag)) {
@@ -50,8 +47,8 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
 
   const headingId = `tag-editor-heading-${agentId}`;
 
-  return (
-    <div className="tag-editor-overlay" onClick={onClose}>
+  return createPortal(
+    <div className="tag-editor-overlay" onClick={onClose} ref={overlayRef} tabIndex={-1}>
       <div
         className="tag-editor"
         role="dialog"
@@ -99,9 +96,10 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
           <button className="tag-save-btn" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save'}
           </button>
-          <button className="tag-cancel-btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button ref={cancelRef} className="tag-cancel-btn" onClick={onClose} disabled={saving}>Cancel</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

@@ -29,6 +29,9 @@ export const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const enabledAgentCount = agents.filter(a => a.pixelEnabled).length;
+  const selectedAgent = selectedAgentId
+    ? agents.find(agent => agent.id === selectedAgentId) ?? null
+    : null;
 
   // Escape closes the agents drawer.
   useEffect(() => {
@@ -244,10 +247,12 @@ export const App: React.FC = () => {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
-      <AgentDetailPanel
-        agent={selectedAgentId ? agents.find(a => a.id === selectedAgentId) ?? null : null}
-        onClose={() => setSelectedAgentId(null)}
-      />
+      {selectedAgent && (
+        <AgentDetailPanel
+          agent={selectedAgent}
+          onClose={() => setSelectedAgentId(null)}
+        />
+      )}
       <MessageTicker />
     </div>
   );
