@@ -1,6 +1,6 @@
 # Collector
 
-The collector reads live OpenClaw sessions on the OpenClaw host and sends them to a pixel-agents server running in `ingest` mode. CLI collection and HTTP delivery are each limited to 10 seconds, with a 30-second systemd limit as the outer recovery boundary.
+The collector reads live OpenClaw sessions on the OpenClaw host and sends them to a pixel-agents server running in `ingest` mode. CLI collection and HTTP delivery are each limited to 10 seconds. systemd begins terminating an unexpected overrun after 25 seconds and force-stops the complete control group within 5 more seconds.
 
 ## Requirements
 
@@ -45,6 +45,7 @@ The checked-in unit is a portable template with generic `/opt` and `/etc` paths.
 - `WorkingDirectory` and the script path in `ExecStart` to this repository's absolute path.
 - `EnvironmentFile` to the protected configuration file created above.
 - The absolute Node executable in `ExecStart` if `command -v node` is not `/usr/bin/node`.
+- The first directory in `Environment=PATH` to `dirname "$(command -v node)"`. Keep only that reviewed Node directory plus the minimal system directories needed by OpenClaw. This is required when the `openclaw` launcher uses `#!/usr/bin/env node`.
 
 Do not set `HOME` manually. systemd derives it from `User`, keeping the unit portable across home-directory layouts.
 
@@ -69,4 +70,4 @@ systemctl status openclaw-pixel-collector.timer
 sudo journalctl -u openclaw-pixel-collector.service -n 20
 ```
 
-A hung CLI is killed after 10 seconds, a stalled HTTP request aborts after 10 seconds, and systemd stops any unexpected overrun after 30 seconds. The next timer activation can then proceed instead of remaining blocked indefinitely.
+A hung CLI is killed after 10 seconds and a stalled HTTP request aborts after 10 seconds. If either mechanism fails unexpectedly, systemd begins termination after 25 seconds, gives the full service control group 5 seconds to stop, and then sends SIGKILL. The next timer activation can then proceed instead of remaining blocked indefinitely.

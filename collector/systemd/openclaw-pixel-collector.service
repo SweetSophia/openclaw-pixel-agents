@@ -12,11 +12,17 @@ User=openclaw
 WorkingDirectory=/opt/openclaw-pixel-agents
 EnvironmentFile=/etc/openclaw-pixel-agents/collector.env
 ExecStart=/usr/bin/node /opt/openclaw-pixel-agents/collector/push-pixel-agents.mjs
+# Keep this minimal and reviewed. Its first entry must contain the Node binary
+# selected for ExecStart so npm launchers using `#!/usr/bin/env node` work.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 
-# The collector bounds the CLI and HTTP operations to 10 seconds each. Keep
-# this outer bound above their combined worst case so systemd can recover from
-# unexpected hangs without racing the application's normal timeout handling.
-TimeoutStartSec=30s
+# The collector bounds the CLI and HTTP operations to 10 seconds each. Give
+# their combined normal failure path 5 seconds of headroom, then bound the
+# termination phase too so the complete outer recovery limit is 30 seconds.
+TimeoutStartSec=25s
+TimeoutStopSec=5s
+KillMode=control-group
+SendSIGKILL=true
 
 NoNewPrivileges=true
 PrivateDevices=true

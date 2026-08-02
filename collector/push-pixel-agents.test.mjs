@@ -1,7 +1,7 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -154,5 +154,29 @@ describe("collector execution bounds (issue #99)", () => {
         OPENCLAW_BIN: "openclaw",
       },
     })).rejects.toThrow(/must be an absolute path/);
+  });
+});
+
+describe("collector systemd boundary (issue #99)", () => {
+  it("bounds startup and full-control-group termination to 30 seconds", async () => {
+    const unit = await readFile(
+      resolve(process.cwd(), "collector/systemd/openclaw-pixel-collector.service"),
+      "utf8",
+    );
+
+    expect(unit).toContain("TimeoutStartSec=25s");
+    expect(unit).toContain("TimeoutStopSec=5s");
+    expect(unit).toContain("KillMode=control-group");
+    expect(unit).toContain("SendSIGKILL=true");
+  });
+
+  it("provides a minimal reviewed PATH for env-based Node launchers", async () => {
+    const unit = await readFile(
+      resolve(process.cwd(), "collector/systemd/openclaw-pixel-collector.service"),
+      "utf8",
+    );
+
+    expect(unit).toContain("Environment=PATH=/usr/local/bin:/usr/bin:/bin");
+    expect(unit).not.toContain(".npm-global");
   });
 });
