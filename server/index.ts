@@ -1189,6 +1189,14 @@ io.on("connection", (socket) => {
   });
 });
 
+// Unmatched requests that reach the end of the API route chain keep the API
+// representation/status contract. In particular, an unknown GET must not fall
+// through to the SPA and look like a successful HTML navigation response.
+// Register this boundary before the client-side fallback (issue #103).
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
 // SPA fallback: serve index.html for any non-API/non-asset route.
 // Express 5 (path-to-regexp v8) rejects a bare "*" wildcard at registration
 // time; the named "*splat" wildcard is the documented migration form and

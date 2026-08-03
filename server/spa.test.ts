@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
  * Express's default "Cannot GET …" 404, which would indicate the wildcard
  * failed to register/match.
  */
-describe("SPA fallback catch-all (Express 5 *splat)", () => {
+describe("API 404 boundary and SPA fallback catch-all (Express 5 *splat)", () => {
   let app: Express;
   let io: SocketIOServer;
   let dataDir: string;
@@ -40,6 +40,14 @@ describe("SPA fallback catch-all (Express 5 *splat)", () => {
     rmSync(dataDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.resetModules();
+  });
+
+  it("returns JSON 404s for unknown API GET routes", async () => {
+    const response = await request(app).get("/api/definitely-missing");
+
+    expect(response.status).toBe(404);
+    expect(response.headers["content-type"]).toMatch(/application\/json/);
+    expect(response.body).toEqual({ error: "Not found" });
   });
 
   it("handles a deep non-API GET via the catch-all, not Express's default 404", async () => {
