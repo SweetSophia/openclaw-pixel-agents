@@ -100,6 +100,9 @@ app.use(express.json({ limit: "100kb" }));
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
 const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
 if (existsSync(FRONTEND_DIR)) {
+  // Throttle unauthenticated GET traffic before the static middleware so
+  // express.static's filesystem access is rate-limited per IP (issue #125).
+  app.use(publicGetRateLimiter);
   app.use(express.static(FRONTEND_DIR));
 }
 
@@ -711,6 +714,7 @@ export const authenticateIngest = createIngestAuthenticator(INGEST_TOKEN);
 export function _resetIngestRateBuckets(): void {
   ingestRateBuckets.clear();
   ingestPreAuthBuckets.clear();
+  publicGetRateBuckets.clear();
 }
 
 /**
@@ -725,13 +729,48 @@ export function _resetIngestRateBuckets(): void {
 // In-process rate limiters:
 // - PRE_AUTH: throttles unauthenticated/failed-token attempts per IP (CWE-770)
 // - POST_AUTH: caps authenticated push frequency per token digest
+// - PUBLIC_GET: app-wide throttle for unauthenticated GET traffic (SPA + static)
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 10;          // post-auth: 10 pushes/min per token
 const PRE_AUTH_RATE_LIMIT_MAX = 5;   // pre-auth: 5 attempts/min per IP
+const PUBLIC_GET_RATE_LIMIT_MAX = 120; // public GET: 120 req/min per IP (SPA + static)
 const ingestRateBuckets = new Map<string, number[]>();
 const ingestPreAuthBuckets = new Map<string, number[]>();
+const publicGetRateBuckets = new Map<string, number[]>();
 
-// Prune both bucket maps on the same interval to prevent memory leaks
+/**
+ * Check whether an unauthenticated GET request from this IP is within the
+ * public rate limit. Keyed on req.ip. Returns true if allowed, false if
+ * the caller should respond 429. Express trusts X-Forwarded-For only when
+ * `app.set('trust proxy', ...)` is configured upstream; we do not set it,
+ * so req.ip is always the direct peer.
+ */
+export function checkPublicGetRateLimit(req: express.Request): boolean {
+  const ip = req.ip || "unknown";
+  const key = `get:${ip}`;
+  const now = Date.now();
+  const bucket = publicGetRateBuckets.get(key) || [];
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recent = bucket.filter(t => t > windowStart);
+  if (recent.length >= PUBLIC_GET_RATE_LIMIT_MAX) return false;
+  recent.push(now);
+  publicGetRateBuckets.set(key, recent);
+  return true;
+}
+
+/**
+ * Middleware: applies the public GET rate limit and returns 429 when exceeded.
+ * Mounted before the static middleware and SPA fallback so both paths are bounded.
+ */
+function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  if (!checkPublicGetRateLimit(req)) {
+    res.status(429).json({ error: "Too many requests" });
+    return;
+  }
+  next();
+}
+
+// Prune all three bucket maps on the same interval to prevent memory leaks
 const ingestPruneTimer = setInterval(() => {
   const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
   for (const [key, timestamps] of ingestRateBuckets) {
@@ -743,6 +782,11 @@ const ingestPruneTimer = setInterval(() => {
     const pruned = timestamps.filter(t => t > cutoff);
     if (pruned.length === 0) ingestPreAuthBuckets.delete(key);
     else ingestPreAuthBuckets.set(key, pruned);
+  }
+  for (const [key, timestamps] of publicGetRateBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) publicGetRateBuckets.delete(key);
+    else publicGetRateBuckets.set(key, pruned);
   }
 }, RATE_LIMIT_WINDOW_MS);
 ingestPruneTimer.unref?.();
@@ -1249,7 +1293,10 @@ app.use("/api", (_req, res) => {
 // Express 5 (path-to-regexp v8) rejects a bare "*" wildcard at registration
 // time; the named "*splat" wildcard is the documented migration form and
 // still matches every unmatched GET path, including "/".
-app.get("*splat", (_req, res) => {
+//
+// Rate-limited per IP so filesystem access for index.html is bounded
+// (issue #125).
+app.get("*splat", publicGetRateLimiter, (_req, res) => {
   const indexPath = join(FRONTEND_DIR, "index.html");
   if (existsSync(indexPath)) {
     res.sendFile(indexPath);
