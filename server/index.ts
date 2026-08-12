@@ -874,6 +874,8 @@ app.post("/api/agents/:id/sprite", (req, res) => {
     const state = agentStates.get(id);
     if (state) state.characterSpriteId = spriteId;
     savePersistedPrefs();
+    // Broadcast sprite change so other connected clients see the new sprite
+    io.emit("agents:update", Array.from(agentStates.values()));
     res.json({ success: true });
   } else {
     res.status(404).json({ error: "Agent not found" });
@@ -1160,6 +1162,8 @@ app.delete("/api/layouts/:id", (req, res) => {
   if (!ok) {
     return res.status(404).json({ error: "Layout not found" });
   }
+  // Broadcast layout removal so connected clients drop the layout
+  io.emit("layout:update", { id, deleted: true });
   res.json({ success: true });
 });
 

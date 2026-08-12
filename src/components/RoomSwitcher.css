@@ -7,7 +7,7 @@
   transform: none;
   flex: 1 1 auto;
   min-width: 0;
-  max-width: fit-content;
+  max-width: 100%;
   margin: 0 auto;
 
   display: flex;
@@ -21,6 +21,11 @@
   border-radius: 20px;
   overflow-x: auto;
   scrollbar-width: none;
+  /* Prevent the room tabs from bleeding over the header-controls at
+   * intermediate widths between the wrap breakpoint and full desktop.
+   * The scrollable inner region is bounded by the container's own box. */
+  isolation: isolate;
+  contain: layout paint;
 }
 
 .room-switcher::-webkit-scrollbar {
@@ -75,6 +80,22 @@
   font-size: 10px;
   opacity: 0.6;
   margin-left: 2px;
+}
+
+/* Tablet/medium: top bar stays single row but room tabs scroll within
+ * their own bounded container so they can't bleed over header-controls. */
+@media (max-width: 1024px) {
+  .room-switcher {
+    max-width: 50%;
+  }
+  .room-tab {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .room-name {
+    display: none;
+    /* show only icon + count at tablet width to keep bar single-row */
+  }
 }
 
 @media (max-width: 768px) {
