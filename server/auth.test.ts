@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Express, Request, Response } from "express";
 import type { Server as SocketIOServer } from "socket.io";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("API auth boundaries", () => {
   let app: Express;
@@ -16,6 +16,7 @@ describe("API auth boundaries", () => {
   let defaultIngestTokenCrypto: typeof import("./index").defaultIngestTokenCrypto;
   let ingestTokenDigestContext: typeof import("./index").INGEST_TOKEN_DIGEST_CONTEXT;
   let tailTranscript: typeof import("./index").tailTranscript;
+  let resetIngestRateBuckets: typeof import("./index")._resetIngestRateBuckets;
   let outsideTranscriptPath: string;
   const appOrigin = "https://pixel.test";
 
@@ -48,6 +49,13 @@ describe("API auth boundaries", () => {
     defaultIngestTokenCrypto = serverModule.defaultIngestTokenCrypto;
     ingestTokenDigestContext = serverModule.INGEST_TOKEN_DIGEST_CONTEXT;
     tailTranscript = serverModule.tailTranscript;
+    resetIngestRateBuckets = serverModule._resetIngestRateBuckets;
+  });
+
+  beforeEach(() => {
+    // Reset rate-limit buckets between tests so the pre-auth limiter
+    // doesn't throttle sequential test requests from 127.0.0.1.
+    resetIngestRateBuckets();
   });
 
   afterAll(() => {

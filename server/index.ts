@@ -705,6 +705,15 @@ export function createIngestAuthenticator(
 export const authenticateIngest = createIngestAuthenticator(INGEST_TOKEN);
 
 /**
+ * Reset ingest rate-limit buckets. Exported for test isolation only —
+ * production code should never call this.
+ */
+export function _resetIngestRateBuckets(): void {
+  ingestRateBuckets.clear();
+  ingestPreAuthBuckets.clear();
+}
+
+/**
  * POST /api/ingest/agents
  *
  * Accepts agent session data pushed from the OpenClaw host via the collector script.
@@ -713,12 +722,16 @@ export const authenticateIngest = createIngestAuthenticator(INGEST_TOKEN);
  * When valid ingest data arrives, it replaces the CLI-poll result and broadcasts.
  */
 
-// In-process rate limiter: max RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW_MS per token
+// In-process rate limiters:
+// - PRE_AUTH: throttles unauthenticated/failed-token attempts per IP (CWE-770)
+// - POST_AUTH: caps authenticated push frequency per token digest
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_MAX = 10;          // post-auth: 10 pushes/min per token
+const PRE_AUTH_RATE_LIMIT_MAX = 5;   // pre-auth: 5 attempts/min per IP
 const ingestRateBuckets = new Map<string, number[]>();
+const ingestPreAuthBuckets = new Map<string, number[]>();
 
-// Periodically prune expired rate-limit entries to prevent memory leak
+// Prune both bucket maps on the same interval to prevent memory leaks
 const ingestPruneTimer = setInterval(() => {
   const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
   for (const [key, timestamps] of ingestRateBuckets) {
@@ -726,14 +739,45 @@ const ingestPruneTimer = setInterval(() => {
     if (pruned.length === 0) ingestRateBuckets.delete(key);
     else ingestRateBuckets.set(key, pruned);
   }
+  for (const [key, timestamps] of ingestPreAuthBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) ingestPreAuthBuckets.delete(key);
+    else ingestPreAuthBuckets.set(key, pruned);
+  }
 }, RATE_LIMIT_WINDOW_MS);
 ingestPruneTimer.unref?.();
+
+/**
+ * Check pre-auth rate limit for a request. Returns true if the request should
+ * be allowed through, false if it exceeded the threshold (caller sends 429).
+ * Keyed on req.ip — trusts X-Forwarded-For only behind an explicit proxy.
+ */
+function checkPreAuthRateLimit(req: express.Request): boolean {
+  const ip = req.ip || "unknown";
+  const key = `preauth:${ip}`;
+  const now = Date.now();
+  const bucket = ingestPreAuthBuckets.get(key) || [];
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recent = bucket.filter(t => t > windowStart);
+  if (recent.length >= PRE_AUTH_RATE_LIMIT_MAX) return false;
+  recent.push(now);
+  ingestPreAuthBuckets.set(key, recent);
+  return true;
+}
 
 app.post("/api/ingest/agents", (req, res) => {
   if (!INGEST_TOKEN) {
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
     return;
   }
+
+  // Pre-auth rate limit: throttle unauthenticated requests per IP before
+  // the token check to prevent brute-force and resource-exhaustion attacks.
+  if (!checkPreAuthRateLimit(req)) {
+    res.status(429).json({ error: "Too many requests" });
+    return;
+  }
+
   if (!authenticateIngest(req, res)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
