@@ -102,6 +102,8 @@ const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
 if (existsSync(FRONTEND_DIR)) {
   // Throttle unauthenticated GET traffic before the static middleware so
   // express.static's filesystem access is rate-limited per IP (issue #125).
+  // Only mounted here and on the SPA fallback — NOT app.use(global) so it
+  // doesn't intercept /api or other non-frontend routes.
   app.use(publicGetRateLimiter);
   app.use(express.static(FRONTEND_DIR));
 }
@@ -763,6 +765,7 @@ export function checkPublicGetRateLimit(req: express.Request): boolean {
  * Mounted before the static middleware and SPA fallback so both paths are bounded.
  */
 function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  if (req.method !== "GET") { next(); return; }
   if (!checkPublicGetRateLimit(req)) {
     res.status(429).json({ error: "Too many requests" });
     return;
@@ -1296,7 +1299,7 @@ app.use("/api", (_req, res) => {
 //
 // Rate-limited per IP so filesystem access for index.html is bounded
 // (issue #125).
-app.get("*splat", publicGetRateLimiter, (_req, res) => {
+app.get("*splat", (_req, res) => {
   const indexPath = join(FRONTEND_DIR, "index.html");
   if (existsSync(indexPath)) {
     res.sendFile(indexPath);
