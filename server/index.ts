@@ -42,6 +42,44 @@ const app = express();
 const server = createServer(app);
 const corsConfig = createCorsConfig();
 
+/**
+ * Reverse-proxy trust contract (issue #125 review, P1).
+ *
+ * Default: no proxy trust — `req.ip` is the direct socket peer, the safe
+ * default for direct exposure. Without trust, every browser behind one
+ * reverse proxy would share a single public-GET rate bucket, letting one
+ * noisy client deny the dashboard to all others.
+ *
+ * `TRUST_PROXY` opts in explicitly for documented reverse-proxy deployments
+ * (see README):
+ *   - unset / "false" / "0"   -> trust nobody (default)
+ *   - integer string ("1", …) -> trust that many proxy hops (Express
+ *     `trust proxy <n>` semantics); use the exact hop count of the deployed
+ *     proxy chain so the client IP is read from the correct
+ *     X-Forwarded-For position
+ *   - comma-separated IPs/CIDRs ("10.0.0.0/8,127.0.0.1") -> trust those
+ *     proxy addresses only
+ *
+ * "true"/unrestricted trust is deliberately NOT accepted: with no proxy in
+ * front, clients could spoof X-Forwarded-For and each forged value would
+ * get its own rate bucket, defeating the limiter entirely. Only enable
+ * this when the front proxy overwrites client-supplied forwarding headers.
+ */
+function parseTrustProxy(raw: string | undefined): number | string[] | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim();
+  if (!value || value === "false" || value === "0") return undefined;
+  const hops = Number(value);
+  if (Number.isInteger(hops) && hops > 0 && String(hops) === value) return hops;
+  const cidrs = value.split(",").map(s => s.trim()).filter(Boolean);
+  return cidrs.length > 0 ? cidrs : undefined;
+}
+const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
+if (trustProxy !== undefined) {
+  app.set("trust proxy", trustProxy);
+  logger.info({ trustProxy, subsystem: "server" }, "Reverse-proxy trust configured");
+}
+
 const io = new SocketIOServer(server, {
   cors: {
     origin: corsConfig.socketOrigin,
@@ -97,13 +135,13 @@ app.use(correlationMiddleware);
 app.use(httpRequestLogMiddleware);
 app.use(express.json({ limit: "100kb" }));
 
-// Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js)
-const FRONTEND_DIR = resolve(__dirname, "..", "..", "client");
+// Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js).
+// FRONTEND_DIR is env-overridable for HTTP-level tests (issue #125).
+const FRONTEND_DIR = process.env.FRONTEND_DIR || resolve(__dirname, "..", "..", "client");
 if (existsSync(FRONTEND_DIR)) {
-  // Throttle unauthenticated GET traffic before the static middleware so
+  // Throttle unauthenticated GET/HEAD traffic before the static middleware so
   // express.static's filesystem access is rate-limited per IP (issue #125).
-  // Only mounted here and on the SPA fallback — NOT app.use(global) so it
-  // doesn't intercept /api or other non-frontend routes.
+  // The middleware itself skips /api paths — see publicGetRateLimiter.
   app.use(publicGetRateLimiter);
   app.use(express.static(FRONTEND_DIR));
 }
@@ -713,11 +751,14 @@ export const authenticateIngest = createIngestAuthenticator(INGEST_TOKEN);
  * Reset ingest rate-limit buckets. Exported for test isolation only —
  * production code should never call this.
  */
-export function _resetIngestRateBuckets(): void {
+export function _resetRateLimitBuckets(): void {
   ingestRateBuckets.clear();
   ingestPreAuthBuckets.clear();
   publicGetRateBuckets.clear();
 }
+
+/** @deprecated Use _resetRateLimitBuckets — alias kept for import compatibility. */
+export const _resetIngestRateBuckets = _resetRateLimitBuckets;
 
 /**
  * POST /api/ingest/agents
@@ -741,11 +782,11 @@ const ingestPreAuthBuckets = new Map<string, number[]>();
 const publicGetRateBuckets = new Map<string, number[]>();
 
 /**
- * Check whether an unauthenticated GET request from this IP is within the
+ * Check whether an unauthenticated GET/HEAD request from this IP is within the
  * public rate limit. Keyed on req.ip. Returns true if allowed, false if
- * the caller should respond 429. Express trusts X-Forwarded-For only when
- * `app.set('trust proxy', ...)` is configured upstream; we do not set it,
- * so req.ip is always the direct peer.
+ * the caller should respond 429. Client-IP identity depends on the explicit
+ * TRUST_PROXY contract configured at startup (see parseTrustProxy); with the
+ * default no-trust setting req.ip is the direct peer.
  */
 export function checkPublicGetRateLimit(req: express.Request): boolean {
   const ip = req.ip || "unknown";
@@ -761,11 +802,17 @@ export function checkPublicGetRateLimit(req: express.Request): boolean {
 }
 
 /**
- * Middleware: applies the public GET rate limit and returns 429 when exceeded.
- * Mounted before the static middleware and SPA fallback so both paths are bounded.
+ * Middleware: applies the public rate limit and returns 429 when exceeded.
+ * Scope contract (issue #125, review): only GET and HEAD requests to
+ * non-API paths are counted. HEAD is included because express.static and
+ * the SPA sendFile fallback perform the same filesystem work for HEAD as
+ * for GET — leaving it uncounted would let clients bypass the bound.
+ * /api/* reads are explicitly excluded so dashboard polling and other API
+ * traffic never consume the static/SPA budget.
  */
 function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  if (req.method !== "GET") { next(); return; }
+  if (req.method !== "GET" && req.method !== "HEAD") { next(); return; }
+  if (req.path.startsWith("/api")) { next(); return; }
   if (!checkPublicGetRateLimit(req)) {
     res.status(429).json({ error: "Too many requests" });
     return;
@@ -1297,8 +1344,8 @@ app.use("/api", (_req, res) => {
 // time; the named "*splat" wildcard is the documented migration form and
 // still matches every unmatched GET path, including "/".
 //
-// Rate-limited per IP so filesystem access for index.html is bounded
-// (issue #125).
+// Requests reach here only after passing publicGetRateLimiter + static
+// above, so filesystem access for index.html is already bounded (issue #125).
 app.get("*splat", (_req, res) => {
   const indexPath = join(FRONTEND_DIR, "index.html");
   if (existsSync(indexPath)) {
