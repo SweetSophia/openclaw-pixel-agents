@@ -7,6 +7,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { isIP } from "node:net";
 import express from "express";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
@@ -51,28 +52,62 @@ const corsConfig = createCorsConfig();
  * noisy client deny the dashboard to all others.
  *
  * `TRUST_PROXY` opts in explicitly for documented reverse-proxy deployments
- * (see README):
+ * (see README "Reverse-proxy deployments"):
  *   - unset / "false" / "0"   -> trust nobody (default)
  *   - integer string ("1", …) -> trust that many proxy hops (Express
  *     `trust proxy <n>` semantics); use the exact hop count of the deployed
  *     proxy chain so the client IP is read from the correct
  *     X-Forwarded-For position
- *   - comma-separated IPs/CIDRs ("10.0.0.0/8,127.0.0.1") -> trust those
- *     proxy addresses only
+ *   - comma-separated IPs/CIDRs or presets ("10.0.0.0/8,127.0.0.1",
+ *     "loopback", "linklocal", "uniquelocal") -> trust those proxy
+ *     addresses only
  *
  * "true"/unrestricted trust is deliberately NOT accepted: with no proxy in
  * front, clients could spoof X-Forwarded-For and each forged value would
  * get its own rate bucket, defeating the limiter entirely. Only enable
  * this when the front proxy overwrites client-supplied forwarding headers.
+ *
+ * Malformed values fail fast at startup with a descriptive error naming
+ * the accepted forms — never as an opaque TypeError from deep inside
+ * Express, and never by silently falling back to no trust (which would
+ * reintroduce the all-users-share-one-bucket collapse).
  */
-function parseTrustProxy(raw: string | undefined): number | string[] | undefined {
+const TRUST_PROXY_PRESETS = new Set(["loopback", "linklocal", "uniquelocal"]);
+
+/** One TRUST_PROXY list entry: a bare IP, an IP/prefix-length CIDR, or a
+ * documented preset. Deliberately stricter than proxy-addr: no DNS
+ * hostnames, no wildcard octets — operators state exact addresses. */
+function isTrustProxyEntry(entry: string): boolean {
+  if (TRUST_PROXY_PRESETS.has(entry)) return true;
+  const slash = entry.indexOf("/");
+  if (slash === -1) return isIP(entry) !== 0;
+  const addr = entry.slice(0, slash);
+  const prefix = entry.slice(slash + 1);
+  if (!/^\d{1,3}$/.test(prefix)) return false;
+  const bits = Number(prefix);
+  const family = isIP(addr);
+  if (family === 6) return bits <= 128;
+  return family === 4 && bits <= 32;
+}
+
+export function parseTrustProxy(raw: string | undefined): number | string[] | undefined {
   if (!raw) return undefined;
   const value = raw.trim();
   if (!value || value === "false" || value === "0") return undefined;
   const hops = Number(value);
   if (Number.isInteger(hops) && hops > 0 && String(hops) === value) return hops;
-  const cidrs = value.split(",").map(s => s.trim()).filter(Boolean);
-  return cidrs.length > 0 ? cidrs : undefined;
+  const entries = value.split(",").map(s => s.trim()).filter(Boolean);
+  if (entries.length === 0 || !entries.every(isTrustProxyEntry)) {
+    throw new Error(
+      `Invalid TRUST_PROXY value: "${raw}". Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
+      `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
+      `IPs/CIDRs or the presets loopback/linklocal/uniquelocal (e.g. "10.0.0.0/8,127.0.0.1"). ` +
+      `Unrestricted "true" is deliberately rejected: without a controlled proxy that overwrites ` +
+      `X-Forwarded-For, clients could forge forwarding headers and defeat per-client rate limiting. ` +
+      `See README "Reverse-proxy deployments".`,
+    );
+  }
+  return entries;
 }
 const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
 if (trustProxy !== undefined) {
@@ -807,12 +842,15 @@ export function checkPublicGetRateLimit(req: express.Request): boolean {
  * non-API paths are counted. HEAD is included because express.static and
  * the SPA sendFile fallback perform the same filesystem work for HEAD as
  * for GET — leaving it uncounted would let clients bypass the bound.
- * /api/* reads are explicitly excluded so dashboard polling and other API
- * traffic never consume the static/SPA budget.
+ * /api reads are exempt via an exact namespace boundary — "/api" itself and
+ * "/api/*" only — so dashboard polling and other API traffic never consume
+ * the static/SPA budget, while sibling public paths that merely share the
+ * prefix ("/apiary", "/api-v2") stay rate-limited instead of leaking past
+ * the limiter to the SPA filesystem path (review finding).
  */
 function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
   if (req.method !== "GET" && req.method !== "HEAD") { next(); return; }
-  if (req.path.startsWith("/api")) { next(); return; }
+  if (req.path === "/api" || req.path.startsWith("/api/")) { next(); return; }
   if (!checkPublicGetRateLimit(req)) {
     res.status(429).json({ error: "Too many requests" });
     return;
