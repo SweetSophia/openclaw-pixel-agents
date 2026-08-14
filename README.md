@@ -250,7 +250,7 @@ Set `TRUST_PROXY` to restore per-client limiting:
 Two hard requirements:
 
 1. **The trusted proxy must overwrite client-supplied forwarding headers.** If clients can reach the server directly (or an intermediate hop forwards a spoofable `X-Forwarded-For`), do not configure trust — each forged header value would get its own rate bucket and defeat the limiter.
-2. **Unrestricted trust is deliberately rejected.** `TRUST_PROXY="true"` (and any other malformed value) aborts startup with a descriptive error rather than silently degrading security. Express's blanket `"true"` would trust every peer, which is exactly the spoofing scenario above.
+2. **Unrestricted trust is deliberately rejected.** `TRUST_PROXY="true"`, any `/0` CIDR (`0.0.0.0/0`, `::/0` — a zero prefix length matches every address of the family, i.e. the same blanket trust), and any other malformed value abort startup with a descriptive error rather than silently degrading security. Express's blanket `"true"` would trust every peer, which is exactly the spoofing scenario above.
 
 Malformed values (bad CIDRs, hostnames, empty entries, `"true"`) fail fast at startup with an error naming the accepted forms — never as an opaque crash from inside Express, and never by silently falling back to no trust, which would reintroduce the shared-bucket collapse.
 

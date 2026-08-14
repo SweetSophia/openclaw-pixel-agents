@@ -192,6 +192,9 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
       ["1e2"],
       ["10.0.0.0/33"],
       ["::1/129"],
+      ["0.0.0.0/0"],
+      ["::/0"],
+      ["10.0.0.0/0"],
       ["300.300.300.300"],
       ["example.com"],
       ["10.0.0.0/8,not-an-ip"],
@@ -213,6 +216,16 @@ describe("TRUST_PROXY malformed startup (fail fast)", () => {
 
   it("rejects a malformed CIDR at module load with a descriptive error", async () => {
     vi.stubEnv("TRUST_PROXY", "10.0.0.0/33");
+    vi.resetModules();
+    await expect(import("./index")).rejects.toThrow(/Invalid TRUST_PROXY value/);
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects /0 CIDRs (unrestricted range) at module load with a descriptive error", async () => {
+    // proxy-addr's compile() would throw an opaque "invalid range on
+    // address" TypeError; the project validator must fail first with a
+    // TRUST_PROXY-named error (review repro on 98504fc).
+    vi.stubEnv("TRUST_PROXY", "0.0.0.0/0");
     vi.resetModules();
     await expect(import("./index")).rejects.toThrow(/Invalid TRUST_PROXY value/);
     vi.unstubAllEnvs();

@@ -86,6 +86,11 @@ function isTrustProxyEntry(entry: string): boolean {
   if (!/^\d{1,3}$/.test(prefix)) return false;
   const bits = Number(prefix);
   const family = isIP(addr);
+  // Prefix length 0 ("0.0.0.0/0", "::/0") matches every address of the
+  // family — semantically unrestricted trust, which this contract rejects
+  // — and proxy-addr's compile() additionally throws an opaque
+  // "invalid range on address" TypeError on /0 CIDRs (review repro).
+  if (bits < 1) return false;
   if (family === 6) return bits <= 128;
   return family === 4 && bits <= 32;
 }
@@ -101,7 +106,8 @@ export function parseTrustProxy(raw: string | undefined): number | string[] | un
     throw new Error(
       `Invalid TRUST_PROXY value: "${raw}". Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
       `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
-      `IPs/CIDRs or the presets loopback/linklocal/uniquelocal (e.g. "10.0.0.0/8,127.0.0.1"). ` +
+      `IPs/CIDRs (prefix length 1-32 for IPv4, 1-128 for IPv6) or the presets loopback/linklocal/uniquelocal ` +
+      `(e.g. "10.0.0.0/8,127.0.0.1"). ` +
       `Unrestricted "true" is deliberately rejected: without a controlled proxy that overwrites ` +
       `X-Forwarded-For, clients could forge forwarding headers and defeat per-client rate limiting. ` +
       `See README "Reverse-proxy deployments".`,
