@@ -958,7 +958,7 @@ export class GameEngine {
       const hasPc = pcItem && pcItem.canvas.width > 0 && pcItem.canvas.height > 0;
       if (assetsLoaded && (hasDesk || hasPc)) {
         if (hasDesk) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
-        if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (deskItem?.height ?? 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
+        if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (hasDesk ? deskItem.height : 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
         if (chairItem && chairItem.canvas.width > 0 && chairItem.canvas.height > 0) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
       } else {
         this.renderFallbackDesk(agentId, px, py, tileSize);
