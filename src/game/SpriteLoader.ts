@@ -535,7 +535,9 @@ export function getSpriteFrame(
 
   // All directions now have pre-cached frames
   const frame = character[dir]?.[frameIdx];
-  return frame?.canvas ?? null;
+  const canvas = frame?.canvas;
+  if (!canvas || canvas.width === 0 || canvas.height === 0) return null;
+  return canvas;
 }
 
 /** Access cached characters. Returns a compile-time readonly view —
@@ -596,6 +598,16 @@ export function recomposeAgent(
 ): ReadonlyLoadedCharacter | null {
   try {
     const composed = composeCharacter(recipe);
+    const canvases = [
+      ...composed.down,
+      ...composed.up,
+      ...composed.right,
+      composed.portrait,
+    ];
+    if (canvases.some(canvas => canvas.width === 0 || canvas.height === 0)) {
+      disposeComposed(composed);
+      return null;
+    }
     const old = cachedComposed.get(agentId);
     cachedComposed.set(agentId, composed);
     if (old) disposeComposed(old);

@@ -28,6 +28,7 @@ import type { EditorCallbacks } from './EditorController';
 import type { PlacedFurniture } from '../../shared/types';
 import { SUBAGENT_FADE_DURATION } from './SubAgentFSM';
 import { getDayPhase } from './Schedule';
+import type { ReadonlyLoadedCharacter } from './SpriteLoader';
 import { sfx } from '../audio/SoundFX';
 
 // Web Audio is unavailable in jsdom; replace the singleton with no-op spies
@@ -69,6 +70,7 @@ type SubAgentCharacter = {
 };
 
 type TestGameEngine = {
+  characters_sprites: readonly ReadonlyLoadedCharacter[];
   characters: Map<string, SubAgentCharacter>;
   nowMs: number;
   dayPhase: number;
@@ -94,12 +96,14 @@ type TestGameEngine = {
   killSubAgent(subId: string): void;
   reviveSubAgent(subId: string): void;
   isCharacterDying(id: string): boolean;
+  setCharacterSprite(agentId: string, sprite: ReadonlyLoadedCharacter): void;
+  start(): void;
   stop(): void;
 };
 
 // ── Recording 2D context + canvas harness ────────────────────────────────────
 
-function makeRecordingContext(): RecordingContext {
+function makeRecordingContext(onDrawImage: (...args: unknown[]) => void = () => {}): RecordingContext {
   const fills: RecordingContext['fills'] = [];
   const texts: RecordingContext['texts'] = [];
   const stub = {
@@ -110,7 +114,7 @@ function makeRecordingContext(): RecordingContext {
       texts.push({ text, x, y });
     },
     clearRect() {},
-    drawImage() {},
+    drawImage(...args: unknown[]) { onDrawImage(...args); },
     save() {},
     restore() {},
     beginPath() {},
@@ -124,6 +128,7 @@ function makeRecordingContext(): RecordingContext {
     scale() {},
     setLineDash() {},
     stroke() {},
+    fill() {},
     strokeRect() {},
     measureText(text: string) {
       return { width: text.length * 6 };
@@ -154,12 +159,14 @@ function makeRecordingContext(): RecordingContext {
 
 const GRID = { tileSize: 16, gridWidth: 24, gridHeight: 16 };
 
-function makeCanvasWithStubbedContext(): {
+function makeCanvasWithStubbedContext(
+  onDrawImage?: (...args: unknown[]) => void,
+): {
   canvas: HTMLCanvasElement;
   recorded: RecordingContext;
 } {
   const canvas = document.createElement('canvas');
-  const recorded = makeRecordingContext();
+  const recorded = makeRecordingContext(onDrawImage);
 
   // The engine constructor calls `canvas.getContext('2d')!` immediately, so
   // install the recording 2D context BEFORE constructing it.
@@ -182,6 +189,11 @@ function makeCanvasWithStubbedContext(): {
   } as DOMRect);
 
   return { canvas, recorded };
+}
+
+function makeCharacterSprite(canvas: HTMLCanvasElement): ReadonlyLoadedCharacter {
+  const frames = Array.from({ length: 7 }, () => ({ canvas, width: 16, height: 32 }));
+  return { down: frames, up: frames, right: frames, left: frames };
 }
 
 function clientCenterOf(gridX: number, gridY: number): { x: number; y: number } {
@@ -483,5 +495,118 @@ describe('GameEngine integration: schedule progression and overlay render', () =
     );
     expect(fullOverlayFill?.style).toBe(expected.overlay);
     expect(fullOverlayFill?.style).not.toBe(phaseBefore);
+  });
+});
+
+describe('GameEngine integration: render fault tolerance (issue #172)', () => {
+  let engine: TestGameEngine | null;
+  let pendingFrames: FrameRequestCallback[];
+
+  beforeEach(() => {
+    engine = null;
+    pendingFrames = [];
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      pendingFrames.push(callback);
+      return pendingFrames.length;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  });
+
+  afterEach(() => {
+    engine?.stop();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('renders the placeholder instead of drawing a zero-size override canvas', () => {
+    const drawnSources: unknown[] = [];
+    const made = makeCanvasWithStubbedContext((source) => {
+      if (source instanceof HTMLCanvasElement && (source.width === 0 || source.height === 0)) {
+        throw new DOMException('Canvas has no image data', 'InvalidStateError');
+      }
+      drawnSources.push(source);
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(made.recorded.ctx);
+    const frameErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    engine = new GameEngine(made.canvas, GRID) as unknown as TestGameEngine;
+
+    const baseCanvas = document.createElement('canvas');
+    baseCanvas.width = 16;
+    baseCanvas.height = 32;
+    const zeroSizeCanvas = document.createElement('canvas');
+    zeroSizeCanvas.width = 0;
+    zeroSizeCanvas.height = 0;
+    engine.characters_sprites = [makeCharacterSprite(baseCanvas)];
+    engine.setCharacterSprite('cybera', makeCharacterSprite(zeroSizeCanvas));
+    engine.addCharacter({ id: 'cybera', name: 'Cybera', x: 2, y: 2, state: 'idle' });
+
+    expect(() => engine!.start()).not.toThrow();
+    expect(drawnSources).not.toContain(zeroSizeCanvas);
+    expect(made.recorded.fills.some(fill => fill.style === '#e94560')).toBe(true);
+    expect(frameErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('reschedules before a render error so a subsequent good frame still renders', () => {
+    const badCanvas = document.createElement('canvas');
+    badCanvas.width = 16;
+    badCanvas.height = 32;
+    const goodCanvas = document.createElement('canvas');
+    goodCanvas.width = 16;
+    goodCanvas.height = 32;
+    const frameFailure = new DOMException('Bad sprite frame', 'InvalidStateError');
+    const drawnSources: unknown[] = [];
+    const made = makeCanvasWithStubbedContext((source) => {
+      drawnSources.push(source);
+      if (source === badCanvas) throw frameFailure;
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(made.recorded.ctx);
+    const frameErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    engine = new GameEngine(made.canvas, GRID) as unknown as TestGameEngine;
+    engine.characters_sprites = [makeCharacterSprite(goodCanvas)];
+    engine.setCharacterSprite('cybera', makeCharacterSprite(badCanvas));
+    engine.addCharacter({ id: 'cybera', name: 'Cybera', x: 2, y: 2, state: 'idle' });
+
+    engine.start();
+    expect(frameErrorSpy).toHaveBeenCalledWith('[GameEngine] render error', frameFailure);
+    expect(pendingFrames).toHaveLength(1);
+
+    engine.setCharacterSprite('cybera', makeCharacterSprite(goodCanvas));
+    const nextFrame = pendingFrames.shift();
+    expect(nextFrame).toBeDefined();
+    nextFrame!(performance.now());
+
+    expect(drawnSources).toContain(goodCanvas);
+    expect(pendingFrames).toHaveLength(1);
+  });
+
+  it('skips the render but keeps the loop alive when update throws, then recovers', () => {
+    const made = makeCanvasWithStubbedContext();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(made.recorded.ctx);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    engine = new GameEngine(made.canvas, GRID) as unknown as TestGameEngine;
+    engine.addCharacter({ id: 'cybera', name: 'Cybera', x: 2, y: 2, state: 'idle' });
+
+    const updateFailure = new Error('bad state');
+    const realUpdate = engine.update.bind(engine);
+    let shouldThrow = true;
+    engine.update = ((dt: number) => {
+      if (shouldThrow) { throw updateFailure; }
+      realUpdate(dt);
+    }) as typeof engine.update;
+
+    engine.start();
+    expect(errorSpy).toHaveBeenCalledWith('[GameEngine] update error', updateFailure);
+    expect(pendingFrames).toHaveLength(1); // loop rescheduled despite the update failure
+    // Render skipped for the failed frame: partial update state never drawn.
+    expect(made.recorded.fills.length).toBe(0);
+
+    // Recovery: state fixed, next frame updates and renders normally.
+    shouldThrow = false;
+    const nextFrame = pendingFrames.shift();
+    expect(nextFrame).toBeDefined();
+    nextFrame!(performance.now());
+    expect(made.recorded.fills.length).toBeGreaterThan(0);
+    expect(pendingFrames).toHaveLength(1);
   });
 });
