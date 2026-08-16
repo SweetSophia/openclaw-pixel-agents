@@ -324,17 +324,21 @@ export class GameEngine {
 
   private loop = () => {
     if (!this.running) return;
+    // Reschedule first so no frame error can kill the loop (issue #172).
+    // update() errors are game-state logic bugs: let them propagate uncaught
+    // so they surface loudly instead of drifting silently. Only render faults
+    // are contained — that is where bad canvases/sprites can throw.
     this.animFrameId = requestAnimationFrame(this.loop);
+    this.nowMs = performance.now();
+    const rawDt = (this.nowMs - this.lastTime) / 1000;
+    // Clamp delta time to prevent teleportation when tab is backgrounded
+    const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
+    this.lastTime = this.nowMs;
+    this.update(dt);
     try {
-      this.nowMs = performance.now();
-      const rawDt = (this.nowMs - this.lastTime) / 1000;
-      // Clamp delta time to prevent teleportation when tab is backgrounded
-      const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
-      this.lastTime = this.nowMs;
-      this.update(dt);
       this.render();
     } catch (err) {
-      console.error('[GameEngine] frame error', err);
+      console.error('[GameEngine] render error', err);
     }
   };
 
@@ -1051,7 +1055,8 @@ export class GameEngine {
       if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
       else {
         const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
-        if (!frameCanvas || frameCanvas.width === 0 || frameCanvas.height === 0) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
+        // getSpriteFrame nulls zero-size canvases centrally — trust that contract here.
+        if (!frameCanvas) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
         else {
           const scale = char.isSubAgent ? 1.5 : 2;
           const spriteW = 16 * scale, spriteH = 32 * scale;

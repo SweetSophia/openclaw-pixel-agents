@@ -568,7 +568,7 @@ describe('GameEngine integration: render fault tolerance (issue #172)', () => {
     engine.addCharacter({ id: 'cybera', name: 'Cybera', x: 2, y: 2, state: 'idle' });
 
     engine.start();
-    expect(frameErrorSpy).toHaveBeenCalledWith('[GameEngine] frame error', frameFailure);
+    expect(frameErrorSpy).toHaveBeenCalledWith('[GameEngine] render error', frameFailure);
     expect(pendingFrames).toHaveLength(1);
 
     engine.setCharacterSprite('cybera', makeCharacterSprite(goodCanvas));
