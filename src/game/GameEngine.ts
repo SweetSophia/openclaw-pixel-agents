@@ -324,14 +324,18 @@ export class GameEngine {
 
   private loop = () => {
     if (!this.running) return;
-    this.nowMs = performance.now();
-    const rawDt = (this.nowMs - this.lastTime) / 1000;
-    // Clamp delta time to prevent teleportation when tab is backgrounded
-    const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
-    this.lastTime = this.nowMs;
-    this.update(dt);
-    this.render();
     this.animFrameId = requestAnimationFrame(this.loop);
+    try {
+      this.nowMs = performance.now();
+      const rawDt = (this.nowMs - this.lastTime) / 1000;
+      // Clamp delta time to prevent teleportation when tab is backgrounded
+      const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
+      this.lastTime = this.nowMs;
+      this.update(dt);
+      this.render();
+    } catch (err) {
+      console.error('[GameEngine] frame error', err);
+    }
   };
 
   // ── Obstacle map ─────────────────────────────────────
@@ -906,7 +910,7 @@ export class GameEngine {
         }
 
         const spriteItem = furniture.get(item.type);
-        if (assetsLoaded && spriteItem) {
+        if (assetsLoaded && spriteItem && spriteItem.canvas.width > 0 && spriteItem.canvas.height > 0) {
           ctx.imageSmoothingEnabled = false;
           ctx.drawImage(spriteItem.canvas, px, py, spriteItem.width * zoom, spriteItem.height * zoom);
         } else {
@@ -950,10 +954,12 @@ export class GameEngine {
       const deskItem = furniture.get('DESK');
       const pcItem = furniture.get('PC');
       const chairItem = furniture.get('CUSHIONED_CHAIR') || furniture.get('WOODEN_CHAIR');
-      if (assetsLoaded && (deskItem || pcItem)) {
-        if (deskItem) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
-        if (pcItem) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (deskItem?.height ?? 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
-        if (chairItem) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
+      const hasDesk = deskItem && deskItem.canvas.width > 0 && deskItem.canvas.height > 0;
+      const hasPc = pcItem && pcItem.canvas.width > 0 && pcItem.canvas.height > 0;
+      if (assetsLoaded && (hasDesk || hasPc)) {
+        if (hasDesk) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
+        if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (deskItem?.height ?? 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
+        if (chairItem && chairItem.canvas.width > 0 && chairItem.canvas.height > 0) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
       } else {
         this.renderFallbackDesk(agentId, px, py, tileSize);
       }
@@ -963,7 +969,7 @@ export class GameEngine {
   private drawFurnitureItem(type: string, px: number, py: number, tileSize: number, zoom: number) {
     const { ctx, furniture, assetsLoaded } = this;
     const item = furniture.get(type);
-    if (assetsLoaded && item) {
+    if (assetsLoaded && item && item.canvas.width > 0 && item.canvas.height > 0) {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(item.canvas, px, py, item.width * zoom, item.height * zoom);
     } else {
@@ -1045,7 +1051,7 @@ export class GameEngine {
       if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
       else {
         const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
-        if (!frameCanvas) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
+        if (!frameCanvas || frameCanvas.width === 0 || frameCanvas.height === 0) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
         else {
           const scale = char.isSubAgent ? 1.5 : 2;
           const spriteW = 16 * scale, spriteH = 32 * scale;

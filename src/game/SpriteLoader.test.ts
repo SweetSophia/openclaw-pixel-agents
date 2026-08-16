@@ -1,7 +1,8 @@
-import { describe, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   getComposedCharacter,
+  getSpriteFrame,
   loadAllAssets,
   loadCharacters,
   loadFloors,
@@ -225,5 +226,20 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
       readonly floors: readonly ReadonlyLoadedFloor[];
       readonly furniture: ReadonlyMap<string, ReadonlyLoadedFurnitureItem>;
     }>();
+  });
+
+  it('getSpriteFrame rejects a zero-size source canvas (issue #172)', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 0;
+    canvas.height = 0;
+    const frame: ReadonlySpriteFrame = { canvas, width: 16, height: 32 };
+    const character: ReadonlyLoadedCharacter = {
+      down: [frame],
+      up: [frame],
+      right: [frame],
+      left: [frame],
+    };
+
+    expect(getSpriteFrame(character, 'idle', 'down', 0)).toBeNull();
   });
 });
