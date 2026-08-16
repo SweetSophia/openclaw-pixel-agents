@@ -579,4 +579,34 @@ describe('GameEngine integration: render fault tolerance (issue #172)', () => {
     expect(drawnSources).toContain(goodCanvas);
     expect(pendingFrames).toHaveLength(1);
   });
+
+  it('skips the render but keeps the loop alive when update throws, then recovers', () => {
+    const made = makeCanvasWithStubbedContext();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(made.recorded.ctx);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    engine = new GameEngine(made.canvas, GRID) as unknown as TestGameEngine;
+    engine.addCharacter({ id: 'cybera', name: 'Cybera', x: 2, y: 2, state: 'idle' });
+
+    const updateFailure = new Error('bad state');
+    const realUpdate = engine.update.bind(engine);
+    let shouldThrow = true;
+    engine.update = ((dt: number) => {
+      if (shouldThrow) { throw updateFailure; }
+      realUpdate(dt);
+    }) as typeof engine.update;
+
+    engine.start();
+    expect(errorSpy).toHaveBeenCalledWith('[GameEngine] update error', updateFailure);
+    expect(pendingFrames).toHaveLength(1); // loop rescheduled despite the update failure
+    // Render skipped for the failed frame: partial update state never drawn.
+    expect(made.recorded.fills.length).toBe(0);
+
+    // Recovery: state fixed, next frame updates and renders normally.
+    shouldThrow = false;
+    const nextFrame = pendingFrames.shift();
+    expect(nextFrame).toBeDefined();
+    nextFrame!(performance.now());
+    expect(made.recorded.fills.length).toBeGreaterThan(0);
+    expect(pendingFrames).toHaveLength(1);
+  });
 });

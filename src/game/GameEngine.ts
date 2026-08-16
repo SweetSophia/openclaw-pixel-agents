@@ -325,16 +325,24 @@ export class GameEngine {
   private loop = () => {
     if (!this.running) return;
     // Reschedule first so no frame error can kill the loop (issue #172).
-    // update() errors are game-state logic bugs: let them propagate uncaught
-    // so they surface loudly instead of drifting silently. Only render faults
-    // are contained — that is where bad canvases/sprites can throw.
+    // update() faults (game-state logic bugs) skip the render for that frame
+    // so partially-committed state never reaches the canvas, and are logged
+    // with a distinct tag; the loop stays alive so it recovers as soon as
+    // good state arrives. render() faults (bad canvases/sprites) are
+    // contained separately (Kody review on PR #173).
     this.animFrameId = requestAnimationFrame(this.loop);
     this.nowMs = performance.now();
     const rawDt = (this.nowMs - this.lastTime) / 1000;
     // Clamp delta time to prevent teleportation when tab is backgrounded
     const dt = Math.min(rawDt, 0.1); // cap at 100ms (~10 frames)
     this.lastTime = this.nowMs;
-    this.update(dt);
+    try {
+      this.update(dt);
+    } catch (err) {
+      console.error('[GameEngine] update error', err);
+      // Skip render this frame: partial update state must not be drawn.
+      return;
+    }
     try {
       this.render();
     } catch (err) {
