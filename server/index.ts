@@ -9,6 +9,7 @@
 import { execFile } from "node:child_process";
 import { isIP } from "node:net";
 import express from "express";
+import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
@@ -160,6 +161,7 @@ const CSP = [
 
 const isProd = process.env.NODE_ENV === "production";
 
+app.use(helmet());
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
