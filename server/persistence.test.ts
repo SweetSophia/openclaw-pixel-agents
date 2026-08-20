@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { atomicWriteFileSync } from "./persistence";
 
+const itPosix = process.platform === "win32" ? it.skip : it;
+
 describe("atomicWriteFileSync", () => {
   const directories: string[] = [];
 
@@ -33,7 +35,7 @@ describe("atomicWriteFileSync", () => {
     expect(readdirSync(directory)).toEqual(["agent-prefs.json"]);
   });
 
-  it("flushes the temporary file and syncs the directory after rename", () => {
+  itPosix("flushes the temporary file and syncs the directory after rename", () => {
     const directory = mkdtempSync(join(tmpdir(), "pixel-agents-atomic-durability-"));
     directories.push(directory);
     const operations: string[] = [];
@@ -107,7 +109,22 @@ describe("atomicWriteFileSync", () => {
     }));
   });
 
-  it("preserves simultaneous directory sync and close failures", () => {
+  itPosix("keeps the replaced target when directory sync fails after rename", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pixel-agents-atomic-sync-failure-"));
+    directories.push(directory);
+    const target = join(directory, "default.json");
+    writeFileSync(target, "previous");
+    const syncError = new Error("fault-injected sync failure");
+
+    expect(() => atomicWriteFileSync(directory, "default.json", "replacement", {
+      syncFile: () => { throw syncError; },
+    })).toThrow(syncError);
+
+    expect(readFileSync(target, "utf8")).toBe("replacement");
+    expect(readdirSync(directory)).toEqual(["default.json"]);
+  });
+
+  itPosix("preserves simultaneous directory sync and close failures", () => {
     const directory = mkdtempSync(join(tmpdir(), "pixel-agents-atomic-sync-close-"));
     directories.push(directory);
     const syncError = new Error("fault-injected sync failure");
