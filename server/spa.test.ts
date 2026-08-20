@@ -16,11 +16,14 @@
  *   7. the TRUST_PROXY parser accepts only documented forms and fails fast
  *      with a descriptive error on malformed/unrestricted values;
  *   8. with TRUST_PROXY=1, distinct X-Forwarded-For clients get distinct
- *      buckets (no proxy-collapse), while the exemption still holds.
+ *      buckets (no proxy-collapse), while the exemption still holds;
+ *   9. the exact /socket.io namespace is exempt without exempting sibling
+ *      public paths;
+ *  10. the limiter remains mounted when FRONTEND_DIR is absent at boot.
  *
- * FRONTEND_DIR is pointed at a temp fixture so the limiter + static mount
- * are actually registered (they are skipped entirely when the directory
- * does not exist, which is why these paths were previously untestable).
+ * The main suite points FRONTEND_DIR at a temp fixture so static and SPA
+ * responses are observable; a separate suite pins limiter availability when
+ * the directory is absent at module load.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,6 +140,33 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     expect(apiStatus.status).toBe(200);
   });
 
+  it("exempts Socket.IO polling without exempting sibling public paths", async () => {
+    // Repeated engine.io polling must not consume the SPA/static budget.
+    for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
+      const polling = await request(app)
+        .get(`/socket.io/?EIO=4&transport=polling&t=${i}`);
+      expect(polling.status).toBe(200);
+    }
+
+    const publicRequest = await request(app).get("/assets/fixture.txt");
+    expect(publicRequest.status).toBe(200);
+
+    // Pin the exact namespace boundary: similar public paths stay protected.
+    resetRateLimitBuckets();
+    for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
+      await request(app).get("/assets/fixture.txt");
+    }
+
+    for (const socketPath of ["/socket.io", "/socket.io/?EIO=4&transport=polling"]) {
+      const exempt = await request(app).get(socketPath);
+      expect(exempt.status).toBe(200);
+    }
+    for (const sibling of ["/socket.io-client", "/socket.iox"]) {
+      const blocked = await request(app).get(sibling);
+      expect(blocked.status).toBe(429);
+    }
+  });
+
   it("returns JSON 404s for unknown API GET routes (issue #103 boundary pin)", async () => {
     const response = await request(app).get("/api/definitely-missing");
     expect(response.status).toBe(404);
@@ -203,6 +233,46 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
       expect(() => parseTrustProxy(raw)).toThrow(/Invalid TRUST_PROXY value/);
       expect(() => parseTrustProxy(raw)).toThrow(/Accepted forms/);
     });
+  });
+});
+
+describe("public GET limiter without frontend at boot (issue #156)", () => {
+  let app: Express;
+  let io: SocketIOServer;
+  let dataDir: string;
+
+  beforeAll(async () => {
+    dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-spa-missing-data-"));
+
+    vi.stubEnv("DATA_DIR", dataDir);
+    vi.stubEnv("DATA_SOURCE", "ingest");
+    vi.stubEnv("INGEST_API_TOKEN", "test-secret");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
+    vi.stubEnv("FRONTEND_DIR", join(dataDir, "missing-frontend"));
+
+    vi.resetModules();
+    const serverModule = await import("./index");
+    app = serverModule.app;
+    io = serverModule.io;
+  });
+
+  afterAll(() => {
+    io.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("still rate-limits the SPA fallback 404 path", async () => {
+    for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
+      const response = await request(app).get("/missing-client-route");
+      expect(response.status).toBe(404);
+    }
+
+    const blocked = await request(app).get("/missing-client-route");
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toEqual({ error: "Too many requests" });
   });
 });
 
