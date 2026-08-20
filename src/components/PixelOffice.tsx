@@ -83,9 +83,10 @@ export const PixelOffice: React.FC<Props> = ({
   }, [selectedFurnitureType]);
 
   // Load layout data into engine
-  // Use serialised keys so moves, rotations, deletions, and seat changes are all detected
+  // Include every furniture field consumed by GameEngine. In particular, a
+  // type swap at unchanged coordinates must still invalidate the engine view.
   const furnitureKey = activeLayout?.furniture
-    ? JSON.stringify(activeLayout.furniture.map(f => `${f.id}:${f.x},${f.y},${f.rotation}`))
+    ? JSON.stringify(activeLayout.furniture.map(f => `${f.id}:${f.type}:${f.x},${f.y},${f.rotation}`))
     : '';
   const seatsKey = activeLayout?.seats
     ? JSON.stringify(activeLayout.seats)

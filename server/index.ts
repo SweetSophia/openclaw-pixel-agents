@@ -1308,12 +1308,15 @@ app.put("/api/layouts/:id", (req, res) => {
   const { id } = req.params;
   if (!isValidLayoutId(id)) return res.status(400).json({ error: "Invalid layout ID" });
   const existing = loadLayout(id);
-  const baseLayout: OfficeLayoutDoc = existing || { id, name: id, width: 24, height: 16, furniture: [], seats: {}, updatedAt: Date.now() };
-  const parsed = parseLayoutMutationBody(req.body, { width: baseLayout.width, height: baseLayout.height });
+  // PUT is update-only. Creation has a dedicated POST endpoint; treating a
+  // missing target as an upsert lets a stale client resurrect a layout that
+  // another client just deleted.
+  if (!existing) return res.status(404).json({ error: "Layout not found" });
+  const parsed = parseLayoutMutationBody(req.body, { width: existing.width, height: existing.height });
   if (!parsed.ok) return res.status(400).json({ error: parsed.error });
 
   // Server-side conflict detection: reject stale writes using baseUpdatedAt
-  if (existing && parsed.baseUpdatedAt != null && existing.updatedAt != null) {
+  if (parsed.baseUpdatedAt != null && existing.updatedAt != null) {
     if (parsed.baseUpdatedAt < existing.updatedAt) {
       return res.status(409).json({
         error: "Conflict: your data is stale. Reload and try again.",
@@ -1323,7 +1326,7 @@ app.put("/api/layouts/:id", (req, res) => {
   }
 
   const layout: OfficeLayoutDoc = {
-    ...baseLayout,
+    ...existing,
     ...parsed.body,
     id, // prevent id overwrite
   };
@@ -1516,4 +1519,3 @@ if (require.main === module) {
 }
 
 export { app, server, io, startServer };
-

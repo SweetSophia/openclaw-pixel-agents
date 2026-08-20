@@ -15,6 +15,10 @@ export interface LayoutDoc {
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
+export interface RemoteLayoutEvent {
+  id: string;
+}
+
 type PersistedRevision = { id: string; updatedAt: number };
 
 function isLayoutDoc(value: unknown): value is LayoutDoc {
@@ -109,6 +113,10 @@ export function useLayoutStore() {
   const isDirtyRef = useRef(false);
   // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
   const retryAttemptRef = useRef(0);
+  const remotelyDeletedIdsRef = useRef(new Set<string>());
+  const activeSelectionVersionRef = useRef(0);
+  const remoteReconciliationGenerationRef = useRef(0);
+  const remoteReconciliationRef = useRef<{ id: string; generation: number } | null>(null);
 
   const scheduleSaveRetry = useCallback((retry: () => void) => {
     const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
@@ -166,6 +174,8 @@ export function useLayoutStore() {
   // architecturally enforced — every programmatic set goes through here.
   const setActiveLayoutProgrammatic = useCallback((layout: LayoutDoc | null) => {
     skipAutoSaveRef.current = true;
+    activeSelectionVersionRef.current++;
+    isDirtyRef.current = false;
     setIsDirty(false);
     // Reset the retry counter so the first failure on a freshly-loaded
     // layout starts from the base 2s backoff, not the previous layout's
@@ -213,6 +223,7 @@ export function useLayoutStore() {
         console.error('Failed to load layout: invalid response body');
         return null;
       }
+      remotelyDeletedIdsRef.current.delete(id);
       setActiveLayoutProgrammatic(data);
       return data;
     } catch (err) {
@@ -220,6 +231,69 @@ export function useLayoutStore() {
       return null;
     }
   }, [setActiveLayoutProgrammatic]);
+
+  const reconcileRemoteLayout = useCallback(async (event: RemoteLayoutEvent) => {
+    if (activeLayoutRef.current?.id !== event.id) return;
+
+    const generation = ++remoteReconciliationGenerationRef.current;
+    const selectionVersionAtStart = activeSelectionVersionRef.current;
+    const editVersionAtStart = furnitureEditVersionRef.current;
+    remoteReconciliationRef.current = { id: event.id, generation };
+    const isCurrent = () => remoteReconciliationRef.current?.generation === generation
+      && activeLayoutRef.current?.id === event.id
+      && activeSelectionVersionRef.current === selectionVersionAtStart;
+
+    try {
+      const response = await fetch(`${API_BASE}/layouts/${event.id}`);
+      if (!isCurrent()) return;
+      if (response.status === 404) {
+        remotelyDeletedIdsRef.current.add(event.id);
+        if (autoSaveTimerRef.current) {
+          clearTimeout(autoSaveTimerRef.current);
+          autoSaveTimerRef.current = null;
+        }
+        if (isDirtyRef.current) {
+          markSaveStatus('error');
+          return;
+        }
+
+        const defaultResponse = await fetch(`${API_BASE}/layouts/default`);
+        if (!isCurrent()) return;
+        if (!defaultResponse.ok) throw new Error(`HTTP ${defaultResponse.status}`);
+        const defaultLayout: unknown = await defaultResponse.json();
+        if (!isLayoutDoc(defaultLayout) || defaultLayout.id !== 'default') {
+          throw new Error('Invalid default layout response');
+        }
+        if (
+          furnitureEditVersionRef.current !== editVersionAtStart
+          || isDirtyRef.current
+        ) return;
+        setActiveLayoutProgrammatic(defaultLayout);
+        return;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const layout: unknown = await response.json();
+      if (!isLayoutDoc(layout) || layout.id !== event.id) {
+        throw new Error('Invalid remote layout response');
+      }
+      if (!isCurrent()) return;
+      remotelyDeletedIdsRef.current.delete(event.id);
+      if (
+        furnitureEditVersionRef.current !== editVersionAtStart
+        || isDirtyRef.current
+      ) return;
+      setActiveLayoutProgrammatic(layout);
+    } catch (err) {
+      if (isCurrent()) {
+        console.error('Failed to reconcile remote layout:', err);
+        markSaveStatus('error');
+      }
+    } finally {
+      if (remoteReconciliationRef.current?.generation === generation) {
+        remoteReconciliationRef.current = null;
+      }
+    }
+  }, [markSaveStatus, setActiveLayoutProgrammatic]);
 
   const saveActiveLayout = useCallback(async (updates?: Partial<LayoutDoc>) => {
     savePromiseRef.current = savePromiseRef.current.then(async () => {
@@ -229,6 +303,14 @@ export function useLayoutStore() {
       // the ref sync.
       const currentLayout = activeLayoutRef.current;
       if (!currentLayout) return;
+      if (remoteReconciliationRef.current?.id === currentLayout.id) {
+        scheduleSaveRetry(() => { void saveActiveLayout(); });
+        return;
+      }
+      if (remotelyDeletedIdsRef.current.has(currentLayout.id)) {
+        markSaveStatus('error');
+        return;
+      }
       markSaveStatus('saving');
       const editVersionAtSaveStart = furnitureEditVersionRef.current;
       const persistedRevision = persistedRevisionRef.current;
@@ -267,6 +349,10 @@ export function useLayoutStore() {
           if (activeLayoutRef.current?.id === merged.id) {
             scheduleSaveRetry(() => { void saveActiveLayout(); });
           }
+          markSaveStatus('error');
+          return;
+        }
+        if (remotelyDeletedIdsRef.current.has(merged.id)) {
           markSaveStatus('error');
           return;
         }
@@ -366,6 +452,7 @@ export function useLayoutStore() {
   ) => {
     if (!activeLayoutRef.current) return;
     furnitureEditVersionRef.current++;
+    isDirtyRef.current = true;
     setActiveLayout(prev => {
       if (!prev) return null;
       const furniture = typeof furnitureOrUpdater === 'function'
@@ -429,7 +516,11 @@ export function useLayoutStore() {
       if (!isDirtyRef.current) return;
 
       const currentLayout = activeLayoutRef.current;
-      if (currentLayout) {
+      if (
+        currentLayout
+        && !remotelyDeletedIdsRef.current.has(currentLayout.id)
+        && remoteReconciliationRef.current?.id !== currentLayout.id
+      ) {
         const persistedRevision = persistedRevisionRef.current;
         const merged = {
           ...currentLayout,
@@ -501,5 +592,6 @@ export function useLayoutStore() {
     deleteLayout,
     updateFurniture,
     fetchLayouts,
+    reconcileRemoteLayout,
   };
 }

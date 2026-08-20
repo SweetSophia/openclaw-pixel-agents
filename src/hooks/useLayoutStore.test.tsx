@@ -887,6 +887,128 @@ describe('useLayoutStore', () => {
     confirmSpy.mockRestore();
   });
 
+  it('does not let a delayed remote reload overwrite a newer local edit', async () => {
+    await renderStoreProbe();
+    const originalFetch = vi.mocked(fetch);
+    const pending = deferred<Response>();
+    let deferRemoteLoad = true;
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (
+        deferRemoteLoad
+        && url.endsWith('/api/layouts/default')
+        && (!init || init.method === undefined || init.method === 'GET')
+      ) {
+        deferRemoteLoad = false;
+        return pending.promise;
+      }
+      return originalFetch(input, init);
+    }));
+
+    let reconciliation!: Promise<void>;
+    act(() => {
+      reconciliation = latest(snapshots).reconcileRemoteLayout({ id: 'default' });
+    });
+    const localFurniture = [{ id: 'local', type: 'desk', x: 7, y: 8, rotation: 0 }];
+    act(() => latest(snapshots).updateFurniture(localFurniture));
+
+    pending.resolve(new Response(JSON.stringify({
+      ...MOCK_LAYOUT,
+      furniture: [{ id: 'remote', type: 'sofa', x: 1, y: 1, rotation: 0 }],
+      updatedAt: 3000,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await act(async () => { await reconciliation; });
+
+    expect(latest(snapshots).activeLayout?.furniture).toEqual(localFurniture);
+    expect(latest(snapshots).isDirty).toBe(true);
+  });
+
+  it('blocks auto-save and manual save after a dirty layout is remotely deleted', async () => {
+    await renderStoreProbe();
+    await act(async () => { await latest(snapshots).loadLayoutById('other'); });
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockClear();
+    vi.useFakeTimers();
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'local', type: 'desk', x: 2, y: 3, rotation: 0 },
+      ]);
+    });
+    delete layouts.other;
+    await act(async () => {
+      await latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+      await latest(snapshots).saveActiveLayout();
+      vi.advanceTimersByTime(5000);
+      window.dispatchEvent(new Event('beforeunload') as BeforeUnloadEvent);
+    });
+
+    const putCalls = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT');
+    expect(putCalls).toHaveLength(0);
+    expect(latest(snapshots).activeLayout?.id).toBe('other');
+    expect(latest(snapshots).isDirty).toBe(true);
+    expect(latest(snapshots).saveStatus).toBe('error');
+  });
+
+  it('loads the default when a clean active layout was deleted while disconnected', async () => {
+    await renderStoreProbe();
+    await act(async () => { await latest(snapshots).loadLayoutById('other'); });
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockClear();
+    delete layouts.other;
+
+    await act(async () => {
+      await latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+    });
+
+    const getCalls = fetchMock.mock.calls.filter(([input, init]) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      return url.endsWith('/api/layouts/other')
+        && (!init || init.method === undefined || init.method === 'GET');
+    });
+    expect(getCalls).toHaveLength(1);
+    expect(latest(snapshots).activeLayout?.id).toBe('default');
+    expect(latest(snapshots).isDirty).toBe(false);
+    expect(latest(snapshots).saveStatus).toBe('idle');
+  });
+
+  it('ignores an older reconciliation response after a newer request observes deletion', async () => {
+    await renderStoreProbe();
+    await act(async () => { await latest(snapshots).loadLayoutById('other'); });
+    const originalFetch = vi.mocked(fetch);
+    const staleResponse = deferred<Response>();
+    let otherGetCount = 0;
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (
+        url.endsWith('/api/layouts/other')
+        && (!init || init.method === undefined || init.method === 'GET')
+      ) {
+        otherGetCount++;
+        if (otherGetCount === 1) return staleResponse.promise;
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
+      }
+      return originalFetch(input, init);
+    }));
+
+    let older!: Promise<void>;
+    act(() => {
+      older = latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+    });
+    await act(async () => {
+      await latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+    });
+    expect(latest(snapshots).activeLayout?.id).toBe('default');
+
+    staleResponse.resolve(new Response(JSON.stringify({
+      ...OTHER_LAYOUT,
+      updatedAt: 3000,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await act(async () => { await older; });
+
+    expect(latest(snapshots).activeLayout?.id).toBe('default');
+  });
+
   it('retries auto-save on 5xx with exponential backoff (M1)', async () => {
     // M1: On 5xx, scheduleSaveRetry must reschedule with exponential
     // backoff (2s, 4s, 8s ...) so transient server errors don't strand
