@@ -5,6 +5,7 @@ import {
   createInitialDataSourceState,
   isCliPollingActive,
   isIngestWritesActive,
+  OPENCLAW_SESSIONS_EXEC_OPTIONS,
   type CliFailureKind,
   type ConfiguredDataSource,
 } from "./dataSource";
@@ -33,15 +34,15 @@ describe("data-source policy", () => {
   );
 
   it.each([
-    ["auto", false, "missing-executable", "cli-poll", false],
+    ["auto", false, "operator-action-required", "cli-poll", false],
     ["auto", false, "transient", "cli-poll", false],
-    ["auto", true, "missing-executable", "ingest-only", true],
+    ["auto", true, "operator-action-required", "ingest-only", true],
     ["auto", true, "transient", "cli-poll", false],
-    ["cli", false, "missing-executable", "cli-poll", false],
-    ["cli", true, "missing-executable", "cli-poll", false],
+    ["cli", false, "operator-action-required", "cli-poll", false],
+    ["cli", true, "operator-action-required", "cli-poll", false],
     ["cli", true, "transient", "cli-poll", false],
-    ["ingest", false, "missing-executable", "ingest-only", false],
-    ["ingest", true, "missing-executable", "ingest-only", false],
+    ["ingest", false, "operator-action-required", "ingest-only", false],
+    ["ingest", true, "operator-action-required", "ingest-only", false],
     ["ingest", true, "transient", "ingest-only", false],
   ] as const)(
     "%s with token=%s and %s remains/transitions to %s",
@@ -57,18 +58,19 @@ describe("data-source policy", () => {
 
   it("makes the fallback transition sticky and idempotent", () => {
     const initial = createInitialDataSourceState("auto", true);
-    const transitioned = applyCliFailure(initial, "missing-executable");
+    const transitioned = applyCliFailure(initial, "operator-action-required");
 
-    expect(applyCliFailure(transitioned, "missing-executable")).toBe(transitioned);
+    expect(applyCliFailure(transitioned, "operator-action-required")).toBe(transitioned);
     expect(applyCliFailure(transitioned, "transient")).toBe(transitioned);
     expect(transitioned.effective).toBe("ingest-only");
   });
 
   it.each([
-    [{ code: "ENOENT" }, "missing-executable"],
-    [{ code: "ENOTDIR" }, "missing-executable"],
+    [{ code: "ENOENT" }, "operator-action-required"],
+    [{ code: "ENOTDIR" }, "operator-action-required"],
+    [{ code: "EACCES" }, "operator-action-required"],
+    [{ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }, "operator-action-required"],
     [{ code: 1 }, "transient"],
-    [{ code: "EACCES" }, "transient"],
     [{ code: "ETIMEDOUT", killed: true }, "transient"],
     [{ killed: true, signal: "SIGTERM" }, "transient"],
     [new SyntaxError("bad JSON"), "transient"],
@@ -78,12 +80,37 @@ describe("data-source policy", () => {
     expect(classifyCliExecError(error)).toBe(expected);
   });
 
+  it.each(["EACCES", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"])(
+    "transitions auto mode with an ingest token after permanent %s failures",
+    (code) => {
+      const initial = createInitialDataSourceState("auto", true);
+      const failure = classifyCliExecError({ code });
+      const next = applyCliFailure(initial, failure);
+
+      expect(failure).toBe("operator-action-required");
+      expect(next).toEqual({
+        configured: "auto",
+        effective: "ingest-only",
+        hasIngestToken: true,
+        transitioned: true,
+      });
+    },
+  );
+
+  it("caps CLI session output at the collector's 10 MiB contract", () => {
+    expect(OPENCLAW_SESSIONS_EXEC_OPTIONS).toEqual({
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    expect(Object.isFrozen(OPENCLAW_SESSIONS_EXEC_OPTIONS)).toBe(true);
+  });
+
   it.each([
     ["auto", false, undefined, true, false],
     ["auto", true, undefined, true, false],
     ["auto", true, "transient", true, false],
-    ["auto", true, "missing-executable", false, true],
-    ["cli", true, "missing-executable", true, false],
+    ["auto", true, "operator-action-required", false, true],
+    ["cli", true, "operator-action-required", true, false],
     ["ingest", true, undefined, false, true],
   ] as const)(
     "enforces one writer for %s with token=%s and failure=%s",
