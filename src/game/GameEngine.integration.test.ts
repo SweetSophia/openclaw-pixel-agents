@@ -264,8 +264,13 @@ describe('GameEngine integration: editor adapters', () => {
     expect(gameCallbacks.onCharacterClick).toHaveBeenCalledWith('test-agent');
   });
 
-  it('drags, places, and rotates furniture through the full host adapter closure', () => {
-    engine.setLayout([{ id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 }]);
+  it('keeps caller layout immutable while dragging and rotating through the host closure', () => {
+    const callerFurniture: PlacedFurniture[] = [
+      { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 },
+    ];
+    Object.freeze(callerFurniture[0]);
+    Object.freeze(callerFurniture);
+    engine.setLayout(callerFurniture);
     engine.setEditorMode(true);
 
     const start = clientCenterOf(3, 4);
@@ -285,6 +290,13 @@ describe('GameEngine integration: editor adapters', () => {
       x: 8,
       y: 9,
     });
+    expect(callerFurniture[0]).toEqual({
+      id: 'desk-1',
+      type: 'DESK',
+      x: 3,
+      y: 4,
+      rotation: 0,
+    });
     expect(editorCallbacks.onMoveFurniture).not.toHaveBeenCalled();
 
     canvas.dispatchEvent(
@@ -301,6 +313,7 @@ describe('GameEngine integration: editor adapters', () => {
       }),
     );
     expect(engine.getPlacedFurniture()[0].rotation).toBe(90);
+    expect(callerFurniture[0].rotation).toBe(0);
     expect(editorCallbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
   });
 });
