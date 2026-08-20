@@ -37,4 +37,21 @@ describe("CLI child-process environment", () => {
     expect(execFileStub).toHaveBeenCalledOnce();
     expect(process.env.INGEST_API_TOKEN).toBe("must-not-reach-child");
   });
+
+  it("removes differently-cased ingest token keys from the CLI environment", async () => {
+    vi.stubEnv("Ingest_Api_Token", "mixed-case-secret");
+    const execFileStub = vi.fn((...args: unknown[]) => {
+      const options = args[2] as { env: NodeJS.ProcessEnv };
+      expect(
+        Object.keys(options.env).some(
+          key => key.toUpperCase() === "INGEST_API_TOKEN",
+        ),
+      ).toBe(false);
+      const callback = args[3] as (error: null, stdout: string, stderr: string) => void;
+      callback(null, '{"sessions":[],"count":0}', "");
+    });
+
+    await expect(pollSessions(execFileStub as unknown as typeof execFile))
+      .resolves.toMatchObject({ sessions: [], count: 0 });
+  });
 });

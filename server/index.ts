@@ -15,7 +15,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
@@ -289,7 +289,11 @@ function savePersistedPrefs() {
       prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
     }
     mkdirSync(DATA_DIR, { recursive: true });
-    atomicWriteFileSync(PERSIST_PATH, JSON.stringify(prefs, null, 2));
+    atomicWriteFileSync(
+      dirname(PERSIST_PATH),
+      basename(PERSIST_PATH),
+      JSON.stringify(prefs, null, 2),
+    );
   } catch (err) {
     logger.error({ err, subsystem: "persist" }, "failed to save prefs");
   }
@@ -346,8 +350,14 @@ export function pollSessions(runExecFile: typeof execFile = execFile): Promise<C
       "--active", String(ACTIVE_THRESHOLD_MIN),
     ];
 
-    const childEnv = { ...process.env };
-    delete childEnv.INGEST_API_TOKEN;
+    // Environment keys are case-insensitive on Windows. Filtering entries
+    // avoids leaking a differently-cased spelling after spreading process.env
+    // into an ordinary case-sensitive object.
+    const childEnv = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => key.toUpperCase() !== "INGEST_API_TOKEN",
+      ),
+    );
 
     runExecFile(OPENCLAW_BIN, args, { timeout: 10000, env: childEnv }, (err, stdout, stderr) => {
       if (err) {
@@ -1228,7 +1238,12 @@ function saveLayout(layout: OfficeLayoutDoc): void {
   layout.updatedAt = Date.now();
   const validated = parseOfficeLayoutDoc(layout);
   if (!validated) throw new Error(`Invalid layout document: ${layout.id}`);
-  atomicWriteFileSync(join(LAYOUTS_DIR, `${validated.id}.json`), JSON.stringify(validated, null, 2));
+  const layoutPath = join(LAYOUTS_DIR, `${validated.id}.json`);
+  atomicWriteFileSync(
+    dirname(layoutPath),
+    basename(layoutPath),
+    JSON.stringify(validated, null, 2),
+  );
 }
 
 function deleteLayout(id: string): boolean {

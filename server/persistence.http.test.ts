@@ -55,7 +55,11 @@ describe("atomic server persistence call paths", () => {
       .expect(200);
 
     const target = join(dataDir, "agent-prefs.json");
-    expect(atomicWriteFileSync).toHaveBeenCalledWith(target, expect.any(String));
+    expect(atomicWriteFileSync).toHaveBeenCalledWith(
+      dataDir,
+      "agent-prefs.json",
+      expect.any(String),
+    );
     expect(JSON.parse(readFileSync(target, "utf8"))).toMatchObject({
       main: { pixelEnabled: false },
     });
@@ -74,11 +78,48 @@ describe("atomic server persistence call paths", () => {
       })
       .expect(200);
 
-    const target = join(dataDir, "layouts", "atomic-route.json");
-    expect(atomicWriteFileSync).toHaveBeenCalledWith(target, expect.any(String));
+    const layoutsDir = join(dataDir, "layouts");
+    const target = join(layoutsDir, "atomic-route.json");
+    expect(atomicWriteFileSync).toHaveBeenCalledWith(
+      layoutsDir,
+      "atomic-route.json",
+      expect.any(String),
+    );
     expect(JSON.parse(readFileSync(target, "utf8"))).toMatchObject({
       id: "atomic-route",
       name: "Atomic Route",
     });
+  });
+
+  it("rejects an encoded traversal layout path before persistence", async () => {
+    await request(app)
+      .put("/api/layouts/%2e%2e%2fescape")
+      .set("Origin", appOrigin)
+      .send({
+        name: "Traversal",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+      })
+      .expect(400);
+
+    expect(atomicWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid layout ID at the route boundary before persistence", async () => {
+    await request(app)
+      .put("/api/layouts/bad.id")
+      .set("Origin", appOrigin)
+      .send({
+        name: "Invalid ID",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+      })
+      .expect(400);
+
+    expect(atomicWriteFileSync).not.toHaveBeenCalled();
   });
 });
