@@ -357,7 +357,7 @@ export class GameEngine {
       const sprite = this.furniture.get(f.type);
       const fw = sprite ? sprite.footprintW : 2;
       const fh = sprite ? sprite.footprintH : 1;
-      return { x: f.x, y: f.y, w: fw, h: fh };
+      return { x: f.x, y: f.y, w: fw, h: fh, rotation: f.rotation };
     });
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
@@ -386,13 +386,19 @@ export class GameEngine {
     this.ensureObstacles();
     if (!this.obstacleGrid) return [{ x: char.targetX, y: char.targetY }];
 
-    return bfsPathfind(
+    const path = bfsPathfind(
       this.obstacleGrid,
       { x: Math.round(char.x), y: Math.round(char.y) },
       { x: Math.round(char.targetX), y: Math.round(char.targetY) },
       this.config.gridWidth,
       this.config.gridHeight,
     );
+    const destination = path[path.length - 1];
+    if (destination) {
+      char.targetX = destination.x;
+      char.targetY = destination.y;
+    }
+    return path;
   }
 
   // ── Update ───────────────────────────────────────────
@@ -471,13 +477,18 @@ export class GameEngine {
               ? (wpDx > 0 ? 'right' : 'left')
               : (wpDy > 0 ? 'down' : 'up');
           }
-        } else {
-          // Straight line fallback (no path or path complete, still moving)
+        } else if (char.path.length > 0) {
+          // Close the sub-tile gap after consuming the final waypoint.
           char.x += Math.sign(dx) * Math.min(speed * dt, Math.abs(dx));
           char.y += Math.sign(dy) * Math.min(speed * dt, Math.abs(dy));
           char.direction = Math.abs(dx) > Math.abs(dy)
             ? (dx > 0 ? 'right' : 'left')
             : (dy > 0 ? 'down' : 'up');
+        } else {
+          // An empty path means the destination is unreachable. Cancel the
+          // target instead of walking straight through the blocking tiles.
+          char.targetX = char.x;
+          char.targetY = char.y;
         }
       } else if (char.path.length > 0) {
         // Arrived — clear path
