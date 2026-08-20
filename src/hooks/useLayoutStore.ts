@@ -333,11 +333,14 @@ export function useLayoutStore() {
         console.error('Failed to create layout:', message);
         return null;
       }
-      if (data.layout) {
-        setActiveLayoutProgrammatic(data.layout);
-        fetchLayouts();
+      const layout: unknown = data?.layout;
+      if (!isLayoutDoc(layout)) {
+        console.error('Failed to create layout:', 'invalid response body');
+        return null;
       }
-      return data.layout ?? null;
+      setActiveLayoutProgrammatic(layout);
+      fetchLayouts();
+      return layout;
     } catch (err) {
       console.error('Failed to create layout:', err);
       return null;

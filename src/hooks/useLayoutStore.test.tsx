@@ -308,6 +308,26 @@ describe('useLayoutStore', () => {
     );
   });
 
+  it('returns a visible failure signal when createLayout receives an invalid success body', async () => {
+    await renderStoreProbe();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(new Response('not json', {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' },
+    }));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let result: LayoutDoc | null | undefined;
+    await act(async () => {
+      result = await latest(snapshots).createLayout('Malformed');
+    });
+
+    expect(result).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to create layout:',
+      'invalid response body',
+    );
+  });
+
   it('updateFurniture applies functional updater to current layout', async () => {
     await renderStoreProbe();
 
@@ -1075,6 +1095,26 @@ describe('useLayoutStore', () => {
     await vi.advanceTimersByTimeAsync(2_100);
 
     expect(putCount).toBe(1);
+  });
+
+  it('clears a pending autosave debounce on unmount', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    act(() => unmount?.());
+    unmount = undefined;
+    await vi.advanceTimersByTimeAsync(2_100);
+
+    const putCalls = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => (call[1] as RequestInit | undefined)?.method === 'PUT',
+    );
+    expect(putCalls).toHaveLength(0);
   });
 
   it('clears the saved-status timer on unmount', async () => {
