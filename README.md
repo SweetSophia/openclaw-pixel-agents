@@ -216,6 +216,11 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
 | `ACTIVE_MINUTES` | `30` | Session staleness threshold |
 | `INGEST_API_TOKEN` | *(none)* | Shared secret for ingest API auth (required for ingest mode) |
+| `RATE_LIMIT_MAX` | `10` | Authenticated ingest pushes allowed per minute and token digest |
+| `PRE_AUTH_RATE_LIMIT_MAX` | `5` | Ingest attempts allowed per minute and client IP before authentication |
+| `PUBLIC_GET_RATE_LIMIT_MAX` | `120` | Static/SPA GET or HEAD requests allowed per minute and client IP |
+| `PREFS_WRITE_RATE_LIMIT_MAX` | `60` | Non-layout `/api` mutations allowed per minute and client IP |
+| `LAYOUT_WRITE_RATE_LIMIT_MAX` | `30` | Layout PUT/POST/DELETE requests allowed per minute and client IP |
 | `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
@@ -236,7 +241,7 @@ If you terminate TLS or rewrite requests in a reverse proxy in front of the Node
 
 #### Client identity and rate limiting (`TRUST_PROXY`)
 
-By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it a single public GET/HEAD rate bucket (120 req/min). One noisy client can then exhaust the budget for everyone behind that proxy.
+By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it the public GET/HEAD and API-write rate buckets. One noisy client can then exhaust a shared budget for everyone behind that proxy.
 
 Set `TRUST_PROXY` to restore per-client limiting:
 
@@ -253,6 +258,8 @@ Two hard requirements:
 2. **Unrestricted trust is deliberately rejected.** `TRUST_PROXY="true"`, any `/0` CIDR (`0.0.0.0/0`, `::/0` — a zero prefix length matches every address of the family, i.e. the same blanket trust), and any other malformed value abort startup with a descriptive error rather than silently degrading security. Express's blanket `"true"` would trust every peer, which is exactly the spoofing scenario above.
 
 Malformed values (bad CIDRs, hostnames, empty entries, `"true"`) fail fast at startup with an error naming the accepted forms — never as an opaque crash from inside Express, and never by silently falling back to no trust, which would reintroduce the shared-bucket collapse.
+
+All rate-limit maximums must be positive integers; malformed or non-positive values fail startup rather than silently disabling protection. A `429` response includes `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` so clients can back off without guessing. Mutating API and ingest pre-auth limits run before JSON parsing, bounding repeated malformed-body work.
 
 ## Scripts
 
