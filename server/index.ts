@@ -995,6 +995,11 @@ function ingestPreAuthRateLimiter(
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
     return;
   }
+  // Classify the bearer header before body parsing so valid collectors bypass
+  // the failed-attempt bucket while invalid or missing credentials remain
+  // bounded. authenticateIngest hashes both configured and provided values to
+  // fixed-length digests before the timing-safe comparison.
+  if (authenticateIngest(req, res)) { next(); return; }
   const decision = checkPreAuthRateLimit(req);
   if (!decision.allowed) {
     sendRateLimitResponse(res, decision);

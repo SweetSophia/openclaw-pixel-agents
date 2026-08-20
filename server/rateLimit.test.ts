@@ -220,6 +220,25 @@ describe("API write rate limiting (issue #154)", () => {
       .expect(429);
     expectRateLimitHeaders(blocked, 3);
   });
+
+  it("does not let failed bearer attempts throttle a valid ingest push", async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await request(app)
+        .post("/api/ingest/agents")
+        .set("Authorization", "Bearer wrong-secret")
+        .send({ sessions: [] })
+        .expect(401);
+    }
+
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .send({ sessions: [] })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body).toMatchObject({ ok: true, received: 0 });
+      });
+  });
 });
 
 describe("disabled ingest pre-parser boundary", () => {
