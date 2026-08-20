@@ -222,6 +222,31 @@ describe("API write rate limiting (issue #154)", () => {
   });
 });
 
+describe("disabled ingest pre-parser boundary", () => {
+  it("returns the existing 501 response without parsing a malformed body", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-disabled-ingest-"));
+    vi.stubEnv("DATA_DIR", dataDir);
+    vi.stubEnv("DATA_SOURCE", "ingest");
+    vi.stubEnv("INGEST_API_TOKEN", "");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
+    vi.resetModules();
+
+    const serverModule = await import("./index");
+    await request(serverModule.app)
+      .post("/api/ingest/agents")
+      .set("Content-Type", "application/json")
+      .send('{"sessions":[')
+      .expect(501)
+      .expect({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
+
+    serverModule.io.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+});
+
 describe("rate-limit environment validation", () => {
   it.each([
     ["RATE_LIMIT_MAX", "0"],

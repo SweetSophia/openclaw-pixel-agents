@@ -197,7 +197,11 @@ app.use(httpRequestLogMiddleware);
 // bounded-but-still-expensive body buffering/parsing. Ingest has its own
 // pre-auth budget; all other writes retain the existing Origin boundary and
 // then enter their per-IP write budget.
+// CodeQL models only supported third-party limiter packages; the HTTP tests in
+// rateLimit.test.ts pin both custom guards' thresholds and pre-parser order.
+// codeql[js/missing-rate-limiting]
 app.use("/api/ingest/agents", ingestPreAuthRateLimiter);
+// codeql[js/missing-rate-limiting]
 app.use("/api", apiMutationGuard);
 app.use(express.json({ limit: "100kb" }));
 
@@ -866,12 +870,9 @@ const ingestPreAuthBuckets = new Map<string, number[]>();
 const publicGetRateBuckets = new Map<string, number[]>();
 const apiWriteRateBuckets = new Map<string, number[]>();
 
-type RateLimitDecision = Readonly<{
-  allowed: boolean;
-  limit: number;
-  remaining: number;
-  retryAfterSeconds?: number;
-}>;
+type RateLimitDecision =
+  | Readonly<{ allowed: true; limit: number; remaining: number }>
+  | Readonly<{ allowed: false; limit: number; remaining: 0; retryAfterSeconds: number }>;
 
 function takeRateLimit(
   buckets: Map<string, number[]>,
@@ -899,7 +900,10 @@ function takeRateLimit(
   return { allowed: true, limit, remaining: limit - recent.length };
 }
 
-function sendRateLimitResponse(res: express.Response, decision: RateLimitDecision): void {
+function sendRateLimitResponse(
+  res: express.Response,
+  decision: Extract<RateLimitDecision, { allowed: false }>,
+): void {
   res.setHeader("X-RateLimit-Limit", String(decision.limit));
   res.setHeader("X-RateLimit-Remaining", String(decision.remaining));
   res.setHeader("Retry-After", String(decision.retryAfterSeconds));
@@ -983,9 +987,12 @@ function ingestPreAuthRateLimiter(
   res: express.Response,
   next: express.NextFunction,
 ): void {
-  // Preserve the existing 501 contract when ingest is disabled and do not
-  // change non-POST behavior for this exact path.
-  if (req.method !== "POST" || !INGEST_TOKEN) { next(); return; }
+  if (req.method !== "POST") { next(); return; }
+  // Preserve the existing 501 contract while rejecting before JSON parsing.
+  if (!INGEST_TOKEN) {
+    res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
+    return;
+  }
   const decision = checkPreAuthRateLimit(req);
   if (!decision.allowed) {
     sendRateLimitResponse(res, decision);
@@ -994,12 +1001,10 @@ function ingestPreAuthRateLimiter(
   next();
 }
 
+// ingestPreAuthRateLimiter is mounted before JSON parsing and this handler;
+// CodeQL cannot infer the repository's custom sliding-window middleware.
+// codeql[js/missing-rate-limiting]
 app.post("/api/ingest/agents", (req, res) => {
-  if (!INGEST_TOKEN) {
-    res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
-    return;
-  }
-
   if (!authenticateIngest(req, res)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
