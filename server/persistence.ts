@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 const SAFE_PERSISTED_FILENAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const WINDOWS_RESERVED_BASENAME_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
@@ -47,11 +47,15 @@ export function atomicWriteFileSync(
   contents: string,
   options: AtomicWriteOptions = {},
 ): void {
-  if (!isSafePersistedFilename(fileName)) {
+  // `basename` is both an executable containment boundary and a sanitizer
+  // recognized by static taint analysis. The equality check rejects any path
+  // syntax before the sanitized leaf reaches filesystem APIs.
+  const safeFileName = basename(fileName);
+  if (safeFileName !== fileName || !isSafePersistedFilename(safeFileName)) {
     throw new Error(`Invalid persisted filename: ${fileName}`);
   }
   const allowedDirectory = resolve(directoryPath);
-  const filePath = resolve(allowedDirectory, fileName);
+  const filePath = resolve(allowedDirectory, safeFileName);
   if (dirname(filePath) !== allowedDirectory) {
     throw new Error(`Persisted file escapes its allowed directory: ${fileName}`);
   }
