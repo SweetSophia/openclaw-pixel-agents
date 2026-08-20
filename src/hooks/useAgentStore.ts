@@ -22,6 +22,31 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Connection failed';
 }
 
+interface RecipeUpdateEvent {
+  agentId: string;
+  recipe: CharacterRecipe;
+}
+
+function isRecipeUpdateEvent(value: unknown): value is RecipeUpdateEvent {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  const recipe = event.recipe;
+  if (!recipe || typeof recipe !== 'object') return false;
+  const candidate = recipe as Record<string, unknown>;
+  return typeof event.agentId === 'string'
+    && /^[a-zA-Z0-9_-]+$/.test(event.agentId)
+    && event.agentId.length <= 64
+    && Number.isInteger(candidate.bodyIndex)
+    && (candidate.bodyIndex as number) >= 0
+    && (candidate.bodyIndex as number) <= 5
+    && Number.isInteger(candidate.hairIndex)
+    && (candidate.hairIndex as number) >= 0
+    && (candidate.hairIndex as number) <= 8
+    && Number.isInteger(candidate.outfitIndex)
+    && (candidate.outfitIndex as number) >= 0
+    && (candidate.outfitIndex as number) <= 5;
+}
+
 export function useAgentStore() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [connected, setConnected] = useState(false);
@@ -308,15 +333,23 @@ export function useAgentStore() {
       setError(null);
       setConnected(true);
     };
+    const handleRecipeUpdate = (value: unknown) => {
+      if (!isRecipeUpdateEvent(value)) return;
+      setAgents(current => current.map(agent => (
+        agent.id === value.agentId ? { ...agent, recipe: value.recipe } : agent
+      )));
+    };
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('agents:update', handleUpdate);
+    socket.on('recipe-update', handleRecipeUpdate);
 
     return () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('agents:update', handleUpdate);
+      socket.off('recipe-update', handleRecipeUpdate);
       socket.disconnect();
     };
   }, [updateAgents]);
