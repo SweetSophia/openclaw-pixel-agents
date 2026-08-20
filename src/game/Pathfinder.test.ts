@@ -43,4 +43,10 @@ describe('Pathfinder', () => {
 
     expect(blockedNearFurniture).toEqual(blocked);
   });
+
+  it('rejects obstacle rotations outside the validated quarter turns', () => {
+    expect(() => buildObstacleMap(9, 9, [
+      { x: 4, y: 4, w: 2, h: 1, rotation: 45 },
+    ])).toThrow(/quarter turn/i);
+  });
 });

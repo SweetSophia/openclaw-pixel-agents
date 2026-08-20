@@ -34,7 +34,11 @@ export function buildObstacleMap(
 
   // Block furniture tiles
   for (const item of furniture) {
-    const rotation = ((item.rotation ?? 0) % 360 + 360) % 360;
+    const rawRotation = item.rotation ?? 0;
+    if (rawRotation % 90 !== 0) {
+      throw new RangeError('Furniture rotation must be a quarter turn');
+    }
+    const rotation = ((rawRotation % 360) + 360) % 360;
     const swapsAxes = rotation === 90 || rotation === 270;
     const footprintW = swapsAxes ? item.h : item.w;
     const footprintH = swapsAxes ? item.w : item.h;
