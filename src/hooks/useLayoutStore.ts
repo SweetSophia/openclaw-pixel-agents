@@ -54,6 +54,14 @@ function pickBaseUpdatedAt(
     : currentLayout.updatedAt;
 }
 
+function parseRetryAfterMs(value: string | null): number {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  const retryAt = Date.parse(value);
+  return Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 0;
+}
+
 /**
  * Dispatched action: a new layout value, or a functional updater.
  * Every mutation flows through the reducer, which guarantees the ref
@@ -110,8 +118,9 @@ export function useLayoutStore() {
   // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
   const retryAttemptRef = useRef(0);
 
-  const scheduleSaveRetry = useCallback((retry: () => void) => {
-    const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+  const scheduleSaveRetry = useCallback((retry: () => void, minimumDelayMs = 0) => {
+    const backoffDelay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+    const delay = Math.max(backoffDelay, minimumDelayMs);
     retryAttemptRef.current++;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
@@ -250,6 +259,11 @@ export function useLayoutStore() {
             if (activeLayoutRef.current?.id === merged.id) {
               scheduleSaveRetry(() => { void saveActiveLayout(); });
             }
+          } else if (response.status === 429) {
+            scheduleSaveRetry(
+              () => { void saveActiveLayout(); },
+              parseRetryAfterMs(response.headers.get('Retry-After')),
+            );
           } else if (response.status >= 500) {
             scheduleSaveRetry(() => { void saveActiveLayout(); });
           }

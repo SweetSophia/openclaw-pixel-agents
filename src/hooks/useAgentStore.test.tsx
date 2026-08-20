@@ -155,6 +155,74 @@ describe('useAgentStore REST polling fallback', () => {
   });
 });
 
+describe('useAgentStore mutation rate limits', () => {
+  const baseAgent = {
+    id: 'agent-1',
+    name: 'First Agent',
+    activity: 'typing' as const,
+    model: 'test',
+    sessionKey: 's1',
+    active: true,
+    lastActivity: 1,
+    pixelEnabled: true,
+    tags: [],
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    socketMock.handlers.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('reconciles toggle-all with server state after a partial 429 failure', async () => {
+    let serverAgents = [
+      baseAgent,
+      { ...baseAgent, id: 'agent-2', name: 'Second Agent' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        if (String(input).includes('/agent-1/')) {
+          serverAgents = serverAgents.map(agent => (
+            agent.id === 'agent-1' ? { ...agent, pixelEnabled: false } : agent
+          ));
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ error: 'Too many requests' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+        });
+      }
+      return new Response(JSON.stringify({ agents: serverAgents }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    expect(latest(snapshots).agents.map(agent => agent.pixelEnabled)).toEqual([true, true]);
+
+    await act(async () => {
+      await latest(snapshots).toggleAll(false);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(latest(snapshots).agents.map(agent => [agent.id, agent.pixelEnabled])).toEqual([
+      ['agent-1', false],
+      ['agent-2', true],
+    ]);
+
+    unmount();
+  });
+});
+
 describe('useAgentStore room filtering', () => {
   beforeEach(() => {
     vi.useFakeTimers();

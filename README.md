@@ -220,7 +220,7 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `PRE_AUTH_RATE_LIMIT_MAX` | `5` | Ingest attempts allowed per minute and client IP before authentication |
 | `PUBLIC_GET_RATE_LIMIT_MAX` | `120` | Static/SPA GET or HEAD requests allowed per minute and client IP |
 | `PREFS_WRITE_RATE_LIMIT_MAX` | `60` | Non-layout `/api` mutations allowed per minute and client IP |
-| `LAYOUT_WRITE_RATE_LIMIT_MAX` | `30` | Layout PUT/POST/DELETE requests allowed per minute and client IP |
+| `LAYOUT_WRITE_RATE_LIMIT_MAX` | `90` | Layout PUT/POST/DELETE requests allowed per minute and client IP; includes headroom above the editor's 30/minute theoretical autosave ceiling |
 | `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |

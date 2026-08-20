@@ -33,11 +33,12 @@ export function useAgentStore() {
 
   const toggleAgent = useCallback(async (agentId: string, enabled: boolean) => {
     try {
-      await fetch(`${API_BASE}/agents/${agentId}/toggle`, {
+      const response = await fetch(`${API_BASE}/agents/${agentId}/toggle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       // Optimistic update — don't wait for next poll
       setAgents(prev => prev.map(a =>
         a.id === agentId ? { ...a, pixelEnabled: enabled } : a
@@ -45,7 +46,7 @@ export function useAgentStore() {
     } catch (err) {
       console.error('Failed to toggle agent:', err);
       // Revert on error by re-fetching
-      fetchAgents();
+      await fetchAgents();
     }
   }, [fetchAgents]);
 
@@ -62,12 +63,16 @@ export function useAgentStore() {
         }
         return Promise.resolve();
       });
-      await Promise.all(promises);
+      const responses = await Promise.all(promises);
+      const failedResponse = responses.find(response => response && !response.ok);
+      if (failedResponse) throw new Error(`HTTP ${failedResponse.status}`);
       // Optimistic update
       setAgents(prev => prev.map(a => ({ ...a, pixelEnabled: enabled })));
     } catch (err) {
       console.error('Failed to toggle all agents:', err);
-      fetchAgents();
+      // Wait for every request above to settle, then reconcile successful and
+      // rate-limited members of the fan-out with authoritative server state.
+      await fetchAgents();
     }
   }, [agents, fetchAgents]);
 

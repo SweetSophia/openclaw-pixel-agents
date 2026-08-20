@@ -864,7 +864,9 @@ const RATE_LIMIT_MAX = parseRateLimitMax("RATE_LIMIT_MAX", 10);
 const PRE_AUTH_RATE_LIMIT_MAX = parseRateLimitMax("PRE_AUTH_RATE_LIMIT_MAX", 5);
 const PUBLIC_GET_RATE_LIMIT_MAX = parseRateLimitMax("PUBLIC_GET_RATE_LIMIT_MAX", 120);
 const PREFS_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("PREFS_WRITE_RATE_LIMIT_MAX", 60);
-const LAYOUT_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("LAYOUT_WRITE_RATE_LIMIT_MAX", 30);
+// The editor can autosave every two seconds (30/minute) and this bucket also
+// covers create/delete/keepalive writes, so keep 3x headroom for normal use.
+const LAYOUT_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("LAYOUT_WRITE_RATE_LIMIT_MAX", 90);
 const ingestRateBuckets = new Map<string, number[]>();
 const ingestPreAuthBuckets = new Map<string, number[]>();
 const publicGetRateBuckets = new Map<string, number[]>();
