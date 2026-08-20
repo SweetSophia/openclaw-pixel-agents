@@ -252,12 +252,27 @@ describe('useLayoutStore', () => {
       expect(result).toBe(true);
     });
 
-    it('resolves false on a non-2xx response', async () => {
+    it('resolves true when the layout is already absent (404)', async () => {
       await renderStoreProbe();
+      // Simulate another client deleting the active layout after we loaded it.
+      delete layouts.default;
       let result: boolean | undefined;
       await act(async () => {
-        // 'missing' is not in the mock store, so DELETE returns 404.
-        result = await latest(snapshots).deleteLayout('missing');
+        result = await latest(snapshots).deleteLayout('default');
+      });
+      expect(result).toBe(true);
+      expect(latest(snapshots).activeLayout).toBeNull();
+    });
+
+    it('resolves false on a non-404 error response', async () => {
+      await renderStoreProbe();
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: 'Internal server error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      ));
+      let result: boolean | undefined;
+      await act(async () => {
+        result = await latest(snapshots).deleteLayout('default');
       });
       expect(result).toBe(false);
     });
@@ -271,6 +286,26 @@ describe('useLayoutStore', () => {
       });
       expect(result).toBe(false);
     });
+  });
+
+  it('returns a visible failure signal when createLayout receives a non-OK response', async () => {
+    await renderStoreProbe();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(new Response(
+      JSON.stringify({ error: 'Layout name is already in use' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let result: LayoutDoc | null | undefined;
+    await act(async () => {
+      result = await latest(snapshots).createLayout('Duplicate');
+    });
+
+    expect(result).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to create layout:',
+      'Layout name is already in use',
+    );
   });
 
   it('updateFurniture applies functional updater to current layout', async () => {
@@ -945,6 +980,117 @@ describe('useLayoutStore', () => {
     // The retried PUT carries the same furniture — the user's edit is preserved.
     expect(putBodies[1].furniture[0].rotation).toBe(90);
     expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('keeps a pending conflict retry independent from a later edit debounce', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Revision conflict' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    // One second into the retry backoff, make another edit. Its debounce is
+    // due one second after the retry, so only an independent retry timer can
+    // produce the second PUT at the original retry deadline.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 180 },
+      ]);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].furniture[0].rotation).toBe(180);
+    expect(putBodies[1].baseUpdatedAt).toBe(1_000);
+  });
+
+  it('clears a pending save retry on unmount', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    let putCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        putCount++;
+        return new Response(JSON.stringify({ error: 'Service Unavailable' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+    expect(putCount).toBe(1);
+
+    act(() => unmount?.());
+    unmount = undefined;
+    await vi.advanceTimersByTimeAsync(2_100);
+
+    expect(putCount).toBe(1);
+  });
+
+  it('clears the saved-status timer on unmount', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+    expect(latest(snapshots).saveStatus).toBe('saved');
+    expect(vi.getTimerCount()).toBe(1);
+
+    act(() => unmount?.());
+    unmount = undefined;
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('does not auto-save when activeLayout is null', async () => {

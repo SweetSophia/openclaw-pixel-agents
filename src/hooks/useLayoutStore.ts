@@ -109,16 +109,26 @@ export function useLayoutStore() {
   const isDirtyRef = useRef(false);
   // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
   const retryAttemptRef = useRef(0);
+  // Retry backoff is independent from the furniture debounce. A new edit may
+  // reschedule the debounce, but it must not cancel recovery from a failed save.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSaveRetry = useCallback(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   const scheduleSaveRetry = useCallback((retry: () => void) => {
     const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
     retryAttemptRef.current++;
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      autoSaveTimerRef.current = null;
+    clearSaveRetry();
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
       retry();
     }, delay);
-  }, []);
+  }, [clearSaveRetry]);
 
   // 'saved' auto-clears back to 'idle' so the button returns to its neutral
   // state; 'saving' and 'error' persist until the next save attempt resolves.
@@ -271,6 +281,7 @@ export function useLayoutStore() {
           return;
         }
         // Success — reset retry counter and advance the revision monotonically.
+        clearSaveRetry();
         retryAttemptRef.current = 0;
         markSaveStatus('saved');
         const currentRevision = persistedRevisionRef.current;
@@ -299,6 +310,7 @@ export function useLayoutStore() {
     return savePromiseRef.current;
   }, [
     advancePersistedRevision,
+    clearSaveRetry,
     fetchLayouts,
     markSaveStatus,
     refreshPersistedRevision,
@@ -306,19 +318,26 @@ export function useLayoutStore() {
     setActiveLayoutProgrammatic,
   ]);
 
-  const createLayout = useCallback(async (name: string) => {
+  const createLayout = useCallback(async (name: string): Promise<LayoutDoc | null> => {
     try {
       const res = await fetch(`${API_BASE}/layouts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, width: 24, height: 16 }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = data && typeof data.error === 'string'
+          ? data.error
+          : `HTTP ${res.status}`;
+        console.error('Failed to create layout:', message);
+        return null;
+      }
       if (data.layout) {
         setActiveLayoutProgrammatic(data.layout);
         fetchLayouts();
       }
-      return data.layout;
+      return data.layout ?? null;
     } catch (err) {
       console.error('Failed to create layout:', err);
       return null;
@@ -331,7 +350,7 @@ export function useLayoutStore() {
   const deleteLayout = useCallback(async (id: string): Promise<boolean> => {
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 404) {
         const err = await res.json().catch(() => ({ error: 'Failed to delete layout' }));
         console.error('Failed to delete layout:', err.error);
         return false;
@@ -346,6 +365,16 @@ export function useLayoutStore() {
       return false;
     }
   }, [activeLayout, fetchLayouts, setActiveLayoutProgrammatic]);
+
+  // Timers can otherwise outlive the hook and call setState or issue retries
+  // after its consumer has gone away.
+  useEffect(() => () => {
+    if (saveStatusTimerRef.current) {
+      clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = null;
+    }
+    clearSaveRetry();
+  }, [clearSaveRetry]);
 
   const fetchCatalog = useCallback(async () => {
     try {
