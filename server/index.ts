@@ -9,6 +9,7 @@
 import { execFile } from "node:child_process";
 import { isIP } from "node:net";
 import express from "express";
+import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
@@ -137,38 +138,56 @@ io.engine.on("initial_headers", (_headers, req: any) => {
 });
 
 // Security headers (OWASP A05:2021, CWE-693)
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
+const CSP_DIRECTIVES = {
+  defaultSrc: ["'self'"],
+  scriptSrc: ["'self'"],
   // 'unsafe-inline' needed for React-emitted inline styles; nonce migration
   // tracked for future hardening. Google Fonts CSS is loaded via <link> in index.html.
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data:",
+  styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+  fontSrc: ["'self'", "https://fonts.gstatic.com"],
+  imgSrc: ["'self'", "data:"],
   // WebSocket scheme-source. Per CSP3, the ws scheme-source token covers both
   // plain and TLS WebSocket connections; the standalone secure variant is
   // technically redundant but kept for defensive clarity and CSP-linter
   // compatibility (Sourcery flags a scheme-source-only directive as ambiguous).
-  "connect-src 'self' ws: wss:",
+  connectSrc: ["'self'", "ws:", "wss:"],
   // Defense-in-depth: lock down <base>, <object>, and <form> targets against
   // any future XSS vector even though no such sinks exist today.
-  "base-uri 'self'",
-  "object-src 'none'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join("; ");
+  baseUri: ["'self'"],
+  objectSrc: ["'none'"],
+  formAction: ["'self'"],
+  frameAncestors: ["'none'"],
+};
 
 const isProd = process.env.NODE_ENV === "production";
 
+// Helmet owns every security header it supports. The explicit configuration
+// preserves the application's pre-Helmet policy instead of accepting Helmet's
+// broader defaults:
+//   - CSP keeps the tested Google Fonts and WebSocket allowances, while
+//     useDefaults:false avoids adding upgrade-insecure-requests in local dev.
+//   - HSTS remains production-only with the existing two-year max age.
+//   - X-Frame-Options stays DENY and Referrer-Policy retains its exact value.
+// COEP (require-corp) stays off: it would gate every subresource on
+// third-party CORP responses (Google Fonts CSS/woff2), which cannot be
+// verified from CI — the strict CSP already binds loadable sources.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: CSP_DIRECTIVES,
+    },
+    strictTransportSecurity: isProd
+      ? { maxAge: 63072000, includeSubDomains: true }
+      : false,
+    xFrameOptions: { action: "deny" },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 app.use((_req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Helmet does not provide Permissions-Policy middleware.
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  if (isProd) {
-    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
-  }
-  res.setHeader("Content-Security-Policy", CSP);
   next();
 });
 

@@ -68,6 +68,56 @@ describe("security headers", () => {
     expect(h["strict-transport-security"]).toBeUndefined();
   });
 
+  // ── Helmet-owned headers (PR #180) ─────────────────────────────────────
+  // Helmet owns all headers it supports, including the curated CSP/HSTS/
+  // framing/referrer/nosniff policies asserted elsewhere in this file.
+  // These tests pin the additional defaults introduced by Helmet.
+
+  it("sets Cross-Origin-Opener-Policy: same-origin (helmet)", async () => {
+    const h = await headers();
+    expect(h["cross-origin-opener-policy"]).toBe("same-origin");
+  });
+
+  it("sets Cross-Origin-Resource-Policy: same-origin (helmet)", async () => {
+    const h = await headers();
+    expect(h["cross-origin-resource-policy"]).toBe("same-origin");
+  });
+
+  it("sets Origin-Agent-Cluster: ?1 (helmet)", async () => {
+    const h = await headers();
+    expect(h["origin-agent-cluster"]).toBe("?1");
+  });
+
+  it("sets X-Permitted-Cross-Domain-Policies: none (helmet)", async () => {
+    const h = await headers();
+    expect(h["x-permitted-cross-domain-policies"]).toBe("none");
+  });
+
+  it("sets X-DNS-Prefetch-Control: off (helmet)", async () => {
+    const h = await headers();
+    expect(h["x-dns-prefetch-control"]).toBe("off");
+  });
+
+  it("sets X-Download-Options: noopen (helmet)", async () => {
+    const h = await headers();
+    expect(h["x-download-options"]).toBe("noopen");
+  });
+
+  it("disables the legacy XSS auditor (helmet)", async () => {
+    const h = await headers();
+    expect(h["x-xss-protection"]).toBe("0");
+  });
+
+  it("removes X-Powered-By instead of leaking the Express banner", async () => {
+    const h = await headers();
+    expect(h["x-powered-by"]).toBeUndefined();
+  });
+
+  it("does not set Cross-Origin-Embedder-Policy (would break Google Fonts)", async () => {
+    const h = await headers();
+    expect(h["cross-origin-embedder-policy"]).toBeUndefined();
+  });
+
   it("sets HSTS in production mode", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", "https://pixel-agents.example.com");
@@ -130,6 +180,34 @@ describe("security headers", () => {
     const h = await headers();
     const csp = h["content-security-policy"] as string;
     expect(csp).not.toContain("'unsafe-eval'");
+  });
+
+  it("CSP does not add Helmet's upgrade-insecure-requests default in local development", async () => {
+    const h = await headers();
+    const csp = h["content-security-policy"] as string;
+    expect(csp).not.toContain("upgrade-insecure-requests");
+  });
+
+  it("CSP exactly matches the curated directive and source contract", async () => {
+    const h = await headers();
+    const csp = h["content-security-policy"] as string;
+    const directives = csp.split(";").map((directive) => {
+      const [name, ...sources] = directive.trim().split(/\s+/);
+      return [name, sources];
+    });
+
+    expect(directives).toEqual([
+      ["default-src", ["'self'"]],
+      ["script-src", ["'self'"]],
+      ["style-src", ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"]],
+      ["font-src", ["'self'", "https://fonts.gstatic.com"]],
+      ["img-src", ["'self'", "data:"]],
+      ["connect-src", ["'self'", "ws:", "wss:"]],
+      ["base-uri", ["'self'"]],
+      ["object-src", ["'none'"]],
+      ["form-action", ["'self'"]],
+      ["frame-ancestors", ["'none'"]],
+    ]);
   });
 
   it("security headers apply to all response surfaces (API, static assets, SPA fallback)", async () => {
