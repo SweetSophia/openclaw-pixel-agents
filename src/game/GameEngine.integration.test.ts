@@ -414,6 +414,20 @@ describe('GameEngine integration: obstacle-aware movement', () => {
     expect(character.x).toBeCloseTo(4, 5);
     expect(character.y).toBeCloseTo(8, 5);
   });
+
+  it('closes a safe sub-tile gap when BFS needs no waypoints', () => {
+    engine.setLayout([], { walker: { x: 2, y: 4 } });
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 2.4, y: 4, state: 'idle' });
+
+    engine.updateCharacter('walker', { state: 'typing' });
+
+    const character = engine.characters.get('walker')!;
+    expect(character.path).toEqual([]);
+    for (let step = 0; step < 10; step++) engine.update(0.1);
+
+    expect(character.x).toBeCloseTo(2, 5);
+    expect(character.y).toBeCloseTo(4, 5);
+  });
 });
 
 // ── Sub-agent lifecycle describe ─────────────────────────────────────────────

@@ -453,6 +453,8 @@ export class GameEngine {
       const dx = char.targetX - char.x;
       const dy = char.targetY - char.y;
       const speed = 3;
+      const targetSharesRoundedTile = Math.round(char.x) === Math.round(char.targetX)
+        && Math.round(char.y) === Math.round(char.targetY);
 
       if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
         // If we have a path, follow waypoints
@@ -477,8 +479,9 @@ export class GameEngine {
               ? (wpDx > 0 ? 'right' : 'left')
               : (wpDy > 0 ? 'down' : 'up');
           }
-        } else if (char.path.length > 0) {
-          // Close the sub-tile gap after consuming the final waypoint.
+        } else if (char.path.length > 0 || targetSharesRoundedTile) {
+          // Close the safe sub-tile gap after consuming the final waypoint,
+          // or when BFS needed no waypoints within the current tile.
           char.x += Math.sign(dx) * Math.min(speed * dt, Math.abs(dx));
           char.y += Math.sign(dy) * Math.min(speed * dt, Math.abs(dy));
           char.direction = Math.abs(dx) > Math.abs(dy)
