@@ -68,6 +68,47 @@ describe("security headers", () => {
     expect(h["strict-transport-security"]).toBeUndefined();
   });
 
+  // ── Helmet-owned headers (PR #180) ─────────────────────────────────────
+  // These are deliberately helmet's: the curated middleware never set them.
+  // Helmet's copies of the headers the curated layer owns are disabled in
+  // server/index.ts — one owner per header. These tests pin both halves of
+  // that contract: the new headers exist, and the owned ones are unchanged.
+
+  it("sets Cross-Origin-Opener-Policy: same-origin (helmet)", async () => {
+    const h = await headers();
+    expect(h["cross-origin-opener-policy"]).toBe("same-origin");
+  });
+
+  it("sets Cross-Origin-Resource-Policy: same-origin (helmet)", async () => {
+    const h = await headers();
+    expect(h["cross-origin-resource-policy"]).toBe("same-origin");
+  });
+
+  it("sets Origin-Agent-Cluster: ?1 (helmet)", async () => {
+    const h = await headers();
+    expect(h["origin-agent-cluster"]).toBe("?1");
+  });
+
+  it("sets X-Permitted-Cross-Domain-Policies: none (helmet)", async () => {
+    const h = await headers();
+    expect(h["x-permitted-cross-domain-policies"]).toBe("none");
+  });
+
+  it("sets X-DNS-Prefetch-Control: off (helmet)", async () => {
+    const h = await headers();
+    expect(h["x-dns-prefetch-control"]).toBe("off");
+  });
+
+  it("removes X-Powered-By instead of leaking the Express banner", async () => {
+    const h = await headers();
+    expect(h["x-powered-by"]).toBeUndefined();
+  });
+
+  it("does not set Cross-Origin-Embedder-Policy (would break Google Fonts)", async () => {
+    const h = await headers();
+    expect(h["cross-origin-embedder-policy"]).toBeUndefined();
+  });
+
   it("sets HSTS in production mode", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", "https://pixel-agents.example.com");

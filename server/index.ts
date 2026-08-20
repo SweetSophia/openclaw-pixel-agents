@@ -161,7 +161,30 @@ const CSP = [
 
 const isProd = process.env.NODE_ENV === "production";
 
-app.use(helmet());
+// Helmet supplies the headers the curated middleware below does NOT own:
+// COOP, CORP, Origin-Agent-Cluster, X-DNS-Prefetch-Control,
+// X-Permitted-Cross-Domain-Policies, and X-Powered-By removal (PR #180).
+// Every header the curated layer deliberately owns is disabled here so
+// helmet cannot duplicate or weaken it — one owner per header:
+//   - CSP: ours carries the Google Fonts + WebSocket allowances (tested).
+//   - HSTS: ours is production-gated; helmet's is unconditional and broke
+//     the dev-mode contract ("does not set HSTS in development mode").
+//   - X-Frame-Options: ours is DENY; helmet's frameguard would emit
+//     SAMEORIGIN first.
+//   - Referrer-Policy / X-Content-Type-Options: already set verbatim below.
+// COEP (require-corp) stays off: it would gate every subresource on
+// third-party CORP responses (Google Fonts CSS/woff2), which cannot be
+// verified from CI — the strict CSP already binds loadable sources.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    strictTransportSecurity: false,
+    xFrameOptions: false,
+    referrerPolicy: false,
+    xContentTypeOptions: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
