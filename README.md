@@ -87,6 +87,9 @@ Click **📐 Layouts** to manage saved layouts:
 - Switch between layouts
 - Delete layouts (default layout is protected)
 
+The server stores at most 100 layout files. Delete an unused layout before
+creating another after that limit is reached.
+
 ## Architecture
 
 ### Data Source Modes
