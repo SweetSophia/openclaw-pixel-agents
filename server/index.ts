@@ -12,11 +12,10 @@ import express from "express";
 import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
-import { stat as statAsync } from "node:fs/promises";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { open as openAsync, type FileHandle } from "node:fs/promises";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
 import { createCorsConfig, isOriginAllowed } from "./cors";
@@ -502,6 +501,10 @@ function mapToAgentStates(cliSessions: CliSession[]): Map<string, AgentState> {
 const TICKER_BUFFER_SIZE = 30;
 /** Maximum characters per ticker message */
 const TICKER_MAX_CHARS = 150;
+/** Maximum characters accepted from an untrusted transcript message ID */
+const TICKER_MAX_ID_CHARS = 128;
+/** Maximum JSONL record size parsed into memory; oversized records are skipped */
+const TICKER_MAX_RECORD_BYTES = 1024 * 1024;
 /** How far back to look for messages (ms) */
 const TICKER_MAX_AGE = 5 * 60 * 1000; // 5 minutes
 
@@ -510,7 +513,71 @@ const tickerMessages: TickerMessage[] = [];
  * Track the byte offset of the last read position per transcript so we only
  * read newly-appended lines on each poll cycle instead of the whole file.
  */
-const lastReadOffset = new Map<string, number>();
+interface TranscriptReadCursor {
+  offset: number;
+  device: number;
+  inode: number;
+  modifiedMs: number;
+  digest: string;
+  seenIds: string[];
+}
+
+const lastReadCursor = new Map<string, TranscriptReadCursor>();
+
+const EMPTY_TRANSCRIPT_DIGEST = "0".repeat(64);
+
+function advanceTranscriptDigest(
+  digest: string,
+  recordDigest: Buffer,
+): string {
+  return createHash("sha256")
+    .update(Buffer.from(digest, "hex"))
+    .update(recordDigest)
+    .digest("hex");
+}
+
+async function readTranscriptDigest(
+  fileHandle: FileHandle,
+  length: number,
+): Promise<string | null> {
+  let digest = EMPTY_TRANSCRIPT_DIGEST;
+  let recordHash = createHash("sha256");
+  let recordLength = 0;
+  const buffer = Buffer.alloc(Math.min(64 * 1024, Math.max(length, 1)));
+  let bytesRemaining = length;
+  let position = 0;
+
+  while (bytesRemaining > 0) {
+    const readLength = Math.min(buffer.length, bytesRemaining);
+    const { bytesRead } = await fileHandle.read(
+      buffer,
+      0,
+      readLength,
+      position,
+    );
+    if (bytesRead !== readLength) return null;
+
+    let chunkOffset = 0;
+    while (chunkOffset < bytesRead) {
+      const newlineIndex = buffer.indexOf(0x0a, chunkOffset);
+      const segmentEnd = newlineIndex === -1 || newlineIndex >= bytesRead
+        ? bytesRead
+        : newlineIndex + 1;
+      const segment = buffer.subarray(chunkOffset, segmentEnd);
+      recordHash.update(segment);
+      recordLength += segment.length;
+      if (newlineIndex === -1 || newlineIndex >= bytesRead) break;
+      digest = advanceTranscriptDigest(digest, recordHash.digest());
+      recordHash = createHash("sha256");
+      recordLength = 0;
+      chunkOffset = segmentEnd;
+    }
+
+    bytesRemaining -= bytesRead;
+    position += bytesRead;
+  }
+  return recordLength === 0 ? digest : null;
+}
 
 /**
  * Extract displayable text from a message content block.
@@ -543,6 +610,7 @@ export async function tailTranscript(
   agentId: string,
   agentName: string,
   transcriptPath: string | undefined,
+  options: { afterInitialStat?: () => void | Promise<void> } = {},
 ): Promise<TickerMessage[]> {
   if (
     !transcriptPath
@@ -552,43 +620,70 @@ export async function tailTranscript(
   }
 
   const key = `${agentId}:${transcriptPath}`;
-  const offset = lastReadOffset.get(key) ?? 0;
 
-  // Snapshot the file size before reading so we have a stable upper bound even
-  // if the file is still being written to during the read.
-  let fileSize: number;
+  // Open first, then inspect and stream through the same descriptor. A path
+  // lookup followed by a separate open can cross a rotation boundary and pair
+  // one inode's identity with another inode's bytes.
+  let fileHandle: FileHandle | undefined;
   try {
-    fileSize = (await statAsync(transcriptPath)).size;
+    fileHandle = await openAsync(transcriptPath, "r");
   } catch {
     // File doesn't exist or is unreadable — skip silently
     return [];
   }
 
-  // Nothing new since we last read (also ensures fileSize > offset, so
-  // end = fileSize - 1 is always a valid range below)
-  if (fileSize <= offset) return [];
+  let fileSize: number;
+  let device: number;
+  let inode: number;
+  let modifiedMs: number;
+  let offset = 0;
+  let digest = EMPTY_TRANSCRIPT_DIGEST;
+  const previousCursor = lastReadCursor.get(key);
+  const baselineSeenIds = new Set(previousCursor?.seenIds ?? []);
+  let seenIds = new Set(baselineSeenIds);
+  try {
+    const fileStat = await fileHandle.stat();
+    fileSize = fileStat.size;
+    device = fileStat.dev;
+    inode = fileStat.ino;
+    modifiedMs = fileStat.mtimeMs;
+
+    const sameFile = previousCursor?.device === device
+      && previousCursor.inode === inode;
+    if (sameFile && fileSize >= previousCursor.offset) {
+      const metadataUnchanged = fileSize === previousCursor.offset
+        && modifiedMs === previousCursor.modifiedMs;
+      const prefixDigest = metadataUnchanged
+        ? previousCursor.digest
+        : await readTranscriptDigest(fileHandle, previousCursor.offset);
+      if (prefixDigest === previousCursor.digest) {
+        offset = previousCursor.offset;
+        digest = previousCursor.digest;
+      }
+    }
+  } catch {
+    await fileHandle.close().catch(() => {});
+    return [];
+  }
+
+  try {
+    await options.afterInitialStat?.();
+  } catch {
+    await fileHandle.close().catch(() => {});
+    return [];
+  }
 
   const newMessages: TickerMessage[] = [];
-
-  return new Promise((resolve) => {
-    const stream = createReadStream(transcriptPath, {
-      encoding: "utf-8",
-      start: offset,
-      end: fileSize - 1,
-    });
-    const rl = createInterface({ input: stream, crlfDelay: Infinity });
-
-    // Track how many bytes we've consumed through complete newlines.
-    // `readline` only emits a "line" event after encountering a newline
-    // delimiter, so bytesConsumed always ends at a clean boundary — any
-    // trailing partial line (no terminating newline) is NOT counted and
-    // will be re-read on the next poll cycle.
-    let bytesConsumed = 0;
-    let errored = false;
-
-    rl.on("line", (line) => {
-      // +1 for the newline character that readline strips
-      bytesConsumed += Buffer.byteLength(line, "utf-8") + 1;
+  const processLine = (
+    rawLine: Buffer,
+    recordDigest: Buffer,
+    messages: TickerMessage[],
+    knownIds: Set<string>,
+  ) => {
+      const content = rawLine[rawLine.length - 1] === 0x0d
+        ? rawLine.subarray(0, -1)
+        : rawLine;
+      const line = content.toString("utf-8");
 
       if (!line.trim()) return;
       try {
@@ -604,51 +699,142 @@ export async function tailTranscript(
         // Skip heartbeat messages
         if (text.startsWith("HEARTBEAT_OK") || text.includes("HEARTBEAT.md")) return;
 
-        const id = msg.__openclaw?.id || `${agentId}-${msg.__openclaw?.seq ?? randomUUID()}`;
-        const timestamp = msg.timestamp || msg.__openclaw?.ts || Date.now();
+        const rawId = msg.__openclaw?.id;
+        const id = typeof rawId === "string"
+          && rawId.length > 0
+          && rawId.length <= TICKER_MAX_ID_CHARS
+          ? rawId
+          : `${agentId}-${recordDigest.toString("hex").slice(0, 32)}`;
+        const timestamp = msg.timestamp ?? msg.__openclaw?.ts ?? Date.now();
+        if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return;
 
         // Age check
         if (Date.now() - timestamp > TICKER_MAX_AGE) return;
 
-        newMessages.push({ id, agentId, agentName, role, text, timestamp });
+        if (knownIds.has(id)) return;
+        knownIds.add(id);
+        messages.push({ id, agentId, agentName, role, text, timestamp });
       } catch {
         // Skip malformed lines
       }
-    });
+    };
 
-    rl.on("close", () => {
-      // On stream error, rl.close() is called which fires this handler.
-      // Guard against advancing the cursor or resolving with partial data
-      // when the read was interrupted by an I/O error.
-      if (errored) return;
+  let committedOffset = offset;
+  let baselineOffset = offset;
+  let baselineModifiedMs = modifiedMs;
 
-      // Only advance the cursor by bytes we know ended at a newline.
-      // If the file was appended mid-line during our read, the partial
-      // fragment (fileSize - bytesConsumed) will be re-read next cycle.
-      if (bytesConsumed > 0) {
-        lastReadOffset.set(key, offset + bytesConsumed);
+  try {
+    // Drain to the descriptor's current EOF, then fstat and repeat if a writer
+    // appended while the read was in flight. The path may already have been
+    // rotated; the open descriptor still owns those final old-file records.
+    for (let pass = 0; pass < 3; pass++) {
+      const readStart = committedOffset;
+      let physicalBytesRead = 0;
+      let bytesCommitted = 0;
+      let recordLength = 0;
+      let recordHash = createHash("sha256");
+      let pending = Buffer.alloc(0);
+      let recordTooLarge = false;
+      const passMessages: TickerMessage[] = [];
+      const passSeenIds = new Set(seenIds);
+      const stream = fileHandle.createReadStream({
+        start: readStart,
+        autoClose: false,
+      });
+
+      for await (const rawChunk of stream) {
+        const chunk = rawChunk as Buffer;
+        physicalBytesRead += chunk.length;
+        let chunkOffset = 0;
+        while (chunkOffset < chunk.length) {
+          const newlineIndex = chunk.indexOf(0x0a, chunkOffset);
+          const segmentEnd = newlineIndex === -1
+            ? chunk.length
+            : newlineIndex + 1;
+          const segment = chunk.subarray(chunkOffset, segmentEnd);
+          recordHash.update(segment);
+          recordLength += segment.length;
+
+          if (!recordTooLarge) {
+            const contentSegment = newlineIndex === -1
+              ? segment
+              : segment.subarray(0, -1);
+            if (pending.length + contentSegment.length <= TICKER_MAX_RECORD_BYTES) {
+              pending = Buffer.concat([pending, contentSegment]);
+            } else {
+              pending = Buffer.alloc(0);
+              recordTooLarge = true;
+            }
+          }
+
+          if (newlineIndex === -1) break;
+          bytesCommitted += recordLength;
+          const recordDigest = recordHash.digest();
+          if (!recordTooLarge) {
+            processLine(pending, recordDigest, passMessages, passSeenIds);
+          }
+          digest = advanceTranscriptDigest(digest, recordDigest);
+          recordLength = 0;
+          recordHash = createHash("sha256");
+          pending = Buffer.alloc(0);
+          recordTooLarge = false;
+          chunkOffset = segmentEnd;
+        }
       }
-      resolve(newMessages);
-    });
 
-    // readline.Interface does not emit "error"; handle errors on the underlying stream.
-    stream.on("error", () => {
-      errored = true;
-      rl.close();
-      stream.destroy();
-      resolve([]);
+      committedOffset = readStart + bytesCommitted;
+      const finalStat = await fileHandle.stat();
+      const needsVerification = committedOffset !== baselineOffset
+        || finalStat.mtimeMs !== baselineModifiedMs;
+      const verifiedDigest = needsVerification
+        ? await readTranscriptDigest(fileHandle, committedOffset)
+        : digest;
+      if (finalStat.size < committedOffset || verifiedDigest !== digest) {
+        // The inode was truncated or rewritten while it was being consumed.
+        // Discard observations from the unstable generation and retry from 0.
+        newMessages.length = 0;
+        committedOffset = 0;
+        baselineOffset = 0;
+        digest = EMPTY_TRANSCRIPT_DIGEST;
+        seenIds = new Set(baselineSeenIds);
+        baselineModifiedMs = finalStat.mtimeMs;
+        continue;
+      }
+
+      seenIds = passSeenIds;
+      newMessages.push(...passMessages);
+      modifiedMs = finalStat.mtimeMs;
+      const physicalEnd = readStart + physicalBytesRead;
+      if (finalStat.size <= physicalEnd) break;
+    }
+
+    // Avoid re-hashing a stable prefix on quiet polls. Any size or mtime
+    // change triggers full-prefix verification on the next call.
+    lastReadCursor.set(key, {
+      offset: committedOffset,
+      device,
+      inode,
+      modifiedMs,
+      digest,
+      seenIds: Array.from(seenIds).slice(-256),
     });
-  });
+    return newMessages;
+  } catch {
+    // A failed stream must not advance the cursor or emit a partial batch.
+    return [];
+  } finally {
+    await fileHandle.close().catch(() => {});
+  }
 }
 
 /**
  * Prune read offsets for agents that are no longer active
  */
 function pruneReadOffsets(activeAgentIds: Set<string>): void {
-  for (const key of lastReadOffset.keys()) {
+  for (const key of lastReadCursor.keys()) {
     const agentId = key.split(':')[0];
     if (!activeAgentIds.has(agentId)) {
-      lastReadOffset.delete(key);
+      lastReadCursor.delete(key);
     }
   }
 }
@@ -1516,4 +1702,3 @@ if (require.main === module) {
 }
 
 export { app, server, io, startServer };
-
