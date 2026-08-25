@@ -8,6 +8,7 @@ import { RoomSwitcher } from './components/RoomSwitcher';
 import MessageTicker from './components/MessageTicker';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
+import { useLiveSync } from './hooks/useLiveSync';
 import { sfx } from './audio/SoundFX';
 import { newEntityId } from './util/id';
 import type { PlacedFurniture } from '../shared/types';
@@ -18,7 +19,14 @@ export const App: React.FC = () => {
   const {
     layouts, activeLayout, isDirty, saveStatus, catalog,
     loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
+    fetchLayouts, reconcileRemoteLayout,
   } = useLayoutStore();
+
+  useLiveSync({
+    activeLayoutId: activeLayout?.id ?? null,
+    refreshLayouts: fetchLayouts,
+    reconcileLayout: reconcileRemoteLayout,
+  });
 
   const [editorMode, setEditorMode] = useState(false);
   const [selectedFurnitureType, setSelectedFurnitureType] = useState<string | null>(null);

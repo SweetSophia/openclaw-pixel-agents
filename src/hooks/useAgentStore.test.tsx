@@ -153,6 +153,56 @@ describe('useAgentStore REST polling fallback', () => {
     unmount();
     expect(socketMock.socket.disconnect).toHaveBeenCalledTimes(1);
   });
+
+  it('applies validated recipe events without starting a stale REST refresh', async () => {
+    const initialAgent = {
+      id: 'cybera',
+      name: 'Cybera',
+      activity: 'idle',
+      model: 'test',
+      sessionKey: 'agent:cybera:test',
+      active: true,
+      lastActivity: Date.now(),
+      pixelEnabled: false,
+      tags: [],
+      recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ agents: [initialAgent] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    );
+    const { snapshots, unmount } = await renderStoreProbe();
+    const callsBeforeEvent = vi.mocked(fetch).mock.calls.length;
+    const recipe = { bodyIndex: 1, hairIndex: 2, outfitIndex: 3 };
+
+    await act(async () => {
+      socketMock.handlers.get('recipe-update')?.({ agentId: 'cybera', recipe });
+    });
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(callsBeforeEvent);
+    expect(latest(snapshots).agents[0]).toMatchObject({
+      id: 'cybera',
+      pixelEnabled: false,
+      recipe,
+    });
+
+    await act(async () => {
+      socketMock.handlers.get('recipe-update')?.({
+        agentId: '../cybera',
+        recipe: { bodyIndex: 5, hairIndex: 8, outfitIndex: 5 },
+      });
+    });
+    expect(latest(snapshots).agents[0]?.recipe).toEqual(recipe);
+
+    unmount();
+    expect(socketMock.socket.off).toHaveBeenCalledWith(
+      'recipe-update',
+      expect.any(Function),
+    );
+  });
 });
 
 describe('useAgentStore room filtering', () => {

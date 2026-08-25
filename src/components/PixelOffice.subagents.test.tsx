@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentState, SubAgentInfo } from '../../shared/types';
 import { PixelOffice } from './PixelOffice';
 import { GameEngine } from '../game/GameEngine';
+import { recomposeAgent } from '../game/SpriteLoader';
 
 vi.mock('../game/GameEngine', () => {
   class MockGameEngine {
@@ -76,6 +77,8 @@ interface EngineSpy {
   killSubAgent: ReturnType<typeof vi.fn>;
   reviveSubAgent: ReturnType<typeof vi.fn>;
   removeCharacter: ReturnType<typeof vi.fn>;
+  setCharacterSprite: ReturnType<typeof vi.fn>;
+  setLayout: ReturnType<typeof vi.fn>;
 }
 
 const engineOf = () => (GameEngine as unknown as { latest: EngineSpy }).latest;
@@ -201,5 +204,60 @@ describe('PixelOffice sub-agent reconciliation contract (issue #102)', () => {
     rerender(<PixelOffice {...baseProps} agents={[]} />);
     expect(engineOf().killSubAgent).toHaveBeenCalledWith('sub-1');
     expect(engineOf().removeCharacter).toHaveBeenCalledWith('cybera');
+  });
+});
+
+describe('PixelOffice React-to-engine synchronization (issue #163)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('resyncs the engine when furniture type changes at the same position', async () => {
+    const layout = {
+      id: 'default',
+      name: 'Default',
+      width: 24,
+      height: 16,
+      furniture: [{ id: 'seat-1', type: 'DESK', x: 4, y: 5, rotation: 0 }],
+      seats: {},
+      updatedAt: 1,
+    };
+    const { rerender } = render(
+      <PixelOffice {...baseProps} agents={[]} activeLayout={layout} />,
+    );
+    await waitFor(() => expect(engineOf().setLayout).toHaveBeenCalled());
+    engineOf().setLayout.mockClear();
+
+    const replaced = {
+      ...layout,
+      furniture: [{ ...layout.furniture[0], type: 'SOFA' }],
+    };
+    rerender(<PixelOffice {...baseProps} agents={[]} activeLayout={replaced} />);
+
+    expect(engineOf().setLayout).toHaveBeenCalledWith(replaced.furniture, replaced.seats);
+  });
+
+  it('recomposes the current recipe when a disabled agent is re-enabled', async () => {
+    const recipeA = { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 };
+    const recipeB = { bodyIndex: 1, hairIndex: 2, outfitIndex: 3 };
+    const enabled = { ...parentWith([]), recipe: recipeA };
+    const { rerender } = render(
+      <PixelOffice {...baseProps} agents={[enabled]} />,
+    );
+    await waitFor(() => expect(recomposeAgent).toHaveBeenCalledWith('cybera', recipeA));
+    vi.mocked(recomposeAgent).mockClear();
+
+    rerender(
+      <PixelOffice
+        {...baseProps}
+        agents={[{ ...enabled, pixelEnabled: false, recipe: recipeB }]}
+      />,
+    );
+    expect(recomposeAgent).not.toHaveBeenCalled();
+
+    rerender(
+      <PixelOffice {...baseProps} agents={[{ ...enabled, recipe: recipeB }]} />,
+    );
+    expect(recomposeAgent).toHaveBeenCalledWith('cybera', recipeB);
   });
 });
