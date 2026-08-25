@@ -220,11 +220,15 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
 
+Agent preferences and layouts are written through a flushed same-directory temporary file, atomically renamed into place, and followed by a parent-directory sync on POSIX. A failure before replacement therefore leaves the previous JSON file intact instead of exposing a truncated target.
+
 ### Agent data-source modes
 
 The server follows a finite-state machine and the single-writer principle: CLI polling and ingest writes are never active at the same time. `cli` always keeps CLI polling active, and `ingest` starts ingest-only without polling. Ingest mode requires `INGEST_API_TOKEN`. Configuring a token does not enable pushes in explicit `cli` mode; use `ingest` or `auto` when collector delivery should own agent state.
 
 `auto` starts with CLI polling. When an ingest token is configured and CLI execution fails specifically because `OPENCLAW_BIN` is missing (`ENOENT` or `ENOTDIR`), the server makes an at-most-once, sticky transition to ingest-only. This hysteresis prevents later polling from taking ownership back; returning to CLI ownership after fallback requires restarting the server once the executable is available. Transient failures—including non-zero exits, timeouts, permission errors, malformed output, and unknown errors—preserve the previous snapshot and do not switch modes. Without an ingest token, `auto` remains in CLI mode even when the executable is missing.
+
+CLI polling inherits the server environment except for `INGEST_API_TOKEN`, which is removed before spawning `OPENCLAW_BIN` so the ingest bearer token is not exposed to the child process tree.
 
 While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
 

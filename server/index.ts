@@ -12,10 +12,10 @@ import express from "express";
 import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
@@ -38,6 +38,7 @@ import {
 } from "./ingestSessions";
 import { isValidLayoutId } from "./layouts";
 import { logger } from "./logger";
+import { atomicWriteFileSync } from "./persistence";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -288,7 +289,11 @@ function savePersistedPrefs() {
       prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
     }
     mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(PERSIST_PATH, JSON.stringify(prefs, null, 2));
+    atomicWriteFileSync(
+      dirname(PERSIST_PATH),
+      basename(PERSIST_PATH),
+      JSON.stringify(prefs, null, 2),
+    );
   } catch (err) {
     logger.error({ err, subsystem: "persist" }, "failed to save prefs");
   }
@@ -336,7 +341,7 @@ interface CliSessionsResult {
  * Uses `openclaw sessions --all-agents --json --active <minutes>` to get
  * recently-active sessions, then maps them to agent states.
  */
-function pollSessions(): Promise<CliSessionsResult> {
+export function pollSessions(runExecFile: typeof execFile = execFile): Promise<CliSessionsResult> {
   return new Promise((resolve) => {
     const args = [
       "sessions",
@@ -345,7 +350,16 @@ function pollSessions(): Promise<CliSessionsResult> {
       "--active", String(ACTIVE_THRESHOLD_MIN),
     ];
 
-    execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
+    // Environment keys are case-insensitive on Windows. Filtering entries
+    // avoids leaking a differently-cased spelling after spreading process.env
+    // into an ordinary case-sensitive object.
+    const childEnv = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) => key.toUpperCase() !== "INGEST_API_TOKEN",
+      ),
+    );
+
+    runExecFile(OPENCLAW_BIN, args, { timeout: 10000, env: childEnv }, (err, stdout, stderr) => {
       if (err) {
         const cliFailureKind = classifyCliExecError(err);
         logger.error({ err, subsystem: "poll" }, "cli error");
@@ -1224,7 +1238,12 @@ function saveLayout(layout: OfficeLayoutDoc): void {
   layout.updatedAt = Date.now();
   const validated = parseOfficeLayoutDoc(layout);
   if (!validated) throw new Error(`Invalid layout document: ${layout.id}`);
-  writeFileSync(join(LAYOUTS_DIR, `${validated.id}.json`), JSON.stringify(validated, null, 2));
+  const layoutPath = join(LAYOUTS_DIR, `${validated.id}.json`);
+  atomicWriteFileSync(
+    dirname(layoutPath),
+    basename(layoutPath),
+    JSON.stringify(validated, null, 2),
+  );
 }
 
 function deleteLayout(id: string): boolean {
@@ -1516,4 +1535,3 @@ if (require.main === module) {
 }
 
 export { app, server, io, startServer };
-
