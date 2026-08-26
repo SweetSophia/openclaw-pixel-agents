@@ -26,6 +26,7 @@ import {
   createInitialDataSourceState,
   isCliPollingActive,
   isIngestWritesActive,
+  OPENCLAW_SESSIONS_EXEC_OPTIONS,
   type CliFailureKind,
   type ConfiguredDataSource,
 } from "./dataSource";
@@ -345,7 +346,7 @@ function pollSessions(): Promise<CliSessionsResult> {
       "--active", String(ACTIVE_THRESHOLD_MIN),
     ];
 
-    execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
+    execFile(OPENCLAW_BIN, args, OPENCLAW_SESSIONS_EXEC_OPTIONS, (err, stdout, stderr) => {
       if (err) {
         const cliFailureKind = classifyCliExecError(err);
         logger.error({ err, subsystem: "poll" }, "cli error");
@@ -741,7 +742,7 @@ async function pollAndBroadcast(): Promise<void> {
           configured: dataSourceState.configured,
           effective: dataSourceState.effective,
           failureKind: cliFailureKind,
-        }, "CLI executable unavailable; transitioned permanently to ingest-only");
+        }, "CLI unavailable without operator action; transitioned permanently to ingest-only");
         return;
       }
     }
@@ -1516,4 +1517,3 @@ if (require.main === module) {
 }
 
 export { app, server, io, startServer };
-
