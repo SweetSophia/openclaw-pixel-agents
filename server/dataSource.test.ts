@@ -3,9 +3,11 @@ import {
   applyCliFailure,
   classifyCliExecError,
   createInitialDataSourceState,
+  INITIAL_CLI_POLL_HEALTH,
   isCliPollingActive,
   isIngestWritesActive,
   OPENCLAW_SESSIONS_EXEC_OPTIONS,
+  updateCliPollHealth,
   type CliFailureKind,
   type ConfiguredDataSource,
 } from "./dataSource";
@@ -63,6 +65,93 @@ describe("data-source policy", () => {
     expect(applyCliFailure(transitioned, "operator-action-required")).toBe(transitioned);
     expect(applyCliFailure(transitioned, "transient")).toBe(transitioned);
     expect(transitioned.effective).toBe("ingest-only");
+  });
+
+  describe("CLI poll health logging", () => {
+    it("reports the first failure as an incident and suppresses repeats 2-19", () => {
+      let health = INITIAL_CLI_POLL_HEALTH;
+
+      const first = updateCliPollHealth(health, "transient");
+      expect(first).toEqual({
+        health: { consecutiveFailures: 1, lastFailureKind: "transient" },
+        action: "incident",
+      });
+      health = first.health;
+
+      for (let count = 2; count <= 19; count++) {
+        const update = updateCliPollHealth(health, "transient");
+        expect(update.action).toBe("none");
+        expect(update.health.consecutiveFailures).toBe(count);
+        health = update.health;
+      }
+    });
+
+    it("reports reminders on the 20th and 40th same-kind failures only", () => {
+      let health = INITIAL_CLI_POLL_HEALTH;
+      const actions = new Map<number, string>();
+
+      for (let count = 1; count <= 40; count++) {
+        const update = updateCliPollHealth(health, "transient");
+        actions.set(count, update.action);
+        health = update.health;
+      }
+
+      expect(actions.get(1)).toBe("incident");
+      expect(actions.get(19)).toBe("none");
+      expect(actions.get(20)).toBe("reminder");
+      expect(actions.get(21)).toBe("none");
+      expect(actions.get(39)).toBe("none");
+      expect(actions.get(40)).toBe("reminder");
+    });
+
+    it("starts a new incident when the failure kind changes", () => {
+      const transient = updateCliPollHealth(INITIAL_CLI_POLL_HEALTH, "transient");
+      const repeated = updateCliPollHealth(transient.health, "transient");
+      const changed = updateCliPollHealth(repeated.health, "operator-action-required");
+
+      expect(changed).toEqual({
+        health: {
+          consecutiveFailures: 1,
+          lastFailureKind: "operator-action-required",
+        },
+        action: "incident",
+      });
+    });
+
+    it("reports one recovery, resets health, and stays quiet while healthy", () => {
+      const failed = updateCliPollHealth(INITIAL_CLI_POLL_HEALTH, "transient");
+      const recovered = updateCliPollHealth(failed.health, null);
+      const healthy = updateCliPollHealth(recovered.health, null);
+
+      expect(recovered).toEqual({ health: INITIAL_CLI_POLL_HEALTH, action: "recovered" });
+      expect(healthy).toEqual({ health: INITIAL_CLI_POLL_HEALTH, action: "none" });
+      expect(healthy.health).toBe(INITIAL_CLI_POLL_HEALTH);
+    });
+
+    it("does not mutate inputs and freezes every returned health object", () => {
+      const input = Object.freeze({
+        consecutiveFailures: 19,
+        lastFailureKind: "transient" as const,
+      });
+      const before = { ...input };
+      const unfrozenHealthy = {
+        consecutiveFailures: 0,
+        lastFailureKind: null,
+      };
+
+      const reminder = updateCliPollHealth(input, "transient");
+      const recovered = updateCliPollHealth(reminder.health, null);
+      const stillHealthy = updateCliPollHealth(unfrozenHealthy, null);
+
+      expect(input).toEqual(before);
+      expect(unfrozenHealthy).toEqual({ consecutiveFailures: 0, lastFailureKind: null });
+      expect(reminder.health).not.toBe(input);
+      expect(Object.isFrozen(reminder.health)).toBe(true);
+      expect(Object.isFrozen(recovered.health)).toBe(true);
+      expect(Object.isFrozen(stillHealthy.health)).toBe(true);
+      expect(Object.isFrozen(reminder)).toBe(true);
+      expect(Object.isFrozen(recovered)).toBe(true);
+    });
   });
 
   it.each([
