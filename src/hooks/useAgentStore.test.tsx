@@ -268,11 +268,16 @@ describe('useAgentStore mutation failures', () => {
 
   it('does not let an older failed toggle roll back a newer optimistic toggle', async () => {
     const toggleResolvers: Array<(response: Response) => void> = [];
+    const reconciledAgent = { ...agent, pixelEnabled: false };
+    let getCount = 0;
     vi.stubGlobal('fetch', vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {
         return new Promise<Response>((resolve) => toggleResolvers.push(resolve));
       }
-      return Promise.resolve(new Response(JSON.stringify({ agents: [agent] }), {
+      getCount += 1;
+      return Promise.resolve(new Response(JSON.stringify({
+        agents: getCount === 1 ? [agent] : [reconciledAgent],
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }));
@@ -304,7 +309,7 @@ describe('useAgentStore mutation failures', () => {
     });
 
     expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(false);
-    expect(latest(snapshots).error).toBe('Older toggle failed');
+    expect(latest(snapshots).error).toBeNull();
 
     unmount();
   });
@@ -361,6 +366,161 @@ describe('useAgentStore mutation failures', () => {
       }));
       await mutation;
     });
+
+    expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(false);
+    expect(latest(snapshots).error).toBeNull();
+
+    unmount();
+  });
+
+  it('does not expose a stale failing REST poll that races with an optimistic toggle', async () => {
+    let resolvePoll: ((response: Response) => void) | undefined;
+    let resolveToggle: ((response: Response) => void) | undefined;
+    let getCount = 0;
+    vi.stubGlobal('fetch', vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>((resolve) => {
+          resolveToggle = resolve;
+        });
+      }
+      getCount += 1;
+      if (getCount === 1) {
+        return Promise.resolve(new Response(JSON.stringify({ agents: [agent] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+      return new Promise<Response>((resolve) => {
+        resolvePoll = resolve;
+      });
+    }));
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    let poll: Promise<void> | undefined;
+    let mutation: Promise<void> | undefined;
+
+    act(() => {
+      poll = latest(snapshots).refresh();
+    });
+    await flushMicrotasks();
+    act(() => {
+      mutation = latest(snapshots).toggleAgent(agent.id, false);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      resolvePoll?.(new Response(JSON.stringify({ error: 'Stale REST failure' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await poll;
+    });
+    expect(latest(snapshots).error).toBeNull();
+
+    await act(async () => {
+      resolveToggle?.(new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await mutation;
+    });
+
+    expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(false);
+    expect(latest(snapshots).error).toBeNull();
+
+    unmount();
+  });
+
+  it('reconciles after two superseding single-agent toggles fail', async () => {
+    const toggleResolvers: Array<(response: Response) => void> = [];
+    const serverAgent = { ...agent, name: 'Server fixture', pixelEnabled: true };
+    let getCount = 0;
+    vi.stubGlobal('fetch', vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>((resolve) => toggleResolvers.push(resolve));
+      }
+      getCount += 1;
+      return Promise.resolve(new Response(JSON.stringify({
+        agents: getCount === 1 ? [agent] : [serverAgent],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    const storeBeforeRerender = latest(snapshots);
+    let older: Promise<void> | undefined;
+    let newer: Promise<void> | undefined;
+
+    act(() => {
+      older = storeBeforeRerender.toggleAgent(agent.id, false);
+      newer = storeBeforeRerender.toggleAgent(agent.id, true);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      toggleResolvers[1]?.(new Response(JSON.stringify({ error: 'Newer toggle failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await newer;
+    });
+    expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(false);
+
+    await act(async () => {
+      toggleResolvers[0]?.(new Response(JSON.stringify({ error: 'Older toggle failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await older;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(latest(snapshots).agents[0]?.name).toBe('Server fixture');
+    expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(true);
+    expect(latest(snapshots).error).toBeNull();
+
+    unmount();
+  });
+
+  it('preserves a socket snapshot when an optimistic toggle later fails', async () => {
+    let resolveToggle: ((response: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>((resolve) => {
+          resolveToggle = resolve;
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ agents: [agent] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    let mutation: Promise<void> | undefined;
+
+    act(() => {
+      mutation = latest(snapshots).toggleAgent(agent.id, false);
+    });
+    await flushMicrotasks();
+
+    const socketAgent = { ...agent, name: 'Socket fixture', pixelEnabled: false };
+    await emitSocketEvent('agents:update', [socketAgent]);
+
+    await act(async () => {
+      resolveToggle?.(new Response(JSON.stringify({ error: 'Toggle failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await mutation;
+    });
+
+    expect(latest(snapshots).agents[0]?.name).toBe('Socket fixture');
+    expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(false);
 
     unmount();
   });
@@ -556,11 +716,16 @@ describe('useAgentStore mutation failures', () => {
   it('does not let an older failed sprite request replace a newer optimistic sprite', async () => {
     const spriteResolvers: Array<(response: Response) => void> = [];
     const agentWithSprite = { ...agent, characterSpriteId: 'char_1' };
+    const reconciledAgent = { ...agent, characterSpriteId: 'char_3' };
+    let getCount = 0;
     vi.stubGlobal('fetch', vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {
         return new Promise<Response>((resolve) => spriteResolvers.push(resolve));
       }
-      return Promise.resolve(new Response(JSON.stringify({ agents: [agentWithSprite] }), {
+      getCount += 1;
+      return Promise.resolve(new Response(JSON.stringify({
+        agents: getCount === 1 ? [agentWithSprite] : [reconciledAgent],
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }));
@@ -592,6 +757,61 @@ describe('useAgentStore mutation failures', () => {
     });
 
     expect(latest(snapshots).agents[0]?.characterSpriteId).toBe('char_3');
+
+    unmount();
+  });
+
+  it('reconciles after two superseding sprite changes fail', async () => {
+    const spriteResolvers: Array<(response: Response) => void> = [];
+    const initialAgent = { ...agent, characterSpriteId: 'char_1' };
+    const serverAgent = { ...agent, name: 'Server fixture', characterSpriteId: 'char_4' };
+    let getCount = 0;
+    vi.stubGlobal('fetch', vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>((resolve) => spriteResolvers.push(resolve));
+      }
+      getCount += 1;
+      return Promise.resolve(new Response(JSON.stringify({
+        agents: getCount === 1 ? [initialAgent] : [serverAgent],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    const storeBeforeRerender = latest(snapshots);
+    let older: Promise<void> | undefined;
+    let newer: Promise<void> | undefined;
+
+    act(() => {
+      older = storeBeforeRerender.setCharacterSprite(agent.id, 'char_2');
+      newer = storeBeforeRerender.setCharacterSprite(agent.id, 'char_3');
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      spriteResolvers[1]?.(new Response(JSON.stringify({ error: 'Newer sprite failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await newer;
+    });
+    expect(latest(snapshots).agents[0]?.characterSpriteId).toBe('char_2');
+
+    await act(async () => {
+      spriteResolvers[0]?.(new Response(JSON.stringify({ error: 'Older sprite failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await older;
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(latest(snapshots).agents[0]?.name).toBe('Server fixture');
+    expect(latest(snapshots).agents[0]?.characterSpriteId).toBe('char_4');
+    expect(latest(snapshots).error).toBeNull();
 
     unmount();
   });

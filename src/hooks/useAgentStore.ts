@@ -59,9 +59,12 @@ export function useAgentStore() {
       updateAgents(() => data.agents || []);
       setError(null);
     } catch (err) {
-      if (socketRevisionRef.current === socketRevisionAtRequest) {
-        setError(errorMessage(err));
-      }
+      if (
+        socketRevisionRef.current !== socketRevisionAtRequest
+        || stateRevisionRef.current !== stateRevisionAtRequest
+        || pendingMutationsRef.current > 0
+      ) return;
+      setError(errorMessage(err));
     }
   }, [updateAgents]);
 
@@ -97,6 +100,7 @@ export function useAgentStore() {
     startMutation();
     let previousEnabled: boolean | undefined;
     const socketRevisionAtMutation = socketRevisionRef.current;
+    let needsReconcile = false;
     setError(null);
     updateAgents(current => current.map(agent => {
       if (agent.id !== agentId) return agent;
@@ -113,19 +117,19 @@ export function useAgentStore() {
       await requireOk(res);
     } catch (err) {
       console.error('Failed to toggle agent:', err);
-      if (
-        previousEnabled !== undefined
-        && socketRevisionRef.current === socketRevisionAtMutation
-        && isCurrentMutation(mutationKey, mutationRevision)
-      ) {
-        const rollbackEnabled = previousEnabled;
-        updateAgents(current => current.map(agent =>
-          agent.id === agentId ? { ...agent, pixelEnabled: rollbackEnabled } : agent
-        ));
+      if (socketRevisionRef.current === socketRevisionAtMutation) {
+        const isCurrent = isCurrentMutation(mutationKey, mutationRevision);
+        needsReconcile = !isCurrent;
+        if (previousEnabled !== undefined && isCurrent) {
+          const rollbackEnabled = previousEnabled;
+          updateAgents(current => current.map(agent =>
+            agent.id === agentId ? { ...agent, pixelEnabled: rollbackEnabled } : agent
+          ));
+        }
       }
       setError(errorMessage(err));
     } finally {
-      finishMutation();
+      finishMutation(needsReconcile);
     }
   }, [beginMutation, finishMutation, isCurrentMutation, startMutation, updateAgents]);
 
@@ -194,6 +198,7 @@ export function useAgentStore() {
     let previousSpriteId: string | undefined;
     let foundAgent = false;
     const socketRevisionAtMutation = socketRevisionRef.current;
+    let needsReconcile = false;
     setError(null);
     updateAgents(current => current.map(agent => {
       if (agent.id !== agentId) return agent;
@@ -211,25 +216,25 @@ export function useAgentStore() {
       await requireOk(res);
     } catch (err) {
       console.error('Failed to set sprite:', err);
-      if (
-        foundAgent
-        && socketRevisionRef.current === socketRevisionAtMutation
-        && isCurrentMutation(mutationKey, mutationRevision)
-      ) {
-        updateAgents(current => current.map(agent => {
-          if (agent.id !== agentId) return agent;
-          const nextAgent = { ...agent };
-          if (previousSpriteId === undefined) {
-            delete nextAgent.characterSpriteId;
-          } else {
-            nextAgent.characterSpriteId = previousSpriteId;
-          }
-          return nextAgent;
-        }));
+      if (socketRevisionRef.current === socketRevisionAtMutation) {
+        const isCurrent = isCurrentMutation(mutationKey, mutationRevision);
+        needsReconcile = !isCurrent;
+        if (foundAgent && isCurrent) {
+          updateAgents(current => current.map(agent => {
+            if (agent.id !== agentId) return agent;
+            const nextAgent = { ...agent };
+            if (previousSpriteId === undefined) {
+              delete nextAgent.characterSpriteId;
+            } else {
+              nextAgent.characterSpriteId = previousSpriteId;
+            }
+            return nextAgent;
+          }));
+        }
       }
       setError(errorMessage(err));
     } finally {
-      finishMutation();
+      finishMutation(needsReconcile);
     }
   }, [beginMutation, finishMutation, isCurrentMutation, startMutation, updateAgents]);
 
@@ -241,10 +246,7 @@ export function useAgentStore() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tags }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
+      await requireOk(res);
       // Only mutate local state after server confirms success
       const body = await res.json();
       updateAgents(current => current.map(a =>
@@ -282,10 +284,7 @@ export function useAgentStore() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(recipe),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
+      await requireOk(res);
       // Optimistic update
       updateAgents(current => current.map(a =>
         a.id === agentId ? { ...a, recipe } : a
