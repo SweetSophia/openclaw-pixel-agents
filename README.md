@@ -152,7 +152,7 @@ See [collector/README.md](collector/README.md) for full setup instructions.
 | `LayoutEditor` | Toolbar, furniture palette, layout manager UI |
 | `PixelOffice` | Canvas wrapper, wires agent/layout data to GameEngine |
 | `AgentSidebar` | Agent list with toggles and activity badges |
-| `useAgentStore` | Fetches agent state from backend API |
+| `useAgentStore` | Fetches agent state via REST fallback and switches to Socket.IO only after the first live snapshot |
 | `useLayoutStore` | CRUD operations for layouts with auto-save |
 
 ### Sprite Format
