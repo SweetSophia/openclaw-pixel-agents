@@ -521,6 +521,7 @@ describe('useAgentStore mutation failures', () => {
 
     expect(latest(snapshots).agents[0]?.name).toBe('Socket fixture');
     expect(latest(snapshots).agents[0]?.pixelEnabled).toBe(false);
+    expect(latest(snapshots).error).toBe('Toggle failed');
 
     unmount();
   });
