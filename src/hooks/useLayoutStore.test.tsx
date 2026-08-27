@@ -294,6 +294,87 @@ describe('useLayoutStore', () => {
       );
     });
 
+    it('preserves the existing list and warning when a successful list response has malformed JSON', async () => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      let listRequests = 0;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          listRequests++;
+          if (listRequests === 1) {
+            return new Response(JSON.stringify({
+              layouts: [OTHER_LAYOUT],
+              overCapacity: true,
+              layoutLimit: 100,
+            }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return new Response('{', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      const previousLayouts = latest(snapshots).layouts;
+      const previousError = latest(snapshots).layoutError;
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toBe(previousError);
+    });
+
+    it.each([
+      ['missing layouts', {}],
+      ['non-array layouts', { layouts: { default: MOCK_LAYOUT } }],
+    ])('preserves the existing list and warning for %s', async (_label, invalidBody) => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      let listRequests = 0;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          listRequests++;
+          return new Response(JSON.stringify(listRequests === 1 ? {
+            layouts: [OTHER_LAYOUT],
+            overCapacity: true,
+            layoutLimit: 100,
+          } : invalidBody), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      const previousLayouts = latest(snapshots).layouts;
+      const previousError = latest(snapshots).layoutError;
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toBe(previousError);
+    });
+
     it('clears an over-capacity warning after a normal list response', async () => {
       await renderStoreProbe();
       const initialFetch = fetch;

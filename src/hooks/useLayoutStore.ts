@@ -195,18 +195,31 @@ export function useLayoutStore() {
   const fetchLayouts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/layouts`);
-      const data = await res.json().catch(() => null);
+      const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
+        const responseError = data && typeof data === 'object' && 'error' in data
+          ? (data as Record<string, unknown>).error
+          : undefined;
         const message = res.status === 507
-          ? capacityErrorMessage(data?.error)
-          : data?.error ?? `Failed to fetch layouts (HTTP ${res.status})`;
+          ? capacityErrorMessage(responseError)
+          : typeof responseError === 'string'
+            ? responseError
+            : `Failed to fetch layouts (HTTP ${res.status})`;
         setLayoutError(message);
         console.error('Failed to fetch layouts:', message);
         return;
       }
-      setLayouts(data?.layouts || []);
-      if (data?.overCapacity === true) {
-        const limit = Number.isSafeInteger(data.layoutLimit) ? data.layoutLimit : 100;
+      if (!data || typeof data !== 'object' || !Array.isArray((data as Record<string, unknown>).layouts)) {
+        console.error('Failed to fetch layouts: invalid response body');
+        return;
+      }
+      const responseBody = data as Record<string, unknown> & { layouts: LayoutDoc[] };
+      setLayouts(responseBody.layouts);
+      if (responseBody.overCapacity === true) {
+        const limit = Number.isSafeInteger(responseBody.layoutLimit)
+          && (responseBody.layoutLimit as number) > 0
+          ? responseBody.layoutLimit as number
+          : 100;
         setLayoutError(
           `Only ${limit} layouts are shown because the layout limit was exceeded. `
           + 'Delete unused layouts until this warning clears.',

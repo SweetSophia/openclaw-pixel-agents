@@ -1186,34 +1186,36 @@ function ensureLayoutsDir() {
   mkdirSync(LAYOUTS_DIR, { recursive: true });
 }
 
-function readLayoutFileNames(limit: number): string[] {
+function readLayoutDirectory(limit: number): { files: string[]; entryCount: number } {
   ensureLayoutsDir();
   const directory = opendirSync(LAYOUTS_DIR);
   const files: string[] = [];
+  let entryCount = 0;
   try {
-    for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
-      // Every JSON entry consumes capacity, including malformed files and
-      // non-regular entries. This keeps both listing and capacity scans bounded.
-      if (entry.name.endsWith(".json")) {
-        files.push(entry.name);
-        if (files.length === limit) break;
-      }
+    while (entryCount < limit) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      entryCount += 1;
+      // Every directory entry consumes capacity. JSON entries are collected
+      // without inspecting their type so malformed/non-regular entries retain
+      // the same resource-budget impact as persisted layout files.
+      if (entry.name.endsWith(".json")) files.push(entry.name);
     }
-    return files;
+    return { files, entryCount };
   } finally {
     directory.closeSync();
   }
 }
 
-function countLayoutFiles(): number {
-  return readLayoutFileNames(MAX_LAYOUT_FILES).length;
+function countLayoutEntries(): number {
+  return readLayoutDirectory(MAX_LAYOUT_FILES).entryCount;
 }
 
 function listLayouts(): { layouts: OfficeLayoutDoc[]; overCapacity: boolean } {
   ensureLayoutsDir();
   try {
-    const files = readLayoutFileNames(MAX_LAYOUT_FILES + 1);
-    const overCapacity = files.length > MAX_LAYOUT_FILES;
+    const { files, entryCount } = readLayoutDirectory(MAX_LAYOUT_FILES + 1);
+    const overCapacity = entryCount > MAX_LAYOUT_FILES;
     const layouts: OfficeLayoutDoc[] = [];
     for (const file of files.slice(0, MAX_LAYOUT_FILES)) {
       try {
@@ -1259,7 +1261,7 @@ function saveLayout(layout: OfficeLayoutDoc): boolean {
   // synchronous, so the capacity decision and write run in one event-loop
   // turn. Existing files remain replaceable, including malformed files that
   // an operator is repairing.
-  if (!existsSync(target) && countLayoutFiles() >= MAX_LAYOUT_FILES) return false;
+  if (!existsSync(target) && countLayoutEntries() >= MAX_LAYOUT_FILES) return false;
   layout.updatedAt = validated.updatedAt;
   writeFileSync(target, JSON.stringify(validated, null, 2));
   return true;

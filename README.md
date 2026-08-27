@@ -87,10 +87,11 @@ Click **📐 Layouts** to manage saved layouts:
 - Switch between layouts
 - Delete layouts (default layout is protected)
 
-The server stores at most 100 layout files. Legacy installations above that
-limit show at most 100 layouts at a time; delete unused layouts until the
-capacity warning clears. Delete an unused layout before creating another after
-the limit is reached.
+The server permits at most 100 entries in the layouts directory. Legacy
+installations above that limit show at most 100 layouts at a time; delete unused
+layouts until the capacity warning clears. Delete an unused layout before
+creating another after the limit is reached. Non-layout files also consume
+capacity; if the warning persists, remove them from that directory manually.
 
 ## Architecture
 

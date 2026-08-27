@@ -37,6 +37,12 @@ describe("layout persistence capacity", () => {
     }
   }
 
+  function seedNonLayoutEntries(count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      writeFileSync(join(layoutsDir, `operator-note-${index}.txt`), "not a layout");
+    }
+  }
+
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-layout-capacity-"));
     layoutsDir = join(dataDir, "layouts");
@@ -163,6 +169,43 @@ describe("layout persistence capacity", () => {
         expect(response.body.overCapacity).toBeUndefined();
         expect(response.body.layoutLimit).toBeUndefined();
       });
+  });
+
+  it("bounds scans and creation capacity across non-layout entries", async () => {
+    seedNonLayoutEntries(101);
+
+    await request(app)
+      .get("/api/layouts")
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.layouts).toEqual([]);
+        expect(response.body.overCapacity).toBe(true);
+        expect(response.body.layoutLimit).toBe(100);
+      });
+
+    expect(readdirSync(layoutsDir)).not.toContain("default.json");
+    await request(app)
+      .post("/api/layouts")
+      .set("Origin", appOrigin)
+      .send(body)
+      .expect(507)
+      .expect({ error: "Layout limit reached (100)" });
+
+    rmSync(join(layoutsDir, "operator-note-0.txt"));
+    rmSync(join(layoutsDir, "operator-note-1.txt"));
+
+    await request(app)
+      .get("/api/layouts")
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.layouts).toEqual([
+          expect.objectContaining({ id: "default" }),
+        ]);
+        expect(response.body.overCapacity).toBeUndefined();
+        expect(response.body.layoutLimit).toBeUndefined();
+      });
+
+    expect(readdirSync(layoutsDir)).toHaveLength(100);
   });
 
   it("couples the final capacity decision to the synchronous file write", async () => {
