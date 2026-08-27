@@ -228,6 +228,48 @@
   margin: 0 0 12px;
 }
 
+.layout-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px;
+  background: rgba(255, 0, 85, 0.09);
+  border: 1px solid rgba(255, 0, 85, 0.4);
+  border-left: 3px solid var(--acc-pink);
+  border-radius: 4px;
+}
+.layout-alert-icon {
+  color: var(--acc-pink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.layout-alert-message {
+  margin: 0;
+  color: var(--text-main);
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.layout-alert-dismiss {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+.layout-alert-dismiss:hover {
+  color: var(--acc-pink);
+  border-color: rgba(255, 0, 85, 0.4);
+  background: rgba(255, 0, 85, 0.1);
+}
+
 .layout-list { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; }
 
 .layout-item {
@@ -258,7 +300,7 @@
   font-family: var(--font-body);
   font-size: 12px;
 }
-.layout-create input:focus { outline: none; border-color: var(--acc-cyan); }
+.layout-create input:focus { border-color: var(--acc-cyan); }
 .layout-create button {
   background: rgba(0, 240, 255, 0.1);
   color: var(--acc-cyan);
@@ -271,6 +313,14 @@
   transition: all 0.2s;
 }
 .layout-create button:hover { background: rgba(0, 240, 255, 0.3); }
+.layout-create input:read-only,
+.layout-create button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.layout-create button:disabled:hover {
+  background: rgba(0, 240, 255, 0.1);
+}
 
 /* Delete confirmation dialog — Confirmation Barrier / Guard Pattern (issue #109).
    Portaled to document.body so it escapes the .app-main stacking context and

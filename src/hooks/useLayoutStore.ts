@@ -54,6 +54,13 @@ function pickBaseUpdatedAt(
     : currentLayout.updatedAt;
 }
 
+function capacityErrorMessage(error: unknown): string {
+  const detail = typeof error === 'string' && error.trim()
+    ? error.trim().replace(/[.!?]+$/, '')
+    : 'Layout limit reached (100)';
+  return `${detail}. Delete unused layouts until the warning clears.`;
+}
+
 /**
  * Dispatched action: a new layout value, or a functional updater.
  * Every mutation flows through the reducer, which guarantees the ref
@@ -85,6 +92,7 @@ export function useLayoutStore() {
   );
 
   const [catalog, setCatalog] = useState<string[]>([]);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
   // Tracks the last server revision independently from the optimistic local
   // document. A stale response may advance this revision without being
@@ -109,6 +117,8 @@ export function useLayoutStore() {
   const isDirtyRef = useRef(false);
   // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
   const retryAttemptRef = useRef(0);
+
+  const clearLayoutError = useCallback(() => setLayoutError(null), []);
 
   const scheduleSaveRetry = useCallback((retry: () => void) => {
     const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
@@ -185,10 +195,28 @@ export function useLayoutStore() {
   const fetchLayouts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/layouts`);
-      const data = await res.json();
-      setLayouts(data.layouts || []);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = res.status === 507
+          ? capacityErrorMessage(data?.error)
+          : data?.error ?? `Failed to fetch layouts (HTTP ${res.status})`;
+        setLayoutError(message);
+        console.error('Failed to fetch layouts:', message);
+        return;
+      }
+      setLayouts(data?.layouts || []);
+      if (data?.overCapacity === true) {
+        const limit = Number.isSafeInteger(data.layoutLimit) ? data.layoutLimit : 100;
+        setLayoutError(
+          `Only ${limit} layouts are shown because the layout limit was exceeded. `
+          + 'Delete unused layouts until this warning clears.',
+        );
+      } else {
+        setLayoutError(null);
+      }
     } catch (err) {
       console.error('Failed to fetch layouts:', err);
+      setLayoutError('Failed to fetch layouts. Try again.');
     }
   }, []);
 
@@ -205,7 +233,11 @@ export function useLayoutStore() {
       const res = await fetch(`${API_BASE}/layouts/${id}`);
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        console.error('Failed to load layout:', errBody.error ?? `HTTP ${res.status}`);
+        const message = res.status === 507
+          ? capacityErrorMessage(errBody.error)
+          : errBody.error ?? `Failed to load layout (HTTP ${res.status})`;
+        if (res.status === 507) setLayoutError(message);
+        console.error('Failed to load layout:', message);
         return null;
       }
       const data: unknown = await res.json();
@@ -245,7 +277,14 @@ export function useLayoutStore() {
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
           console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
-          if (response.status === 409) {
+          if (response.status === 507) {
+            if (autoSaveTimerRef.current) {
+              clearTimeout(autoSaveTimerRef.current);
+              autoSaveTimerRef.current = null;
+            }
+            retryAttemptRef.current = 0;
+            setLayoutError(capacityErrorMessage(errorBody?.error));
+          } else if (response.status === 409) {
             await refreshPersistedRevision(merged.id);
             if (activeLayoutRef.current?.id === merged.id) {
               scheduleSaveRetry(() => { void saveActiveLayout(); });
@@ -306,21 +345,34 @@ export function useLayoutStore() {
     setActiveLayoutProgrammatic,
   ]);
 
-  const createLayout = useCallback(async (name: string) => {
+  const createLayout = useCallback(async (name: string): Promise<LayoutDoc | null> => {
     try {
       const res = await fetch(`${API_BASE}/layouts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, width: 24, height: 16 }),
       });
-      const data = await res.json();
-      if (data.layout) {
-        setActiveLayoutProgrammatic(data.layout);
-        fetchLayouts();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = res.status === 507
+          ? capacityErrorMessage(data?.error)
+          : data?.error ?? `Failed to create layout (HTTP ${res.status})`;
+        setLayoutError(message);
+        console.error('Failed to create layout:', message);
+        return null;
       }
+      if (!isLayoutDoc(data?.layout)) {
+        setLayoutError('Failed to create layout: invalid response body.');
+        console.error('Failed to create layout: invalid response body');
+        return null;
+      }
+      setLayoutError(null);
+      setActiveLayoutProgrammatic(data.layout);
+      fetchLayouts();
       return data.layout;
     } catch (err) {
       console.error('Failed to create layout:', err);
+      setLayoutError('Failed to create layout. Try again.');
       return null;
     }
   }, [fetchLayouts, setActiveLayoutProgrammatic]);
@@ -494,7 +546,9 @@ export function useLayoutStore() {
     activeLayout,
     isDirty,
     saveStatus,
+    layoutError,
     catalog,
+    clearLayoutError,
     loadLayoutById,
     saveActiveLayout,
     createLayout,

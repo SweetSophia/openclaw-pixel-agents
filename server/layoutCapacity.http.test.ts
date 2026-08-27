@@ -26,6 +26,17 @@ describe("layout persistence capacity", () => {
     }
   }
 
+  function seedValidLayouts(count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const id = `legacy-${String(index).padStart(3, "0")}`;
+      writeFileSync(join(layoutsDir, `${id}.json`), JSON.stringify({
+        id,
+        ...body,
+        updatedAt: index + 1,
+      }));
+    }
+  }
+
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-layout-capacity-"));
     layoutsDir = join(dataDir, "layouts");
@@ -123,6 +134,35 @@ describe("layout persistence capacity", () => {
       .expect({ error: "Layout limit reached (100)" });
 
     expect(readdirSync(layoutsDir).filter((file) => file.endsWith(".json"))).toHaveLength(100);
+  });
+
+  it("lists legacy over-capacity layouts in bounded cleanup pages", async () => {
+    seedValidLayouts(101);
+
+    const overCapacityResponse = await request(app)
+      .get("/api/layouts")
+      .expect(200);
+
+    expect(overCapacityResponse.body).toEqual(expect.objectContaining({
+      overCapacity: true,
+      layoutLimit: 100,
+    }));
+    expect(overCapacityResponse.body.layouts).toHaveLength(100);
+
+    const visibleLayoutId = overCapacityResponse.body.layouts[0].id as string;
+    await request(app)
+      .delete(`/api/layouts/${visibleLayoutId}`)
+      .set("Origin", appOrigin)
+      .expect(200);
+
+    await request(app)
+      .get("/api/layouts")
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.layouts).toHaveLength(100);
+        expect(response.body.overCapacity).toBeUndefined();
+        expect(response.body.layoutLimit).toBeUndefined();
+      });
   });
 
   it("couples the final capacity decision to the synchronous file write", async () => {

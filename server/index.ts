@@ -12,7 +12,7 @@ import express, { type Response } from "express";
 import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, opendirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -1186,20 +1186,36 @@ function ensureLayoutsDir() {
   mkdirSync(LAYOUTS_DIR, { recursive: true });
 }
 
-function countLayoutFiles(): number {
+function readLayoutFileNames(limit: number): string[] {
   ensureLayoutsDir();
-  // Count every JSON entry, including malformed files. listLayouts() still
-  // pays the directory/read/validation cost for them, so excluding them here
-  // would let invalid persisted state bypass the resource bound.
-  return readdirSync(LAYOUTS_DIR).filter((file) => file.endsWith(".json")).length;
+  const directory = opendirSync(LAYOUTS_DIR);
+  const files: string[] = [];
+  try {
+    for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+      // Every JSON entry consumes capacity, including malformed files and
+      // non-regular entries. This keeps both listing and capacity scans bounded.
+      if (entry.name.endsWith(".json")) {
+        files.push(entry.name);
+        if (files.length === limit) break;
+      }
+    }
+    return files;
+  } finally {
+    directory.closeSync();
+  }
 }
 
-function listLayouts(): OfficeLayoutDoc[] {
+function countLayoutFiles(): number {
+  return readLayoutFileNames(MAX_LAYOUT_FILES).length;
+}
+
+function listLayouts(): { layouts: OfficeLayoutDoc[]; overCapacity: boolean } {
   ensureLayoutsDir();
   try {
-    const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
+    const files = readLayoutFileNames(MAX_LAYOUT_FILES + 1);
+    const overCapacity = files.length > MAX_LAYOUT_FILES;
     const layouts: OfficeLayoutDoc[] = [];
-    for (const file of files) {
+    for (const file of files.slice(0, MAX_LAYOUT_FILES)) {
       try {
         const raw = readFileSync(join(LAYOUTS_DIR, file), "utf-8");
         const layout = parseOfficeLayoutDoc(JSON.parse(raw));
@@ -1209,9 +1225,9 @@ function listLayouts(): OfficeLayoutDoc[] {
         logger.warn({ err, file, subsystem: "layout" }, "skipping unreadable layout file");
       }
     }
-    return layouts.sort((a, b) => b.updatedAt - a.updatedAt);
+    return { layouts: layouts.sort((a, b) => b.updatedAt - a.updatedAt), overCapacity };
   } catch {
-    return [];
+    return { layouts: [], overCapacity: false };
   }
 }
 
@@ -1299,16 +1315,18 @@ function getDefaultLayout(): OfficeLayoutDoc {
 // Layout REST API
 
 app.get("/api/layouts", (_req, res) => {
-  const layouts = listLayouts();
+  const { layouts, overCapacity } = listLayouts();
   // Always include default if empty
-  if (layouts.length === 0) {
+  if (layouts.length === 0 && !overCapacity) {
     const def = getDefaultLayout();
     if (!saveLayout(def)) {
       return respondLayoutCapacityExceeded(res);
     }
     layouts.push(def);
   }
-  res.json({ layouts });
+  res.json(overCapacity
+    ? { layouts, overCapacity: true, layoutLimit: MAX_LAYOUT_FILES }
+    : { layouts });
 });
 
 app.get("/api/layouts/:id", (req, res) => {
