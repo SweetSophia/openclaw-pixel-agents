@@ -209,11 +209,18 @@ export function useLayoutStore() {
         console.error('Failed to fetch layouts:', message);
         return;
       }
-      if (!data || typeof data !== 'object' || !Array.isArray((data as Record<string, unknown>).layouts)) {
+      const responseBody = data && typeof data === 'object'
+        ? data as Record<string, unknown>
+        : null;
+      if (
+        !responseBody
+        || !Array.isArray(responseBody.layouts)
+        || !responseBody.layouts.every(isLayoutDoc)
+      ) {
         console.error('Failed to fetch layouts: invalid response body');
+        setLayoutError(current => current ?? 'Failed to fetch layouts. Try again.');
         return;
       }
-      const responseBody = data as Record<string, unknown> & { layouts: LayoutDoc[] };
       setLayouts(responseBody.layouts);
       if (responseBody.overCapacity === true) {
         const limit = Number.isSafeInteger(responseBody.layoutLimit)
@@ -229,7 +236,7 @@ export function useLayoutStore() {
       }
     } catch (err) {
       console.error('Failed to fetch layouts:', err);
-      setLayoutError('Failed to fetch layouts. Try again.');
+      setLayoutError(current => current ?? 'Failed to fetch layouts. Try again.');
     }
   }, []);
 

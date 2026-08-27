@@ -336,6 +336,36 @@ describe('useLayoutStore', () => {
       expect(latest(snapshots).layoutError).toBe(previousError);
     });
 
+    it('rejects an invalid layout element without replacing the list and exposes a fetch error', async () => {
+      await renderStoreProbe();
+      await waitFor(() => expect(latest(snapshots).layouts).toHaveLength(2));
+      const previousLayouts = latest(snapshots).layouts;
+      expect(latest(snapshots).layoutError).toBeNull();
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          return new Response(JSON.stringify({
+            layouts: [{ ...OTHER_LAYOUT, width: 0 }],
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toBe('Failed to fetch layouts. Try again.');
+    });
+
     it.each([
       ['missing layouts', {}],
       ['non-array layouts', { layouts: { default: MOCK_LAYOUT } }],
