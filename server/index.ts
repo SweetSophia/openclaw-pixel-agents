@@ -24,9 +24,13 @@ import {
   applyCliFailure,
   classifyCliExecError,
   createInitialDataSourceState,
+  INITIAL_CLI_POLL_HEALTH,
   isCliPollingActive,
   isIngestWritesActive,
+  OPENCLAW_SESSIONS_EXEC_OPTIONS,
+  updateCliPollHealth,
   type CliFailureKind,
+  type CliPollHealth,
   type ConfiguredDataSource,
 } from "./dataSource";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
@@ -219,7 +223,7 @@ const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "
 
 /**
  * Data source mode:
- *   "auto"    — try CLI polling; if openclaw not found and ingest token is set, use ingest-only
+ *   "auto"    — try CLI polling; on operator-action-required failure with an ingest token, use ingest-only
  *   "cli"     — always poll via local openclaw CLI (original behavior)
  *   "ingest"  — only accept pushed data via the ingest API (no local CLI needed)
  */
@@ -230,6 +234,7 @@ const DATA_SOURCE: ConfiguredDataSource = configuredDataSource === "cli"
   ? configuredDataSource
   : "auto";
 let dataSourceState = createInitialDataSourceState(DATA_SOURCE, !!INGEST_TOKEN);
+let cliPollHealth: CliPollHealth = INITIAL_CLI_POLL_HEALTH;
 
 // ---- Known agents from config ----
 
@@ -328,6 +333,7 @@ interface CliSessionsResult {
   count: number;
   sourceError?: boolean;
   cliFailureKind?: CliFailureKind;
+  error?: unknown;
 }
 
 /**
@@ -345,11 +351,10 @@ function pollSessions(): Promise<CliSessionsResult> {
       "--active", String(ACTIVE_THRESHOLD_MIN),
     ];
 
-    execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
+    execFile(OPENCLAW_BIN, args, OPENCLAW_SESSIONS_EXEC_OPTIONS, (err, stdout, stderr) => {
       if (err) {
         const cliFailureKind = classifyCliExecError(err);
-        logger.error({ err, subsystem: "poll" }, "cli error");
-        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind });
+        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind, error: err });
         return;
       }
 
@@ -360,8 +365,13 @@ function pollSessions(): Promise<CliSessionsResult> {
           count: data.count || 0,
         });
       } catch (parseErr) {
-        logger.error({ err: parseErr, subsystem: "poll" }, "json parse error");
-        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind: "transient" });
+        resolve({
+          sessions: [],
+          count: 0,
+          sourceError: true,
+          cliFailureKind: "transient",
+          error: parseErr,
+        });
       }
     });
   });
@@ -728,7 +738,7 @@ async function pollAndBroadcast(): Promise<void> {
   isPolling = true;
   const cycleLog = logger.child({ cycleId: randomUUID(), subsystem: "poll" });
   try {
-    const { sessions, sourceError, cliFailureKind } = await pollSessions();
+    const { sessions, sourceError, cliFailureKind, error } = await pollSessions();
     if (sourceError && cliFailureKind) {
       const nextState = applyCliFailure(dataSourceState, cliFailureKind);
       if (nextState !== dataSourceState) {
@@ -738,19 +748,43 @@ async function pollAndBroadcast(): Promise<void> {
           pollTimer = undefined;
         }
         cycleLog.warn({
+          err: error,
           configured: dataSourceState.configured,
           effective: dataSourceState.effective,
           failureKind: cliFailureKind,
-        }, "CLI executable unavailable; transitioned permanently to ingest-only");
+        }, "CLI unavailable without operator action; transitioned permanently to ingest-only");
         return;
+      }
+
+      const healthUpdate = updateCliPollHealth(cliPollHealth, cliFailureKind);
+      cliPollHealth = healthUpdate.health;
+      if (healthUpdate.action === "incident") {
+        cycleLog.error({
+          err: error,
+          failureKind: cliFailureKind,
+          count: cliPollHealth.consecutiveFailures,
+        }, "cli error");
+      } else if (healthUpdate.action === "reminder") {
+        cycleLog.warn({
+          failureKind: cliFailureKind,
+          count: cliPollHealth.consecutiveFailures,
+        }, "cli error (ongoing)");
+      }
+    } else if (!sourceError) {
+      const priorHealth = cliPollHealth;
+      const healthUpdate = updateCliPollHealth(cliPollHealth, null);
+      cliPollHealth = healthUpdate.health;
+      if (healthUpdate.action === "recovered") {
+        cycleLog.info({
+          failureKind: priorHealth.lastFailureKind,
+          count: priorHealth.consecutiveFailures,
+        }, "cli polling recovered");
       }
     }
     const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
-    if (!applied) {
-      cycleLog.warn("keeping previous agent snapshot after source error");
-    } else {
+    if (applied) {
       // Broadcast only when the visible agent snapshot actually changes.
       io.emit("agents:update", snapshot);
     }
