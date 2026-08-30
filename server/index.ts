@@ -8,11 +8,11 @@
 
 import { execFile } from "node:child_process";
 import { isIP } from "node:net";
-import express from "express";
+import express, { type Response } from "express";
 import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, opendirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -1210,17 +1210,48 @@ app.get("/api/rooms", (_req, res) => {
 // ---- Layout persistence ----
 
 const LAYOUTS_DIR = join(DATA_DIR, "layouts");
+const MAX_LAYOUT_FILES = 100;
+
+function respondLayoutCapacityExceeded(res: Response) {
+  return res.status(507).json({ error: `Layout limit reached (${MAX_LAYOUT_FILES})` });
+}
 
 function ensureLayoutsDir() {
   mkdirSync(LAYOUTS_DIR, { recursive: true });
 }
 
-function listLayouts(): OfficeLayoutDoc[] {
+function readLayoutDirectory(limit: number): { files: string[]; entryCount: number } {
+  ensureLayoutsDir();
+  const directory = opendirSync(LAYOUTS_DIR);
+  const files: string[] = [];
+  let entryCount = 0;
+  try {
+    while (entryCount < limit) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      entryCount += 1;
+      // Every directory entry consumes capacity. JSON entries are collected
+      // without inspecting their type so malformed/non-regular entries retain
+      // the same resource-budget impact as persisted layout files.
+      if (entry.name.endsWith(".json")) files.push(entry.name);
+    }
+    return { files, entryCount };
+  } finally {
+    directory.closeSync();
+  }
+}
+
+function countLayoutEntries(): number {
+  return readLayoutDirectory(MAX_LAYOUT_FILES).entryCount;
+}
+
+function listLayouts(): { layouts: OfficeLayoutDoc[]; overCapacity: boolean } {
   ensureLayoutsDir();
   try {
-    const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
+    const { files, entryCount } = readLayoutDirectory(MAX_LAYOUT_FILES + 1);
+    const overCapacity = entryCount > MAX_LAYOUT_FILES;
     const layouts: OfficeLayoutDoc[] = [];
-    for (const file of files) {
+    for (const file of files.slice(0, MAX_LAYOUT_FILES)) {
       try {
         const raw = readFileSync(join(LAYOUTS_DIR, file), "utf-8");
         const layout = parseOfficeLayoutDoc(JSON.parse(raw));
@@ -1230,9 +1261,9 @@ function listLayouts(): OfficeLayoutDoc[] {
         logger.warn({ err, file, subsystem: "layout" }, "skipping unreadable layout file");
       }
     }
-    return layouts.sort((a, b) => b.updatedAt - a.updatedAt);
+    return { layouts: layouts.sort((a, b) => b.updatedAt - a.updatedAt), overCapacity };
   } catch {
-    return [];
+    return { layouts: [], overCapacity: false };
   }
 }
 
@@ -1252,13 +1283,22 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
   }
 }
 
-function saveLayout(layout: OfficeLayoutDoc): void {
+function saveLayout(layout: OfficeLayoutDoc): boolean {
   if (!isValidLayoutId(layout.id)) throw new Error(`Invalid layout ID: ${layout.id}`);
   ensureLayoutsDir();
-  layout.updatedAt = Date.now();
-  const validated = parseOfficeLayoutDoc(layout);
+  const validated = parseOfficeLayoutDoc({ ...layout, updatedAt: Date.now() });
   if (!validated) throw new Error(`Invalid layout document: ${layout.id}`);
-  writeFileSync(join(LAYOUTS_DIR, `${validated.id}.json`), JSON.stringify(validated, null, 2));
+  // Construct filesystem paths only from the schema-validated document. This
+  // keeps the path boundary explicit for both humans and static analysis.
+  const target = join(LAYOUTS_DIR, `${validated.id}.json`);
+  // The server is a single Node process and all operations below are
+  // synchronous, so the capacity decision and write run in one event-loop
+  // turn. Existing files remain replaceable, including malformed files that
+  // an operator is repairing.
+  if (!existsSync(target) && countLayoutEntries() >= MAX_LAYOUT_FILES) return false;
+  layout.updatedAt = validated.updatedAt;
+  writeFileSync(target, JSON.stringify(validated, null, 2));
+  return true;
 }
 
 function deleteLayout(id: string): boolean {
@@ -1311,14 +1351,18 @@ function getDefaultLayout(): OfficeLayoutDoc {
 // Layout REST API
 
 app.get("/api/layouts", (_req, res) => {
-  const layouts = listLayouts();
+  const { layouts, overCapacity } = listLayouts();
   // Always include default if empty
-  if (layouts.length === 0) {
+  if (layouts.length === 0 && !overCapacity) {
     const def = getDefaultLayout();
-    saveLayout(def);
+    if (!saveLayout(def)) {
+      return respondLayoutCapacityExceeded(res);
+    }
     layouts.push(def);
   }
-  res.json({ layouts });
+  res.json(overCapacity
+    ? { layouts, overCapacity: true, layoutLimit: MAX_LAYOUT_FILES }
+    : { layouts });
 });
 
 app.get("/api/layouts/:id", (req, res) => {
@@ -1330,7 +1374,9 @@ app.get("/api/layouts/:id", (req, res) => {
     // Auto-create default
     if (id === "default") {
       const def = getDefaultLayout();
-      saveLayout(def);
+      if (!saveLayout(def)) {
+        return respondLayoutCapacityExceeded(res);
+      }
       return res.json(def);
     }
     return res.status(404).json({ error: "Layout not found" });
@@ -1362,15 +1408,17 @@ app.put("/api/layouts/:id", (req, res) => {
     id, // prevent id overwrite
   };
   if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
-  saveLayout(layout);
+  if (!saveLayout(layout)) {
+    return respondLayoutCapacityExceeded(res);
+  }
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });
 
 app.post("/api/layouts", (req, res) => {
-  const id = `layout-${randomUUID()}`;
   const parsed = parseLayoutMutationBody(req.body, { width: 24, height: 16 });
   if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  const id = `layout-${randomUUID()}`;
 
   const layout: OfficeLayoutDoc = {
     id,
@@ -1382,7 +1430,9 @@ app.post("/api/layouts", (req, res) => {
     updatedAt: Date.now(),
   };
   if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
-  saveLayout(layout);
+  if (!saveLayout(layout)) {
+    return respondLayoutCapacityExceeded(res);
+  }
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });
