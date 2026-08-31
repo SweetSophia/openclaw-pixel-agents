@@ -947,21 +947,6 @@ function sendRateLimitResponse(
 }
 
 /**
- * Check whether an unauthenticated GET/HEAD request from this IP is within the
- * public rate limit. Keyed on req.ip. Returns true if allowed, false if
- * the caller should respond 429. Client-IP identity depends on the explicit
- * TRUST_PROXY contract configured at startup (see parseTrustProxy); with the
- * default no-trust setting req.ip is the direct peer.
- */
-export function checkPublicGetRateLimit(req: express.Request): boolean {
-  // Consumes a public-GET slot. publicGetRateLimiter calls takeRateLimit
-  // directly so it can attach Retry-After; do not also call this helper on
-  // that same request or the IP is charged twice.
-  const ip = req.ip || "unknown";
-  return takeRateLimit(publicGetRateBuckets, `get:${ip}`, PUBLIC_GET_RATE_LIMIT_MAX).allowed;
-}
-
-/**
  * Middleware: applies the public rate limit and returns 429 when exceeded.
  * Scope contract (issue #125, review): only GET and HEAD requests to
  * non-API paths are counted. HEAD is included because express.static and
