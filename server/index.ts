@@ -197,6 +197,16 @@ app.use((_req, res, next) => {
 
 app.use(correlationMiddleware);
 app.use(httpRequestLogMiddleware);
+// Reject and throttle mutating API traffic before express.json() performs
+// bounded-but-still-expensive body buffering/parsing. Ingest has its own
+// pre-auth budget; all other writes retain the existing Origin boundary and
+// then enter their per-IP write budget.
+// CodeQL models only supported third-party limiter packages; the HTTP tests in
+// rateLimit.test.ts pin both custom guards' thresholds and pre-parser order.
+// codeql[js/missing-rate-limiting]
+app.use("/api/ingest/agents", ingestPreAuthRateLimiter);
+// codeql[js/missing-rate-limiting]
+app.use("/api", apiMutationGuard);
 app.use(express.json({ limit: "100kb" }));
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js).
@@ -849,6 +859,7 @@ export function _resetRateLimitBuckets(): void {
   ingestRateBuckets.clear();
   ingestPreAuthBuckets.clear();
   publicGetRateBuckets.clear();
+  apiWriteRateBuckets.clear();
 }
 
 /** @deprecated Use _resetRateLimitBuckets — alias kept for import compatibility. */
@@ -867,32 +878,72 @@ export const _resetIngestRateBuckets = _resetRateLimitBuckets;
 // - PRE_AUTH: throttles unauthenticated/failed-token attempts per IP (CWE-770)
 // - POST_AUTH: caps authenticated push frequency per token digest
 // - PUBLIC_GET: app-wide throttle for unauthenticated GET traffic (SPA + static)
+// - PREFS_WRITE: caps agent preference persistence/broadcasts per IP
+// - LAYOUT_WRITE: caps layout filesystem mutations/broadcasts per IP
+function parseRateLimitMax(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid ${name} value: "${raw}". Expected a positive integer.`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Invalid ${name} value: "${raw}". Expected a positive integer.`);
+  }
+  return value;
+}
+
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 10;          // post-auth: 10 pushes/min per token
-const PRE_AUTH_RATE_LIMIT_MAX = 5;   // pre-auth: 5 attempts/min per IP
-const PUBLIC_GET_RATE_LIMIT_MAX = 120; // public GET: 120 req/min per IP (SPA + static)
+const RATE_LIMIT_MAX = parseRateLimitMax("RATE_LIMIT_MAX", 10);
+const PRE_AUTH_RATE_LIMIT_MAX = parseRateLimitMax("PRE_AUTH_RATE_LIMIT_MAX", 5);
+const PUBLIC_GET_RATE_LIMIT_MAX = parseRateLimitMax("PUBLIC_GET_RATE_LIMIT_MAX", 120);
+const PREFS_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("PREFS_WRITE_RATE_LIMIT_MAX", 60);
+// The editor can autosave every two seconds (30/minute) and this bucket also
+// covers create/delete/keepalive writes, so keep 3x headroom for normal use.
+const LAYOUT_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("LAYOUT_WRITE_RATE_LIMIT_MAX", 90);
 const ingestRateBuckets = new Map<string, number[]>();
 const ingestPreAuthBuckets = new Map<string, number[]>();
 const publicGetRateBuckets = new Map<string, number[]>();
+const apiWriteRateBuckets = new Map<string, number[]>();
 
-/**
- * Check whether an unauthenticated GET/HEAD request from this IP is within the
- * public rate limit. Keyed on req.ip. Returns true if allowed, false if
- * the caller should respond 429. Client-IP identity depends on the explicit
- * TRUST_PROXY contract configured at startup (see parseTrustProxy); with the
- * default no-trust setting req.ip is the direct peer.
- */
-export function checkPublicGetRateLimit(req: express.Request): boolean {
-  const ip = req.ip || "unknown";
-  const key = `get:${ip}`;
+type RateLimitDecision =
+  | Readonly<{ allowed: true; limit: number; remaining: number }>
+  | Readonly<{ allowed: false; limit: number; remaining: 0; retryAfterSeconds: number }>;
+
+function takeRateLimit(
+  buckets: Map<string, number[]>,
+  key: string,
+  limit: number,
+): RateLimitDecision {
   const now = Date.now();
-  const bucket = publicGetRateBuckets.get(key) || [];
   const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recent = bucket.filter(t => t > windowStart);
-  if (recent.length >= PUBLIC_GET_RATE_LIMIT_MAX) return false;
+  const recent = (buckets.get(key) || []).filter(timestamp => timestamp > windowStart);
+
+  if (recent.length >= limit) {
+    // Keep the filtered bucket so entries that expired between prune ticks do
+    // not inflate the next Retry-After calculation.
+    buckets.set(key, recent);
+    return {
+      allowed: false,
+      limit,
+      remaining: 0,
+      retryAfterSeconds: Math.max(1, Math.ceil((recent[0] + RATE_LIMIT_WINDOW_MS - now) / 1000)),
+    };
+  }
+
   recent.push(now);
-  publicGetRateBuckets.set(key, recent);
-  return true;
+  buckets.set(key, recent);
+  return { allowed: true, limit, remaining: limit - recent.length };
+}
+
+function sendRateLimitResponse(
+  res: express.Response,
+  decision: Extract<RateLimitDecision, { allowed: false }>,
+): void {
+  res.setHeader("X-RateLimit-Limit", String(decision.limit));
+  res.setHeader("X-RateLimit-Remaining", String(decision.remaining));
+  res.setHeader("Retry-After", String(decision.retryAfterSeconds));
+  res.status(429).json({ error: "Too many requests" });
 }
 
 /**
@@ -910,14 +961,16 @@ export function checkPublicGetRateLimit(req: express.Request): boolean {
 function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
   if (req.method !== "GET" && req.method !== "HEAD") { next(); return; }
   if (req.path === "/api" || req.path.startsWith("/api/")) { next(); return; }
-  if (!checkPublicGetRateLimit(req)) {
-    res.status(429).json({ error: "Too many requests" });
+  const ip = req.ip || "unknown";
+  const decision = takeRateLimit(publicGetRateBuckets, `get:${ip}`, PUBLIC_GET_RATE_LIMIT_MAX);
+  if (!decision.allowed) {
+    sendRateLimitResponse(res, decision);
     return;
   }
   next();
 }
 
-// Prune all three bucket maps on the same interval to prevent memory leaks
+// Prune every bucket map on the same interval to prevent memory leaks.
 const ingestPruneTimer = setInterval(() => {
   const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
   for (const [key, timestamps] of ingestRateBuckets) {
@@ -935,40 +988,74 @@ const ingestPruneTimer = setInterval(() => {
     if (pruned.length === 0) publicGetRateBuckets.delete(key);
     else publicGetRateBuckets.set(key, pruned);
   }
+  for (const [key, timestamps] of apiWriteRateBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) apiWriteRateBuckets.delete(key);
+    else apiWriteRateBuckets.set(key, pruned);
+  }
 }, RATE_LIMIT_WINDOW_MS);
 ingestPruneTimer.unref?.();
 
 /**
- * Check pre-auth rate limit for a request. Returns true if the request should
- * be allowed through, false if it exceeded the threshold (caller sends 429).
+ * Check the pre-auth rate limit for a request and return the remaining budget
+ * or the backoff duration for a 429 response.
  * Keyed on req.ip — trusts X-Forwarded-For only behind an explicit proxy.
  */
-function checkPreAuthRateLimit(req: express.Request): boolean {
+function checkPreAuthRateLimit(req: express.Request): RateLimitDecision {
   const ip = req.ip || "unknown";
-  const key = `preauth:${ip}`;
-  const now = Date.now();
-  const bucket = ingestPreAuthBuckets.get(key) || [];
-  const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recent = bucket.filter(t => t > windowStart);
-  if (recent.length >= PRE_AUTH_RATE_LIMIT_MAX) return false;
-  recent.push(now);
-  ingestPreAuthBuckets.set(key, recent);
-  return true;
+  return takeRateLimit(ingestPreAuthBuckets, `preauth:${ip}`, PRE_AUTH_RATE_LIMIT_MAX);
 }
 
-app.post("/api/ingest/agents", (req, res) => {
+function ingestPostAuthRateKey(req: express.Request): string {
+  const rawKey = req.headers.authorization || req.ip || "unknown";
+  let hash = 0;
+  for (let i = 0; i < rawKey.length; i++) {
+    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
+  }
+  return `ingest:${hash}`;
+}
+
+function checkPostAuthRateLimit(req: express.Request): RateLimitDecision {
+  return takeRateLimit(ingestRateBuckets, ingestPostAuthRateKey(req), RATE_LIMIT_MAX);
+}
+
+function ingestPreAuthRateLimiter(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (req.method !== "POST") { next(); return; }
+  // Preserve the existing 501 contract while rejecting before JSON parsing.
   if (!INGEST_TOKEN) {
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
     return;
   }
-
-  // Pre-auth rate limit: throttle unauthenticated requests per IP before
-  // the token check to prevent brute-force and resource-exhaustion attacks.
-  if (!checkPreAuthRateLimit(req)) {
-    res.status(429).json({ error: "Too many requests" });
+  // Classify the bearer header before body parsing so valid collectors bypass
+  // the failed-attempt bucket while invalid or missing credentials remain
+  // bounded. Valid tokens still spend the post-auth budget here so malformed
+  // JSON cannot skip throttling. authenticateIngest hashes both configured
+  // and provided values to fixed-length digests before the timing-safe comparison.
+  if (authenticateIngest(req, res)) {
+    const postAuth = checkPostAuthRateLimit(req);
+    if (!postAuth.allowed) {
+      sendRateLimitResponse(res, postAuth);
+      return;
+    }
+    next();
     return;
   }
+  const decision = checkPreAuthRateLimit(req);
+  if (!decision.allowed) {
+    sendRateLimitResponse(res, decision);
+    return;
+  }
+  next();
+}
 
+// ingestPreAuthRateLimiter is mounted before JSON parsing and this handler;
+// CodeQL cannot infer the repository's custom sliding-window middleware.
+// codeql[js/missing-rate-limiting]
+app.post("/api/ingest/agents", (req, res) => {
   if (!authenticateIngest(req, res)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -979,25 +1066,6 @@ app.post("/api/ingest/agents", (req, res) => {
     res.status(409).json({ error: "Ingest unavailable while CLI polling is active" });
     return;
   }
-
-  // Rate limiting: track requests per derived key (avoid storing raw token)
-  const rawKey = req.headers.authorization || req.ip || "unknown";
-  // Simple hash to avoid keeping sensitive tokens in memory
-  let hash = 0;
-  for (let i = 0; i < rawKey.length; i++) {
-    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
-  }
-  const rateKey = `ingest:${hash}`;
-  const now = Date.now();
-  const bucket = ingestRateBuckets.get(rateKey) || [];
-  const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recentRequests = bucket.filter(t => t > windowStart);
-  if (recentRequests.length >= RATE_LIMIT_MAX) {
-    res.status(429).json({ error: "Too many requests" });
-    return;
-  }
-  recentRequests.push(now);
-  ingestRateBuckets.set(rateKey, recentRequests);
 
   const sessions = req.body?.sessions;
   if (!Array.isArray(sessions)) {
@@ -1040,15 +1108,26 @@ let lastIngestAt = 0;
 
 const MUTATING_API_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-app.use("/api", (req, res, next) => {
+function apiMutationGuard(req: express.Request, res: express.Response, next: express.NextFunction): void {
   if (!MUTATING_API_METHODS.has(req.method)) return next();
-  // Ingest runs above this middleware and ends the chain with a response, so
-  // this exemption is defensive belt-and-suspenders for the future ordering.
+  // Ingest has its own pre-auth middleware and authenticated per-token budget.
   if (req.path === "/ingest/agents") return next();
-  if (isOriginAllowed(req.headers.origin, corsConfig)) return next();
+  if (!isOriginAllowed(req.headers.origin, corsConfig)) {
+    res.status(403).json({ error: "Forbidden origin" });
+    return;
+  }
 
-  res.status(403).json({ error: "Forbidden origin" });
-});
+  const ip = req.ip || "unknown";
+  const isLayoutWrite = req.path === "/layouts" || req.path.startsWith("/layouts/");
+  const scope = isLayoutWrite ? "layouts" : "prefs";
+  const limit = isLayoutWrite ? LAYOUT_WRITE_RATE_LIMIT_MAX : PREFS_WRITE_RATE_LIMIT_MAX;
+  const decision = takeRateLimit(apiWriteRateBuckets, `write:${scope}:${ip}`, limit);
+  if (!decision.allowed) {
+    sendRateLimitResponse(res, decision);
+    return;
+  }
+  next();
+}
 
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });
