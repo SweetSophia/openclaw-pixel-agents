@@ -8,11 +8,11 @@
 
 import { execFile } from "node:child_process";
 import { isIP } from "node:net";
-import express from "express";
+import express, { type Response } from "express";
 import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, opendirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -24,9 +24,13 @@ import {
   applyCliFailure,
   classifyCliExecError,
   createInitialDataSourceState,
+  INITIAL_CLI_POLL_HEALTH,
   isCliPollingActive,
   isIngestWritesActive,
+  OPENCLAW_SESSIONS_EXEC_OPTIONS,
+  updateCliPollHealth,
   type CliFailureKind,
+  type CliPollHealth,
   type ConfiguredDataSource,
 } from "./dataSource";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
@@ -229,7 +233,7 @@ const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "
 
 /**
  * Data source mode:
- *   "auto"    — try CLI polling; if openclaw not found and ingest token is set, use ingest-only
+ *   "auto"    — try CLI polling; on operator-action-required failure with an ingest token, use ingest-only
  *   "cli"     — always poll via local openclaw CLI (original behavior)
  *   "ingest"  — only accept pushed data via the ingest API (no local CLI needed)
  */
@@ -240,6 +244,7 @@ const DATA_SOURCE: ConfiguredDataSource = configuredDataSource === "cli"
   ? configuredDataSource
   : "auto";
 let dataSourceState = createInitialDataSourceState(DATA_SOURCE, !!INGEST_TOKEN);
+let cliPollHealth: CliPollHealth = INITIAL_CLI_POLL_HEALTH;
 
 // ---- Known agents from config ----
 
@@ -338,6 +343,7 @@ interface CliSessionsResult {
   count: number;
   sourceError?: boolean;
   cliFailureKind?: CliFailureKind;
+  error?: unknown;
 }
 
 /**
@@ -355,11 +361,10 @@ function pollSessions(): Promise<CliSessionsResult> {
       "--active", String(ACTIVE_THRESHOLD_MIN),
     ];
 
-    execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
+    execFile(OPENCLAW_BIN, args, OPENCLAW_SESSIONS_EXEC_OPTIONS, (err, stdout, stderr) => {
       if (err) {
         const cliFailureKind = classifyCliExecError(err);
-        logger.error({ err, subsystem: "poll" }, "cli error");
-        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind });
+        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind, error: err });
         return;
       }
 
@@ -370,8 +375,13 @@ function pollSessions(): Promise<CliSessionsResult> {
           count: data.count || 0,
         });
       } catch (parseErr) {
-        logger.error({ err: parseErr, subsystem: "poll" }, "json parse error");
-        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind: "transient" });
+        resolve({
+          sessions: [],
+          count: 0,
+          sourceError: true,
+          cliFailureKind: "transient",
+          error: parseErr,
+        });
       }
     });
   });
@@ -738,7 +748,7 @@ async function pollAndBroadcast(): Promise<void> {
   isPolling = true;
   const cycleLog = logger.child({ cycleId: randomUUID(), subsystem: "poll" });
   try {
-    const { sessions, sourceError, cliFailureKind } = await pollSessions();
+    const { sessions, sourceError, cliFailureKind, error } = await pollSessions();
     if (sourceError && cliFailureKind) {
       const nextState = applyCliFailure(dataSourceState, cliFailureKind);
       if (nextState !== dataSourceState) {
@@ -748,19 +758,43 @@ async function pollAndBroadcast(): Promise<void> {
           pollTimer = undefined;
         }
         cycleLog.warn({
+          err: error,
           configured: dataSourceState.configured,
           effective: dataSourceState.effective,
           failureKind: cliFailureKind,
-        }, "CLI executable unavailable; transitioned permanently to ingest-only");
+        }, "CLI unavailable without operator action; transitioned permanently to ingest-only");
         return;
+      }
+
+      const healthUpdate = updateCliPollHealth(cliPollHealth, cliFailureKind);
+      cliPollHealth = healthUpdate.health;
+      if (healthUpdate.action === "incident") {
+        cycleLog.error({
+          err: error,
+          failureKind: cliFailureKind,
+          count: cliPollHealth.consecutiveFailures,
+        }, "cli error");
+      } else if (healthUpdate.action === "reminder") {
+        cycleLog.warn({
+          failureKind: cliFailureKind,
+          count: cliPollHealth.consecutiveFailures,
+        }, "cli error (ongoing)");
+      }
+    } else if (!sourceError) {
+      const priorHealth = cliPollHealth;
+      const healthUpdate = updateCliPollHealth(cliPollHealth, null);
+      cliPollHealth = healthUpdate.health;
+      if (healthUpdate.action === "recovered") {
+        cycleLog.info({
+          failureKind: priorHealth.lastFailureKind,
+          count: priorHealth.consecutiveFailures,
+        }, "cli polling recovered");
       }
     }
     const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
-    if (!applied) {
-      cycleLog.warn("keeping previous agent snapshot after source error");
-    } else {
+    if (applied) {
       // Broadcast only when the visible agent snapshot actually changes.
       io.emit("agents:update", snapshot);
     }
@@ -920,6 +954,9 @@ function sendRateLimitResponse(
  * default no-trust setting req.ip is the direct peer.
  */
 export function checkPublicGetRateLimit(req: express.Request): boolean {
+  // Consumes a public-GET slot. publicGetRateLimiter calls takeRateLimit
+  // directly so it can attach Retry-After; do not also call this helper on
+  // that same request or the IP is charged twice.
   const ip = req.ip || "unknown";
   return takeRateLimit(publicGetRateBuckets, `get:${ip}`, PUBLIC_GET_RATE_LIMIT_MAX).allowed;
 }
@@ -1259,17 +1296,48 @@ app.get("/api/rooms", (_req, res) => {
 // ---- Layout persistence ----
 
 const LAYOUTS_DIR = join(DATA_DIR, "layouts");
+const MAX_LAYOUT_FILES = 100;
+
+function respondLayoutCapacityExceeded(res: Response) {
+  return res.status(507).json({ error: `Layout limit reached (${MAX_LAYOUT_FILES})` });
+}
 
 function ensureLayoutsDir() {
   mkdirSync(LAYOUTS_DIR, { recursive: true });
 }
 
-function listLayouts(): OfficeLayoutDoc[] {
+function readLayoutDirectory(limit: number): { files: string[]; entryCount: number } {
+  ensureLayoutsDir();
+  const directory = opendirSync(LAYOUTS_DIR);
+  const files: string[] = [];
+  let entryCount = 0;
+  try {
+    while (entryCount < limit) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      entryCount += 1;
+      // Every directory entry consumes capacity. JSON entries are collected
+      // without inspecting their type so malformed/non-regular entries retain
+      // the same resource-budget impact as persisted layout files.
+      if (entry.name.endsWith(".json")) files.push(entry.name);
+    }
+    return { files, entryCount };
+  } finally {
+    directory.closeSync();
+  }
+}
+
+function countLayoutEntries(): number {
+  return readLayoutDirectory(MAX_LAYOUT_FILES).entryCount;
+}
+
+function listLayouts(): { layouts: OfficeLayoutDoc[]; overCapacity: boolean } {
   ensureLayoutsDir();
   try {
-    const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
+    const { files, entryCount } = readLayoutDirectory(MAX_LAYOUT_FILES + 1);
+    const overCapacity = entryCount > MAX_LAYOUT_FILES;
     const layouts: OfficeLayoutDoc[] = [];
-    for (const file of files) {
+    for (const file of files.slice(0, MAX_LAYOUT_FILES)) {
       try {
         const raw = readFileSync(join(LAYOUTS_DIR, file), "utf-8");
         const layout = parseOfficeLayoutDoc(JSON.parse(raw));
@@ -1279,9 +1347,9 @@ function listLayouts(): OfficeLayoutDoc[] {
         logger.warn({ err, file, subsystem: "layout" }, "skipping unreadable layout file");
       }
     }
-    return layouts.sort((a, b) => b.updatedAt - a.updatedAt);
+    return { layouts: layouts.sort((a, b) => b.updatedAt - a.updatedAt), overCapacity };
   } catch {
-    return [];
+    return { layouts: [], overCapacity: false };
   }
 }
 
@@ -1301,13 +1369,22 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
   }
 }
 
-function saveLayout(layout: OfficeLayoutDoc): void {
+function saveLayout(layout: OfficeLayoutDoc): boolean {
   if (!isValidLayoutId(layout.id)) throw new Error(`Invalid layout ID: ${layout.id}`);
   ensureLayoutsDir();
-  layout.updatedAt = Date.now();
-  const validated = parseOfficeLayoutDoc(layout);
+  const validated = parseOfficeLayoutDoc({ ...layout, updatedAt: Date.now() });
   if (!validated) throw new Error(`Invalid layout document: ${layout.id}`);
-  writeFileSync(join(LAYOUTS_DIR, `${validated.id}.json`), JSON.stringify(validated, null, 2));
+  // Construct filesystem paths only from the schema-validated document. This
+  // keeps the path boundary explicit for both humans and static analysis.
+  const target = join(LAYOUTS_DIR, `${validated.id}.json`);
+  // The server is a single Node process and all operations below are
+  // synchronous, so the capacity decision and write run in one event-loop
+  // turn. Existing files remain replaceable, including malformed files that
+  // an operator is repairing.
+  if (!existsSync(target) && countLayoutEntries() >= MAX_LAYOUT_FILES) return false;
+  layout.updatedAt = validated.updatedAt;
+  writeFileSync(target, JSON.stringify(validated, null, 2));
+  return true;
 }
 
 function deleteLayout(id: string): boolean {
@@ -1360,14 +1437,18 @@ function getDefaultLayout(): OfficeLayoutDoc {
 // Layout REST API
 
 app.get("/api/layouts", (_req, res) => {
-  const layouts = listLayouts();
+  const { layouts, overCapacity } = listLayouts();
   // Always include default if empty
-  if (layouts.length === 0) {
+  if (layouts.length === 0 && !overCapacity) {
     const def = getDefaultLayout();
-    saveLayout(def);
+    if (!saveLayout(def)) {
+      return respondLayoutCapacityExceeded(res);
+    }
     layouts.push(def);
   }
-  res.json({ layouts });
+  res.json(overCapacity
+    ? { layouts, overCapacity: true, layoutLimit: MAX_LAYOUT_FILES }
+    : { layouts });
 });
 
 app.get("/api/layouts/:id", (req, res) => {
@@ -1379,7 +1460,9 @@ app.get("/api/layouts/:id", (req, res) => {
     // Auto-create default
     if (id === "default") {
       const def = getDefaultLayout();
-      saveLayout(def);
+      if (!saveLayout(def)) {
+        return respondLayoutCapacityExceeded(res);
+      }
       return res.json(def);
     }
     return res.status(404).json({ error: "Layout not found" });
@@ -1411,15 +1494,17 @@ app.put("/api/layouts/:id", (req, res) => {
     id, // prevent id overwrite
   };
   if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
-  saveLayout(layout);
+  if (!saveLayout(layout)) {
+    return respondLayoutCapacityExceeded(res);
+  }
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });
 
 app.post("/api/layouts", (req, res) => {
-  const id = `layout-${randomUUID()}`;
   const parsed = parseLayoutMutationBody(req.body, { width: 24, height: 16 });
   if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  const id = `layout-${randomUUID()}`;
 
   const layout: OfficeLayoutDoc = {
     id,
@@ -1431,7 +1516,9 @@ app.post("/api/layouts", (req, res) => {
     updatedAt: Date.now(),
   };
   if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
-  saveLayout(layout);
+  if (!saveLayout(layout)) {
+    return respondLayoutCapacityExceeded(res);
+  }
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });

@@ -244,52 +244,60 @@ describe("API write rate limiting (issue #154)", () => {
 describe("disabled ingest pre-parser boundary", () => {
   it("returns the existing 501 response without parsing a malformed body", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-disabled-ingest-"));
-    vi.stubEnv("DATA_DIR", dataDir);
-    vi.stubEnv("DATA_SOURCE", "ingest");
-    vi.stubEnv("INGEST_API_TOKEN", "");
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
-    vi.resetModules();
+    let io: SocketIOServer | undefined;
+    try {
+      vi.stubEnv("DATA_DIR", dataDir);
+      vi.stubEnv("DATA_SOURCE", "ingest");
+      vi.stubEnv("INGEST_API_TOKEN", "");
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
+      vi.resetModules();
 
-    const serverModule = await import("./index");
-    await request(serverModule.app)
-      .post("/api/ingest/agents")
-      .set("Content-Type", "application/json")
-      .send('{"sessions":[')
-      .expect(501)
-      .expect({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
-
-    serverModule.io.close();
-    rmSync(dataDir, { recursive: true, force: true });
-    vi.unstubAllEnvs();
-    vi.resetModules();
+      const serverModule = await import("./index");
+      io = serverModule.io;
+      await request(serverModule.app)
+        .post("/api/ingest/agents")
+        .set("Content-Type", "application/json")
+        .send('{"sessions":[')
+        .expect(501)
+        .expect({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
+    } finally {
+      io?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });
 
 describe("default layout write headroom", () => {
   it("allows more than the theoretical 30/minute autosave ceiling", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "pixel-agents-layout-headroom-"));
-    vi.stubEnv("DATA_DIR", dataDir);
-    vi.stubEnv("DATA_SOURCE", "ingest");
-    vi.stubEnv("INGEST_API_TOKEN", "test-secret");
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
-    vi.stubEnv("LAYOUT_WRITE_RATE_LIMIT_MAX", undefined);
-    vi.resetModules();
+    let io: SocketIOServer | undefined;
+    try {
+      vi.stubEnv("DATA_DIR", dataDir);
+      vi.stubEnv("DATA_SOURCE", "ingest");
+      vi.stubEnv("INGEST_API_TOKEN", "test-secret");
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
+      vi.stubEnv("LAYOUT_WRITE_RATE_LIMIT_MAX", undefined);
+      vi.resetModules();
 
-    const serverModule = await import("./index");
-    for (let attempt = 0; attempt < 31; attempt++) {
-      await request(serverModule.app)
-        .put("/api/layouts/headroom")
-        .set("Origin", "https://pixel.test")
-        .send({ width: "wide" })
-        .expect(400);
+      const serverModule = await import("./index");
+      io = serverModule.io;
+      for (let attempt = 0; attempt < 31; attempt++) {
+        await request(serverModule.app)
+          .put("/api/layouts/headroom")
+          .set("Origin", "https://pixel.test")
+          .send({ width: "wide" })
+          .expect(400);
+      }
+    } finally {
+      io?.close();
+      rmSync(dataDir, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+      vi.resetModules();
     }
-
-    serverModule.io.close();
-    rmSync(dataDir, { recursive: true, force: true });
-    vi.unstubAllEnvs();
-    vi.resetModules();
   });
 });
 

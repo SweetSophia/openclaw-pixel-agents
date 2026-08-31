@@ -129,6 +129,7 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     catalog: ['DESK', 'PLANT'],
     activeLayout: mockLayout,
     isDirty: false,
+    layoutError: null,
     layouts: [mockLayout],
     editorMode: true,
     selectedFurnitureType: null,
@@ -143,7 +144,8 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     onToggleDeleteMode: vi.fn(),
     onSave: vi.fn(),
     onLoad: vi.fn(),
-    onCreate: vi.fn(),
+    onCreate: vi.fn().mockResolvedValue(mockLayout),
+    onClearLayoutError: vi.fn(),
     onDeleteLayout: vi.fn(),
     onToggleEditor: vi.fn(),
   };
