@@ -66,7 +66,7 @@ function capacityErrorMessage(error: unknown): string {
 const MAX_RETRY_AFTER_MS = 60_000;
 
 function parseRetryAfterMs(value: string | null): number {
-  if (!value) return 0;
+  if (!value) return MAX_RETRY_AFTER_MS;
   const seconds = Number(value);
   const parsed = Number.isFinite(seconds) && seconds >= 0
     ? Math.ceil(seconds * 1000)
@@ -74,6 +74,7 @@ function parseRetryAfterMs(value: string | null): number {
         const retryAt = Date.parse(value);
         return Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 0;
       })();
+  if (!Number.isFinite(parsed) || parsed <= 0) return MAX_RETRY_AFTER_MS;
   return Math.min(parsed, MAX_RETRY_AFTER_MS);
 }
 

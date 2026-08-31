@@ -221,6 +221,24 @@ describe("API write rate limiting (issue #154)", () => {
     expectRateLimitHeaders(blocked, 3);
   });
 
+  it("applies ingest post-auth limiting before JSON parsing", async () => {
+    const malformed = `{"sessions":"${"x".repeat(99 * 1024)}`;
+    await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .set("Content-Type", "application/json")
+      .send(malformed)
+      .expect(400);
+
+    const blockedPostAuth = await request(app)
+      .post("/api/ingest/agents")
+      .set("Authorization", "Bearer test-secret")
+      .set("Content-Type", "application/json")
+      .send(malformed)
+      .expect(429);
+    expectRateLimitHeaders(blockedPostAuth, 1);
+  });
+
   it("does not let failed bearer attempts throttle a valid ingest push", async () => {
     for (let attempt = 0; attempt < 3; attempt++) {
       await request(app)

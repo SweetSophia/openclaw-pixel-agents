@@ -1006,6 +1006,19 @@ function checkPreAuthRateLimit(req: express.Request): RateLimitDecision {
   return takeRateLimit(ingestPreAuthBuckets, `preauth:${ip}`, PRE_AUTH_RATE_LIMIT_MAX);
 }
 
+function ingestPostAuthRateKey(req: express.Request): string {
+  const rawKey = req.headers.authorization || req.ip || "unknown";
+  let hash = 0;
+  for (let i = 0; i < rawKey.length; i++) {
+    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
+  }
+  return `ingest:${hash}`;
+}
+
+function checkPostAuthRateLimit(req: express.Request): RateLimitDecision {
+  return takeRateLimit(ingestRateBuckets, ingestPostAuthRateKey(req), RATE_LIMIT_MAX);
+}
+
 function ingestPreAuthRateLimiter(
   req: express.Request,
   res: express.Response,
@@ -1019,9 +1032,18 @@ function ingestPreAuthRateLimiter(
   }
   // Classify the bearer header before body parsing so valid collectors bypass
   // the failed-attempt bucket while invalid or missing credentials remain
-  // bounded. authenticateIngest hashes both configured and provided values to
-  // fixed-length digests before the timing-safe comparison.
-  if (authenticateIngest(req, res)) { next(); return; }
+  // bounded. Valid tokens still spend the post-auth budget here so malformed
+  // JSON cannot skip throttling. authenticateIngest hashes both configured
+  // and provided values to fixed-length digests before the timing-safe comparison.
+  if (authenticateIngest(req, res)) {
+    const postAuth = checkPostAuthRateLimit(req);
+    if (!postAuth.allowed) {
+      sendRateLimitResponse(res, postAuth);
+      return;
+    }
+    next();
+    return;
+  }
   const decision = checkPreAuthRateLimit(req);
   if (!decision.allowed) {
     sendRateLimitResponse(res, decision);
@@ -1042,20 +1064,6 @@ app.post("/api/ingest/agents", (req, res) => {
   // Single-writer principle: authenticated pushes cannot race CLI snapshots.
   if (!isIngestWritesActive(dataSourceState)) {
     res.status(409).json({ error: "Ingest unavailable while CLI polling is active" });
-    return;
-  }
-
-  // Rate limiting: track requests per derived key (avoid storing raw token)
-  const rawKey = req.headers.authorization || req.ip || "unknown";
-  // Simple hash to avoid keeping sensitive tokens in memory
-  let hash = 0;
-  for (let i = 0; i < rawKey.length; i++) {
-    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
-  }
-  const rateKey = `ingest:${hash}`;
-  const decision = takeRateLimit(ingestRateBuckets, rateKey, RATE_LIMIT_MAX);
-  if (!decision.allowed) {
-    sendRateLimitResponse(res, decision);
     return;
   }
 
