@@ -134,19 +134,33 @@ export function useLayoutStore() {
   const isDirtyRef = useRef(false);
   // retryAttemptRef: tracks consecutive failed auto-saves for backoff.
   const retryAttemptRef = useRef(0);
+  // Retry backoff is independent from the furniture debounce. A new edit may
+  // reschedule the debounce, but it must not cancel recovery from a failed save.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSaveRetry = useCallback(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   const clearLayoutError = useCallback(() => setLayoutError(null), []);
 
   const scheduleSaveRetry = useCallback((retry: () => void, minimumDelayMs = 0) => {
     const backoffDelay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
     const delay = Math.max(backoffDelay, minimumDelayMs);
-    retryAttemptRef.current++;
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      autoSaveTimerRef.current = null;
+    // Retry-After already owns this wait. Incrementing would make the next
+    // 429 inherit 5xx/409 exponential backoff and ignore the server clock.
+    if (minimumDelayMs < backoffDelay) {
+      retryAttemptRef.current++;
+    }
+    clearSaveRetry();
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
       retry();
     }, delay);
-  }, []);
+  }, [clearSaveRetry]);
 
   // 'saved' auto-clears back to 'idle' so the button returns to its neutral
   // state; 'saving' and 'error' persist until the next save attempt resolves.
@@ -197,7 +211,9 @@ export function useLayoutStore() {
     setIsDirty(false);
     // Reset the retry counter so the first failure on a freshly-loaded
     // layout starts from the base 2s backoff, not the previous layout's
-    // inflated exponent.
+    // inflated exponent. Drop any pending recovery so it cannot PUT the
+    // newly loaded layout (or a null active layout) by accident.
+    clearSaveRetry();
     retryAttemptRef.current = 0;
     if (!layout) {
       persistedRevisionRef.current = null;
@@ -208,7 +224,7 @@ export function useLayoutStore() {
       }
     }
     setActiveLayout(layout);
-  }, []);
+  }, [clearSaveRetry]);
 
   const fetchLayouts = useCallback(async () => {
     try {
@@ -320,6 +336,7 @@ export function useLayoutStore() {
               clearTimeout(autoSaveTimerRef.current);
               autoSaveTimerRef.current = null;
             }
+            clearSaveRetry();
             retryAttemptRef.current = 0;
             setLayoutError(capacityErrorMessage(errorBody?.error));
           } else if (response.status === 409) {
@@ -353,6 +370,7 @@ export function useLayoutStore() {
           return;
         }
         // Success — reset retry counter and advance the revision monotonically.
+        clearSaveRetry();
         retryAttemptRef.current = 0;
         markSaveStatus('saved');
         const currentRevision = persistedRevisionRef.current;
@@ -381,6 +399,7 @@ export function useLayoutStore() {
     return savePromiseRef.current;
   }, [
     advancePersistedRevision,
+    clearSaveRetry,
     fetchLayouts,
     markSaveStatus,
     refreshPersistedRevision,
@@ -399,20 +418,23 @@ export function useLayoutStore() {
       if (!res.ok) {
         const message = res.status === 507
           ? capacityErrorMessage(data?.error)
-          : data?.error ?? `Failed to create layout (HTTP ${res.status})`;
+          : data && typeof data.error === 'string'
+            ? data.error
+            : `Failed to create layout (HTTP ${res.status})`;
         setLayoutError(message);
         console.error('Failed to create layout:', message);
         return null;
       }
-      if (!isLayoutDoc(data?.layout)) {
+      const layout: unknown = data?.layout;
+      if (!isLayoutDoc(layout)) {
         setLayoutError('Failed to create layout: invalid response body.');
         console.error('Failed to create layout: invalid response body');
         return null;
       }
       setLayoutError(null);
-      setActiveLayoutProgrammatic(data.layout);
+      setActiveLayoutProgrammatic(layout);
       fetchLayouts();
-      return data.layout;
+      return layout;
     } catch (err) {
       console.error('Failed to create layout:', err);
       setLayoutError('Failed to create layout. Try again.');
@@ -426,12 +448,12 @@ export function useLayoutStore() {
   const deleteLayout = useCallback(async (id: string): Promise<boolean> => {
     try {
       const res = await fetch(`${API_BASE}/layouts/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 404) {
         const err = await res.json().catch(() => ({ error: 'Failed to delete layout' }));
         console.error('Failed to delete layout:', err.error);
         return false;
       }
-      if (activeLayout?.id === id) {
+      if (activeLayoutRef.current?.id === id) {
         setActiveLayoutProgrammatic(null);
       }
       fetchLayouts();
@@ -440,7 +462,17 @@ export function useLayoutStore() {
       console.error('Failed to delete layout:', err);
       return false;
     }
-  }, [activeLayout, fetchLayouts, setActiveLayoutProgrammatic]);
+  }, [fetchLayouts, setActiveLayoutProgrammatic]);
+
+  // Timers can otherwise outlive the hook and call setState or issue retries
+  // after its consumer has gone away.
+  useEffect(() => () => {
+    if (saveStatusTimerRef.current) {
+      clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = null;
+    }
+    clearSaveRetry();
+  }, [clearSaveRetry]);
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -570,6 +602,7 @@ export function useLayoutStore() {
           // persisted — otherwise it 409s on a stale baseUpdatedAt.
           // isDirty/activeLayout are deliberately untouched: edits landing
           // after beforeunload are not covered by this save.
+          clearSaveRetry();
           retryAttemptRef.current = 0;
           advancePersistedRevision(savedLayout.id, savedLayout.updatedAt);
         }).catch(err => {
@@ -582,7 +615,7 @@ export function useLayoutStore() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [refreshPersistedRevision, saveActiveLayout, scheduleSaveRetry]);
+  }, [refreshPersistedRevision, saveActiveLayout, scheduleSaveRetry, clearSaveRetry]);
 
   // Initial load
   useEffect(() => {
