@@ -54,6 +54,30 @@ function pickBaseUpdatedAt(
     : currentLayout.updatedAt;
 }
 
+function capacityErrorMessage(error: unknown): string {
+  const detail = typeof error === 'string' && error.trim()
+    ? error.trim().replace(/[.!?]+$/, '')
+    : 'Layout limit reached (100)';
+  return `${detail}. Delete unused layouts until the warning clears.`;
+}
+
+// Match the server sliding window: Retry-After is never longer than 60s for a
+// well-behaved peer, and a mis-set header must not park autosave indefinitely.
+const MAX_RETRY_AFTER_MS = 60_000;
+
+function parseRetryAfterMs(value: string | null): number {
+  if (!value) return MAX_RETRY_AFTER_MS;
+  const seconds = Number(value);
+  const parsed = Number.isFinite(seconds) && seconds >= 0
+    ? Math.ceil(seconds * 1000)
+    : (() => {
+        const retryAt = Date.parse(value);
+        return Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 0;
+      })();
+  if (!Number.isFinite(parsed) || parsed <= 0) return MAX_RETRY_AFTER_MS;
+  return Math.min(parsed, MAX_RETRY_AFTER_MS);
+}
+
 /**
  * Dispatched action: a new layout value, or a functional updater.
  * Every mutation flows through the reducer, which guarantees the ref
@@ -85,6 +109,7 @@ export function useLayoutStore() {
   );
 
   const [catalog, setCatalog] = useState<string[]>([]);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
   const savePromiseRef = useRef<Promise<void>>(Promise.resolve());
   // Tracks the last server revision independently from the optimistic local
   // document. A stale response may advance this revision without being
@@ -120,8 +145,11 @@ export function useLayoutStore() {
     }
   }, []);
 
-  const scheduleSaveRetry = useCallback((retry: () => void) => {
-    const delay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+  const clearLayoutError = useCallback(() => setLayoutError(null), []);
+
+  const scheduleSaveRetry = useCallback((retry: () => void, minimumDelayMs = 0) => {
+    const backoffDelay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
+    const delay = Math.max(backoffDelay, minimumDelayMs);
     retryAttemptRef.current++;
     clearSaveRetry();
     retryTimerRef.current = setTimeout(() => {
@@ -179,7 +207,9 @@ export function useLayoutStore() {
     setIsDirty(false);
     // Reset the retry counter so the first failure on a freshly-loaded
     // layout starts from the base 2s backoff, not the previous layout's
-    // inflated exponent.
+    // inflated exponent. Drop any pending recovery so it cannot PUT the
+    // newly loaded layout (or a null active layout) by accident.
+    clearSaveRetry();
     retryAttemptRef.current = 0;
     if (!layout) {
       persistedRevisionRef.current = null;
@@ -190,15 +220,53 @@ export function useLayoutStore() {
       }
     }
     setActiveLayout(layout);
-  }, []);
+  }, [clearSaveRetry]);
 
   const fetchLayouts = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/layouts`);
-      const data = await res.json();
-      setLayouts(data.layouts || []);
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const responseError = data && typeof data === 'object' && 'error' in data
+          ? (data as Record<string, unknown>).error
+          : undefined;
+        const message = res.status === 507
+          ? capacityErrorMessage(responseError)
+          : typeof responseError === 'string'
+            ? responseError
+            : `Failed to fetch layouts (HTTP ${res.status})`;
+        setLayoutError(message);
+        console.error('Failed to fetch layouts:', message);
+        return;
+      }
+      const responseBody = data && typeof data === 'object'
+        ? data as Record<string, unknown>
+        : null;
+      if (
+        !responseBody
+        || !Array.isArray(responseBody.layouts)
+        || !responseBody.layouts.every(isLayoutDoc)
+      ) {
+        console.error('Failed to fetch layouts: invalid response body');
+        setLayoutError(current => current ?? 'Failed to fetch layouts. Try again.');
+        return;
+      }
+      setLayouts(responseBody.layouts);
+      if (responseBody.overCapacity === true) {
+        const limit = Number.isSafeInteger(responseBody.layoutLimit)
+          && (responseBody.layoutLimit as number) > 0
+          ? responseBody.layoutLimit as number
+          : 100;
+        setLayoutError(
+          `Only ${limit} layouts are shown because the layout limit was exceeded. `
+          + 'Delete unused layouts until this warning clears.',
+        );
+      } else {
+        setLayoutError(null);
+      }
     } catch (err) {
       console.error('Failed to fetch layouts:', err);
+      setLayoutError(current => current ?? 'Failed to fetch layouts. Try again.');
     }
   }, []);
 
@@ -215,7 +283,11 @@ export function useLayoutStore() {
       const res = await fetch(`${API_BASE}/layouts/${id}`);
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        console.error('Failed to load layout:', errBody.error ?? `HTTP ${res.status}`);
+        const message = res.status === 507
+          ? capacityErrorMessage(errBody.error)
+          : errBody.error ?? `Failed to load layout (HTTP ${res.status})`;
+        if (res.status === 507) setLayoutError(message);
+        console.error('Failed to load layout:', message);
         return null;
       }
       const data: unknown = await res.json();
@@ -255,11 +327,24 @@ export function useLayoutStore() {
         if (!response.ok) {
           const errorBody = await response.json().catch(() => null);
           console.error('Failed to save layout:', errorBody?.error ?? `HTTP ${response.status}`);
-          if (response.status === 409) {
+          if (response.status === 507) {
+            if (autoSaveTimerRef.current) {
+              clearTimeout(autoSaveTimerRef.current);
+              autoSaveTimerRef.current = null;
+            }
+            clearSaveRetry();
+            retryAttemptRef.current = 0;
+            setLayoutError(capacityErrorMessage(errorBody?.error));
+          } else if (response.status === 409) {
             await refreshPersistedRevision(merged.id);
             if (activeLayoutRef.current?.id === merged.id) {
               scheduleSaveRetry(() => { void saveActiveLayout(); });
             }
+          } else if (response.status === 429) {
+            scheduleSaveRetry(
+              () => { void saveActiveLayout(); },
+              parseRetryAfterMs(response.headers.get('Retry-After')),
+            );
           } else if (response.status >= 500) {
             scheduleSaveRetry(() => { void saveActiveLayout(); });
           }
@@ -327,22 +412,28 @@ export function useLayoutStore() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const message = data && typeof data.error === 'string'
-          ? data.error
-          : `HTTP ${res.status}`;
+        const message = res.status === 507
+          ? capacityErrorMessage(data?.error)
+          : data && typeof data.error === 'string'
+            ? data.error
+            : `Failed to create layout (HTTP ${res.status})`;
+        setLayoutError(message);
         console.error('Failed to create layout:', message);
         return null;
       }
       const layout: unknown = data?.layout;
       if (!isLayoutDoc(layout)) {
-        console.error('Failed to create layout:', 'invalid response body');
+        setLayoutError('Failed to create layout: invalid response body.');
+        console.error('Failed to create layout: invalid response body');
         return null;
       }
+      setLayoutError(null);
       setActiveLayoutProgrammatic(layout);
       fetchLayouts();
       return layout;
     } catch (err) {
       console.error('Failed to create layout:', err);
+      setLayoutError('Failed to create layout. Try again.');
       return null;
     }
   }, [fetchLayouts, setActiveLayoutProgrammatic]);
@@ -482,6 +573,13 @@ export function useLayoutStore() {
             }
             return;
           }
+          if (response.status === 429) {
+            scheduleSaveRetry(
+              () => { void saveActiveLayout(); },
+              parseRetryAfterMs(response.headers.get('Retry-After')),
+            );
+            return;
+          }
           if (!response.ok) {
             console.error(`Failed to save layout before unload: HTTP ${response.status}`);
             return;
@@ -500,6 +598,7 @@ export function useLayoutStore() {
           // persisted — otherwise it 409s on a stale baseUpdatedAt.
           // isDirty/activeLayout are deliberately untouched: edits landing
           // after beforeunload are not covered by this save.
+          clearSaveRetry();
           retryAttemptRef.current = 0;
           advancePersistedRevision(savedLayout.id, savedLayout.updatedAt);
         }).catch(err => {
@@ -512,7 +611,7 @@ export function useLayoutStore() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [refreshPersistedRevision, saveActiveLayout, scheduleSaveRetry]);
+  }, [refreshPersistedRevision, saveActiveLayout, scheduleSaveRetry, clearSaveRetry]);
 
   // Initial load
   useEffect(() => {
@@ -526,7 +625,9 @@ export function useLayoutStore() {
     activeLayout,
     isDirty,
     saveStatus,
+    layoutError,
     catalog,
+    clearLayoutError,
     loadLayoutById,
     saveActiveLayout,
     createLayout,
