@@ -554,6 +554,55 @@ describe('useLayoutStore', () => {
       });
       expect(result).toBe(false);
     });
+
+    it('does not clear a newer active layout when a deferred 404 arrives', async () => {
+      await renderStoreProbe();
+      const deleteGate = deferred<Response>();
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string'
+          ? input
+          : input instanceof Request
+            ? input.url
+            : input.toString();
+        if (url.endsWith('/api/layouts/default') && init?.method === 'DELETE') {
+          return deleteGate.promise;
+        }
+        return initialFetch(input, init);
+      }));
+
+      let deleteResult: boolean | undefined;
+      const deletePromise = latest(snapshots).deleteLayout('default').then((value) => {
+        deleteResult = value;
+      });
+
+      await act(async () => {
+        await latest(snapshots).loadLayoutById('other');
+      });
+      expect(latest(snapshots).activeLayout?.id).toBe('other');
+
+      act(() => {
+        latest(snapshots).updateFurniture([
+          { id: 'desk-1', type: 'DESK', x: 1, y: 1, rotation: 0 },
+        ]);
+      });
+      expect(latest(snapshots).isDirty).toBe(true);
+
+      await act(async () => {
+        deleteGate.resolve(new Response(
+          JSON.stringify({ error: 'Not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ));
+        await deletePromise;
+      });
+
+      expect(deleteResult).toBe(true);
+      expect(latest(snapshots).activeLayout?.id).toBe('other');
+      expect(latest(snapshots).isDirty).toBe(true);
+    });
   });
 
   it('returns a visible failure signal when createLayout receives a non-OK response', async () => {
@@ -1574,6 +1623,65 @@ describe('useLayoutStore', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(putBodies).toHaveLength(2);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('keeps consecutive 429s on Retry-After instead of inheriting backoff', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length <= 2) {
+          return new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': '3' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+
+    // A polluted counter would wait 4s (2s * 2^1) here, not Retry-After 3s.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(3);
     expect(latest(snapshots).isDirty).toBe(false);
   });
 

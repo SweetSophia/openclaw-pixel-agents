@@ -150,7 +150,11 @@ export function useLayoutStore() {
   const scheduleSaveRetry = useCallback((retry: () => void, minimumDelayMs = 0) => {
     const backoffDelay = Math.min(2000 * Math.pow(2, retryAttemptRef.current), 30000);
     const delay = Math.max(backoffDelay, minimumDelayMs);
-    retryAttemptRef.current++;
+    // Retry-After already owns this wait. Incrementing would make the next
+    // 429 inherit 5xx/409 exponential backoff and ignore the server clock.
+    if (minimumDelayMs < backoffDelay) {
+      retryAttemptRef.current++;
+    }
     clearSaveRetry();
     retryTimerRef.current = setTimeout(() => {
       retryTimerRef.current = null;
@@ -449,7 +453,7 @@ export function useLayoutStore() {
         console.error('Failed to delete layout:', err.error);
         return false;
       }
-      if (activeLayout?.id === id) {
+      if (activeLayoutRef.current?.id === id) {
         setActiveLayoutProgrammatic(null);
       }
       fetchLayouts();
@@ -458,7 +462,7 @@ export function useLayoutStore() {
       console.error('Failed to delete layout:', err);
       return false;
     }
-  }, [activeLayout, fetchLayouts, setActiveLayoutProgrammatic]);
+  }, [fetchLayouts, setActiveLayoutProgrammatic]);
 
   // Timers can otherwise outlive the hook and call setState or issue retries
   // after its consumer has gone away.
