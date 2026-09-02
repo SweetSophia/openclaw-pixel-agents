@@ -17,7 +17,7 @@ export interface Point {
 export function buildObstacleMap(
   gridW: number,
   gridH: number,
-  furniture: Array<{ x: number; y: number; w: number; h: number }>,
+  furniture: Array<{ x: number; y: number; w: number; h: number; rotation?: number }>,
   extraBlocked?: Set<string>,
 ): boolean[][] {
   const grid: boolean[][] = Array.from({ length: gridH }, () => Array(gridW).fill(false));
@@ -34,10 +34,32 @@ export function buildObstacleMap(
 
   // Block furniture tiles
   for (const item of furniture) {
-    for (let dy = 0; dy < item.h; dy++) {
-      for (let dx = 0; dx < item.w; dx++) {
-        const gx = item.x + dx;
-        const gy = item.y + dy;
+    const rawRotation = item.rotation ?? 0;
+    if (rawRotation % 90 !== 0) {
+      throw new RangeError('Furniture rotation must be a quarter turn');
+    }
+    const rotation = ((rawRotation % 360) + 360) % 360;
+    const swapsAxes = rotation === 90 || rotation === 270;
+    const footprintW = swapsAxes ? item.h : item.w;
+    const footprintH = swapsAxes ? item.w : item.h;
+    let originX = item.x;
+    let originY = item.y;
+
+    // Furniture is rendered around the centre of its anchor tile, so the
+    // obstacle origin must move around that same pivot on quarter turns.
+    if (rotation === 90) {
+      originX += 1 - item.h;
+    } else if (rotation === 180) {
+      originX += 1 - item.w;
+      originY += 1 - item.h;
+    } else if (rotation === 270) {
+      originY += 1 - item.w;
+    }
+
+    for (let dy = 0; dy < footprintH; dy++) {
+      for (let dx = 0; dx < footprintW; dx++) {
+        const gx = originX + dx;
+        const gy = originY + dy;
         if (gy >= 0 && gy < gridH && gx >= 0 && gx < gridW) {
           grid[gy][gx] = true;
         }
@@ -74,8 +96,9 @@ export function bfsPathfind(
   const ex = Math.round(end.x);
   const ey = Math.round(end.y);
 
-  // Same tile — no path needed
-  if (sx === ex && sy === ey) return [];
+  // Same free tile — no path needed. A blocked shared tile still needs
+  // nearest-free resolution so we do not treat occupancy as a free gap close.
+  if (sx === ex && sy === ey && !obstacleGrid[sy]?.[sx]) return [];
 
   // End is blocked — try adjacent tiles
   const targets = findNearestFree(obstacleGrid, ex, ey, gridW, gridH);
@@ -83,7 +106,7 @@ export function bfsPathfind(
 
   // Start is blocked — try adjacent
   const starts = findNearestFree(obstacleGrid, sx, sy, gridW, gridH);
-  if (starts.length === 0) return [{ x: ex, y: ey }]; // fallback
+  if (starts.length === 0) return [];
 
   // BFS from all start positions
   const visited = new Set<string>();
@@ -133,7 +156,7 @@ export function bfsPathfind(
     }
   }
 
-  if (!found) return [{ x: ex, y: ey }]; // fallback: straight line
+  if (!found) return [];
 
   // Reconstruct path
   const path: Point[] = [];
@@ -144,13 +167,14 @@ export function bfsPathfind(
     key = parent.get(key) ?? null;
   }
 
-  // Remove the start position itself
-  if (path.length > 0) path.shift();
+  // Remove the actual start position, but retain a nearest-free tile used to
+  // escape when the rounded character origin itself is blocked.
+  if (path[0]?.x === sx && path[0]?.y === sy) path.shift();
 
   return path;
 }
 
-/** Find free tiles adjacent to a blocked position */
+/** Find all free tiles on the nearest Chebyshev-distance ring. */
 function findNearestFree(
   grid: boolean[][],
   x: number,
@@ -163,21 +187,25 @@ function findNearestFree(
     return [{ x, y }];
   }
 
-  // Search in expanding rings
-  const dirs = [
-    { x: 0, y: -1 }, { x: 0, y: 1 },
-    { x: -1, y: 0 }, { x: 1, y: 0 },
-    { x: -1, y: -1 }, { x: 1, y: -1 },
-    { x: -1, y: 1 }, { x: 1, y: 1 },
-  ];
-
-  const results: Point[] = [];
-  for (const d of dirs) {
-    const nx = x + d.x;
-    const ny = y + d.y;
-    if (ny >= 0 && ny < h && nx >= 0 && nx < w && !grid[ny][nx]) {
-      results.push({ x: nx, y: ny });
+  for (let radius = 1; radius <= Math.max(w, h); radius++) {
+    const results: Point[] = [];
+    const tryCell = (dx: number, dy: number) => {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (ny >= 0 && ny < h && nx >= 0 && nx < w && !grid[ny][nx]) {
+        results.push({ x: nx, y: ny });
+      }
+    };
+    // Perimeter only: top/bottom include the corners, left/right skip them.
+    for (let dx = -radius; dx <= radius; dx++) {
+      tryCell(dx, -radius);
+      tryCell(dx, radius);
     }
+    for (let dy = -radius + 1; dy <= radius - 1; dy++) {
+      tryCell(-radius, dy);
+      tryCell(radius, dy);
+    }
+    if (results.length > 0) return results;
   }
-  return results;
+  return [];
 }
