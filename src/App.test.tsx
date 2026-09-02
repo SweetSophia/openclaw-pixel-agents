@@ -7,10 +7,13 @@ import { App } from './App';
 
 const testState = vi.hoisted(() => ({
   updateFurniture: vi.fn(),
+  clearLayoutError: vi.fn(),
   pixelOfficeProps: null as null | {
     onRotateFurniture: (id: string, rotation: number) => void;
   },
   layoutEditorProps: null as null | {
+    layoutError: string | null;
+    onClearLayoutError: () => void;
     onRotateFurniture: (id: string) => void;
   },
 }));
@@ -41,7 +44,9 @@ vi.mock('./hooks/useLayoutStore', () => ({
       seats: {},
     },
     isDirty: false,
+    layoutError: 'Layout limit reached (100). Delete unused layouts until the warning clears.',
     catalog: [],
+    clearLayoutError: testState.clearLayoutError,
     loadLayoutById: vi.fn(),
     saveActiveLayout: vi.fn(),
     createLayout: vi.fn(),
@@ -73,6 +78,7 @@ describe('App furniture rotation persistence', () => {
 
   beforeEach(() => {
     testState.updateFurniture.mockReset();
+    testState.clearLayoutError.mockReset();
     testState.pixelOfficeProps = null;
     testState.layoutEditorProps = null;
   });
@@ -122,5 +128,16 @@ describe('App furniture rotation persistence', () => {
     ])).toEqual([
       { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 },
     ]);
+  });
+
+  it('passes layout errors and their dismiss action into the editor', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
+
+    expect(testState.layoutEditorProps?.layoutError).toBe(
+      'Layout limit reached (100). Delete unused layouts until the warning clears.',
+    );
+    testState.layoutEditorProps?.onClearLayoutError();
+    expect(testState.clearLayoutError).toHaveBeenCalledOnce();
   });
 });

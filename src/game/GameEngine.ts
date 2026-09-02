@@ -1771,7 +1771,7 @@ export class GameEngine {
   setSelectedFurnitureId(id: string | null) { this.editor.setSelectedFurnitureId(id); }
 
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
-    this.placedFurniture = furniture;
+    this.placedFurniture = furniture.map(item => ({ ...item }));
     this.obstacleDirty = true;
     // Schedule deferred rebuild to avoid blocking during rapid updates
     this.scheduleObstacleRebuild();
