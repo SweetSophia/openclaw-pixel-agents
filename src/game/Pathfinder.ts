@@ -188,16 +188,21 @@ function findNearestFree(
 
   for (let radius = 1; radius <= Math.max(w, h); radius++) {
     const results: Point[] = [];
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
-
-        const nx = x + dx;
-        const ny = y + dy;
-        if (ny >= 0 && ny < h && nx >= 0 && nx < w && !grid[ny][nx]) {
-          results.push({ x: nx, y: ny });
-        }
+    const tryCell = (dx: number, dy: number) => {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (ny >= 0 && ny < h && nx >= 0 && nx < w && !grid[ny][nx]) {
+        results.push({ x: nx, y: ny });
       }
+    };
+    // Perimeter only: top/bottom include the corners, left/right skip them.
+    for (let dx = -radius; dx <= radius; dx++) {
+      tryCell(dx, -radius);
+      tryCell(dx, radius);
+    }
+    for (let dy = -radius + 1; dy <= radius - 1; dy++) {
+      tryCell(-radius, dy);
+      tryCell(radius, dy);
     }
     if (results.length > 0) return results;
   }
