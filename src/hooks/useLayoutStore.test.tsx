@@ -173,6 +173,274 @@ describe('useLayoutStore', () => {
     expect(latest(snapshots).activeLayout?.id).toBe('default');
   });
 
+  describe('layout capacity errors', () => {
+    it('returns null and exposes an actionable error when create returns 507', async () => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ error: 'Layout limit reached (100)' }), {
+            status: 507,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      let result: LayoutDoc | null | undefined;
+      await act(async () => {
+        result = await latest(snapshots).createLayout('Capacity test');
+      });
+
+      expect(result).toBeNull();
+      expect(latest(snapshots).layoutError).toBe(
+        'Layout limit reached (100). Delete unused layouts until the warning clears.',
+      );
+    });
+
+    it('marks a 507 save as terminal without scheduling a retry', async () => {
+      await renderStoreProbe();
+      vi.useFakeTimers();
+      const initialFetch = fetch;
+      let putCalls = 0;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+          putCalls++;
+          return new Response(JSON.stringify({ error: 'Layout limit reached (100)' }), {
+            status: 507,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).saveActiveLayout();
+      });
+      expect(putCalls).toBe(1);
+      expect(latest(snapshots).saveStatus).toBe('error');
+      expect(latest(snapshots).layoutError).toContain('Delete unused layouts');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(putCalls).toBe(1);
+    });
+
+    it('preserves the existing list when fetchLayouts returns 507', async () => {
+      await renderStoreProbe();
+      await waitFor(() => expect(latest(snapshots).layouts).toHaveLength(2));
+      const previousLayouts = latest(snapshots).layouts;
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          return new Response(JSON.stringify({ error: 'Layout limit reached (100)' }), {
+            status: 507,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toContain('Delete unused layouts');
+    });
+
+    it('uses the bounded list and warns when fetchLayouts reports over-capacity', async () => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          return new Response(JSON.stringify({
+            layouts: [OTHER_LAYOUT],
+            overCapacity: true,
+            layoutLimit: 100,
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+
+      expect(latest(snapshots).layouts).toEqual([OTHER_LAYOUT]);
+      expect(latest(snapshots).layoutError).toBe(
+        'Only 100 layouts are shown because the layout limit was exceeded. '
+        + 'Delete unused layouts until this warning clears.',
+      );
+    });
+
+    it('preserves the existing list and warning when a successful list response has malformed JSON', async () => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      let listRequests = 0;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          listRequests++;
+          if (listRequests === 1) {
+            return new Response(JSON.stringify({
+              layouts: [OTHER_LAYOUT],
+              overCapacity: true,
+              layoutLimit: 100,
+            }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return new Response('{', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      const previousLayouts = latest(snapshots).layouts;
+      const previousError = latest(snapshots).layoutError;
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toBe(previousError);
+    });
+
+    it('rejects an invalid layout element without replacing the list and exposes a fetch error', async () => {
+      await renderStoreProbe();
+      await waitFor(() => expect(latest(snapshots).layouts).toHaveLength(2));
+      const previousLayouts = latest(snapshots).layouts;
+      expect(latest(snapshots).layoutError).toBeNull();
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          return new Response(JSON.stringify({
+            layouts: [{ ...OTHER_LAYOUT, width: 0 }],
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toBe('Failed to fetch layouts. Try again.');
+    });
+
+    it.each([
+      ['missing layouts', {}],
+      ['non-array layouts', { layouts: { default: MOCK_LAYOUT } }],
+    ])('preserves the existing list and warning for %s', async (_label, invalidBody) => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      let listRequests = 0;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          listRequests++;
+          return new Response(JSON.stringify(listRequests === 1 ? {
+            layouts: [OTHER_LAYOUT],
+            overCapacity: true,
+            layoutLimit: 100,
+          } : invalidBody), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      const previousLayouts = latest(snapshots).layouts;
+      const previousError = latest(snapshots).layoutError;
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      expect(latest(snapshots).layouts).toBe(previousLayouts);
+      expect(latest(snapshots).layoutError).toBe(previousError);
+    });
+
+    it('clears an over-capacity warning after a normal list response', async () => {
+      await renderStoreProbe();
+      const initialFetch = fetch;
+      let listRequests = 0;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/api/layouts') && (!init || init.method === undefined)) {
+          listRequests++;
+          return new Response(JSON.stringify({
+            layouts: listRequests === 1 ? [OTHER_LAYOUT] : [MOCK_LAYOUT, OTHER_LAYOUT],
+            overCapacity: listRequests === 1,
+            layoutLimit: 100,
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return initialFetch(input, init);
+      }));
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      expect(latest(snapshots).layoutError).not.toBeNull();
+
+      await act(async () => {
+        await latest(snapshots).fetchLayouts();
+      });
+      expect(latest(snapshots).layoutError).toBeNull();
+      expect(latest(snapshots).layouts).toEqual([MOCK_LAYOUT, OTHER_LAYOUT]);
+    });
+  });
+
   it('saveActiveLayout always reads the latest active layout (invariant test)', async () => {
     await renderStoreProbe();
 
@@ -239,8 +507,8 @@ describe('useLayoutStore', () => {
   //
   // The confirmation barrier in LayoutEditor closes ONLY on a strict `true`,
   // so the store must return a real boolean for every outcome. These pin that
-  // contract — success → true, non-2xx → false, rejected fetch → false — so a
-  // future route change can't turn the destructive delete into a fail-open.
+  // contract — success → true, 404 (already gone) → true, other errors → false —
+  // so a future route change can't turn the destructive delete into a fail-open.
 
   describe('deleteLayout result contract', () => {
     it('resolves true on a successful (2xx) delete', async () => {
@@ -252,12 +520,27 @@ describe('useLayoutStore', () => {
       expect(result).toBe(true);
     });
 
-    it('resolves false on a non-2xx response', async () => {
+    it('resolves true when the layout is already absent (404)', async () => {
       await renderStoreProbe();
+      // Simulate another client deleting the active layout after we loaded it.
+      delete layouts.default;
       let result: boolean | undefined;
       await act(async () => {
-        // 'missing' is not in the mock store, so DELETE returns 404.
-        result = await latest(snapshots).deleteLayout('missing');
+        result = await latest(snapshots).deleteLayout('default');
+      });
+      expect(result).toBe(true);
+      expect(latest(snapshots).activeLayout).toBeNull();
+    });
+
+    it('resolves false on a non-404 error response', async () => {
+      await renderStoreProbe();
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: 'Internal server error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      ));
+      let result: boolean | undefined;
+      await act(async () => {
+        result = await latest(snapshots).deleteLayout('default');
       });
       expect(result).toBe(false);
     });
@@ -271,6 +554,98 @@ describe('useLayoutStore', () => {
       });
       expect(result).toBe(false);
     });
+
+    it('does not clear a newer active layout when a deferred 404 arrives', async () => {
+      await renderStoreProbe();
+      const deleteGate = deferred<Response>();
+      const initialFetch = fetch;
+      vi.stubGlobal('fetch', vi.fn(async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url = typeof input === 'string'
+          ? input
+          : input instanceof Request
+            ? input.url
+            : input.toString();
+        if (url.endsWith('/api/layouts/default') && init?.method === 'DELETE') {
+          return deleteGate.promise;
+        }
+        return initialFetch(input, init);
+      }));
+
+      let deleteResult: boolean | undefined;
+      const deletePromise = latest(snapshots).deleteLayout('default').then((value) => {
+        deleteResult = value;
+      });
+
+      await act(async () => {
+        await latest(snapshots).loadLayoutById('other');
+      });
+      expect(latest(snapshots).activeLayout?.id).toBe('other');
+
+      act(() => {
+        latest(snapshots).updateFurniture([
+          { id: 'desk-1', type: 'DESK', x: 1, y: 1, rotation: 0 },
+        ]);
+      });
+      expect(latest(snapshots).isDirty).toBe(true);
+
+      await act(async () => {
+        deleteGate.resolve(new Response(
+          JSON.stringify({ error: 'Not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ));
+        await deletePromise;
+      });
+
+      expect(deleteResult).toBe(true);
+      expect(latest(snapshots).activeLayout?.id).toBe('other');
+      expect(latest(snapshots).isDirty).toBe(true);
+    });
+  });
+
+  it('returns a visible failure signal when createLayout receives a non-OK response', async () => {
+    await renderStoreProbe();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(new Response(
+      JSON.stringify({ error: 'Layout name is already in use' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let result: LayoutDoc | null | undefined;
+    await act(async () => {
+      result = await latest(snapshots).createLayout('Duplicate');
+    });
+
+    expect(result).toBeNull();
+    expect(latest(snapshots).layoutError).toBe('Layout name is already in use');
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to create layout:',
+      'Layout name is already in use',
+    );
+  });
+
+  it('returns a visible failure signal when createLayout receives an invalid success body', async () => {
+    await renderStoreProbe();
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(new Response('not json', {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' },
+    }));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let result: LayoutDoc | null | undefined;
+    await act(async () => {
+      result = await latest(snapshots).createLayout('Malformed');
+    });
+
+    expect(result).toBeNull();
+    expect(latest(snapshots).layoutError).toBe(
+      'Failed to create layout: invalid response body.',
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to create layout: invalid response body',
+    );
   });
 
   it('updateFurniture applies functional updater to current layout', async () => {
@@ -944,6 +1319,369 @@ describe('useLayoutStore', () => {
     expect(putBodies).toHaveLength(2);
     // The retried PUT carries the same furniture — the user's edit is preserved.
     expect(putBodies[1].furniture[0].rotation).toBe(90);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('keeps a pending conflict retry independent from a later edit debounce', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Revision conflict' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    // One second into the retry backoff, make another edit. Its debounce is
+    // due one second after the retry, so only an independent retry timer can
+    // produce the second PUT at the original retry deadline.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 180 },
+      ]);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].furniture[0].rotation).toBe(180);
+    expect(putBodies[1].baseUpdatedAt).toBe(1_000);
+  });
+
+  it('clears a pending save retry on unmount', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    let putCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        putCount++;
+        return new Response(JSON.stringify({ error: 'Service Unavailable' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+    expect(putCount).toBe(1);
+
+    act(() => unmount?.());
+    unmount = undefined;
+    await vi.advanceTimersByTimeAsync(2_100);
+
+    expect(putCount).toBe(1);
+  });
+
+  it('clears a pending autosave debounce on unmount', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    act(() => unmount?.());
+    unmount = undefined;
+    await vi.advanceTimersByTimeAsync(2_100);
+
+    const putCalls = (fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => (call[1] as RequestInit | undefined)?.method === 'PUT',
+    );
+    expect(putCalls).toHaveLength(0);
+  });
+
+  it('clears the saved-status timer on unmount', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout();
+    });
+    expect(latest(snapshots).saveStatus).toBe('saved');
+    expect(vi.getTimerCount()).toBe(1);
+
+    act(() => unmount?.());
+    unmount = undefined;
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('honors Retry-After before retrying a rate-limited auto-save', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': '10' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+    expect(latest(snapshots).isDirty).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_800);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].furniture[0].rotation).toBe(90);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('caps oversized Retry-After so a 429 cannot park autosave', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': '86400' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(59_000);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_200);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('defaults a missing Retry-After to the 60s window instead of the 2s backoff floor', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(59_000);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_200);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+    expect(latest(snapshots).isDirty).toBe(false);
+  });
+
+  it('keeps consecutive 429s on Retry-After instead of inheriting backoff', async () => {
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string) as LayoutDoc & { baseUpdatedAt?: number };
+        putBodies.push(body);
+        if (putBodies.length <= 2) {
+          return new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': '3' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    act(() => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 90 },
+      ]);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+
+    // A polluted counter would wait 4s (2s * 2^1) here, not Retry-After 3s.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(3);
     expect(latest(snapshots).isDirty).toBe(false);
   });
 

@@ -87,6 +87,12 @@ Click **📐 Layouts** to manage saved layouts:
 - Switch between layouts
 - Delete layouts (default layout is protected)
 
+The server permits at most 100 entries in the layouts directory. Legacy
+installations above that limit show at most 100 layouts at a time; delete unused
+layouts until the capacity warning clears. Delete an unused layout before
+creating another after the limit is reached. Non-layout files also consume
+capacity; if the warning persists, remove them from that directory manually.
+
 ## Architecture
 
 ### Data Source Modes
@@ -152,7 +158,7 @@ See [collector/README.md](collector/README.md) for full setup instructions.
 | `LayoutEditor` | Toolbar, furniture palette, layout manager UI |
 | `PixelOffice` | Canvas wrapper, wires agent/layout data to GameEngine |
 | `AgentSidebar` | Agent list with toggles and activity badges |
-| `useAgentStore` | Fetches agent state from backend API |
+| `useAgentStore` | Fetches agent state via REST fallback and switches to Socket.IO only after the first live snapshot |
 | `useLayoutStore` | CRUD operations for layouts with auto-save |
 
 ### Sprite Format
@@ -216,6 +222,11 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
 | `ACTIVE_MINUTES` | `30` | Session staleness threshold |
 | `INGEST_API_TOKEN` | *(none)* | Shared secret for ingest API auth (required for ingest mode) |
+| `RATE_LIMIT_MAX` | `10` | Authenticated ingest pushes allowed per minute and token digest |
+| `PRE_AUTH_RATE_LIMIT_MAX` | `5` | Ingest attempts allowed per minute and client IP before authentication |
+| `PUBLIC_GET_RATE_LIMIT_MAX` | `120` | Static/SPA GET or HEAD requests allowed per minute and client IP |
+| `PREFS_WRITE_RATE_LIMIT_MAX` | `60` | Non-layout `/api` mutations allowed per minute and client IP |
+| `LAYOUT_WRITE_RATE_LIMIT_MAX` | `90` | Layout PUT/POST/DELETE requests allowed per minute and client IP; includes headroom above the editor's 30/minute theoretical autosave ceiling |
 | `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
@@ -224,7 +235,9 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 
 The server follows a finite-state machine and the single-writer principle: CLI polling and ingest writes are never active at the same time. `cli` always keeps CLI polling active, and `ingest` starts ingest-only without polling. Ingest mode requires `INGEST_API_TOKEN`. Configuring a token does not enable pushes in explicit `cli` mode; use `ingest` or `auto` when collector delivery should own agent state.
 
-`auto` starts with CLI polling. When an ingest token is configured and CLI execution fails specifically because `OPENCLAW_BIN` is missing (`ENOENT` or `ENOTDIR`), the server makes an at-most-once, sticky transition to ingest-only. This hysteresis prevents later polling from taking ownership back; returning to CLI ownership after fallback requires restarting the server once the executable is available. Transient failures—including non-zero exits, timeouts, permission errors, malformed output, and unknown errors—preserve the previous snapshot and do not switch modes. Without an ingest token, `auto` remains in CLI mode even when the executable is missing.
+`auto` starts with CLI polling. When an ingest token is configured and CLI execution cannot recover without operator action—`OPENCLAW_BIN` has a missing or invalid path (`ENOENT`, `ENOTDIR`, `EISDIR`), permission is denied (`EACCES`, `EPERM`), the executable format is invalid (`ENOEXEC`, `EFTYPE`), the path contains a symlink loop or is too long (`ELOOP`, `ENAMETOOLONG`), or session output exceeds the shared 10 MiB safety limit (`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`)—the server makes an at-most-once, sticky transition to ingest-only. This hysteresis prevents later polling from taking ownership back; returning to CLI ownership after fallback requires restarting the server once the CLI problem is fixed. Transient failures—including non-zero exits, timeouts, temporary resource exhaustion (`EAGAIN`, `EBUSY`, `EMFILE`), malformed output, and unknown errors—preserve the previous snapshot and do not switch modes. Without an ingest token, `auto` remains in CLI mode even after a permanent CLI execution failure.
+
+CLI polling logs the first failure in full, suppresses repeated same-kind failures, and emits an ongoing summary every 20 failed poll cycles (about one minute at the default 3-second interval). A successful poll after failures logs recovery once.
 
 While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
 
@@ -236,7 +249,7 @@ If you terminate TLS or rewrite requests in a reverse proxy in front of the Node
 
 #### Client identity and rate limiting (`TRUST_PROXY`)
 
-By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it a single public SPA/static GET/HEAD rate bucket (120 req/min; `/api` and `/socket.io` are exempt). One noisy client can then exhaust the budget for everyone behind that proxy.
+By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it the public GET/HEAD (120 req/min; `/api` and `/socket.io/` are exempt) and API-write rate buckets. One noisy client can then exhaust a shared budget for everyone behind that proxy.
 
 Set `TRUST_PROXY` to restore per-client limiting:
 
@@ -253,6 +266,8 @@ Two hard requirements:
 2. **Unrestricted trust is deliberately rejected.** `TRUST_PROXY="true"`, any `/0` CIDR (`0.0.0.0/0`, `::/0` — a zero prefix length matches every address of the family, i.e. the same blanket trust), and any other malformed value abort startup with a descriptive error rather than silently degrading security. Express's blanket `"true"` would trust every peer, which is exactly the spoofing scenario above.
 
 Malformed values (bad CIDRs, hostnames, empty entries, `"true"`) fail fast at startup with an error naming the accepted forms — never as an opaque crash from inside Express, and never by silently falling back to no trust, which would reintroduce the shared-bucket collapse.
+
+All rate-limit maximums must be positive integers; malformed or non-positive values fail startup rather than silently disabling protection. A `429` response includes `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` so clients can back off without guessing. Mutating API and ingest pre-auth limits run before JSON parsing, bounding repeated malformed-body work.
 
 ## Scripts
 

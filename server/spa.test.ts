@@ -17,8 +17,8 @@
  *      with a descriptive error on malformed/unrestricted values;
  *   8. with TRUST_PROXY=1, distinct X-Forwarded-For clients get distinct
  *      buckets (no proxy-collapse), while the exemption still holds;
- *   9. the exact /socket.io namespace is exempt without exempting sibling
- *      public paths;
+ *   9. the Engine.IO path prefix /socket.io/ is exempt; bare /socket.io and
+ *      sibling public paths stay in the SPA/static bucket;
  *  10. the limiter remains mounted when FRONTEND_DIR is absent at boot.
  *
  * The main suite points FRONTEND_DIR at a temp fixture so static and SPA
@@ -28,6 +28,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Server as HttpServer } from "node:http";
 import type { Express } from "express";
 import type { Server as SocketIOServer } from "socket.io";
 import request from "supertest";
@@ -45,6 +46,7 @@ function makeFrontendFixture(): string {
 
 describe("public GET/HEAD rate limiter (issue #125)", () => {
   let app: Express;
+  let httpServer: HttpServer;
   let io: SocketIOServer;
   let frontendDir: string;
   let dataDir: string;
@@ -67,6 +69,7 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     vi.resetModules();
     const serverModule = await import("./index");
     app = serverModule.app;
+    httpServer = serverModule.server;
     io = serverModule.io;
     resetRateLimitBuckets = serverModule._resetRateLimitBuckets;
     parseTrustProxy = serverModule.parseTrustProxy;
@@ -140,27 +143,30 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     expect(apiStatus.status).toBe(200);
   });
 
-  it("exempts Socket.IO polling without exempting sibling public paths", async () => {
-    // Repeated engine.io polling must not consume the SPA/static budget.
+  it("does not charge Engine.IO polling against the public GET bucket", async () => {
+    // Hit the HTTP server so Engine.IO can intercept before Express.
     for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
-      const polling = await request(app)
+      const polling = await request(httpServer)
         .get(`/socket.io/?EIO=4&transport=polling&t=${i}`);
-      expect(polling.status).toBe(200);
+      expect(polling.status).not.toBe(429);
+      expect(polling.text).not.toContain("spa-fixture");
     }
 
     const publicRequest = await request(app).get("/assets/fixture.txt");
     expect(publicRequest.status).toBe(200);
+  });
 
-    // Pin the exact namespace boundary: similar public paths stay protected.
-    resetRateLimitBuckets();
+  it("exempts /socket.io/ on Express without exempting the bare path or siblings", async () => {
     for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
       await request(app).get("/assets/fixture.txt");
     }
 
-    for (const socketPath of ["/socket.io", "/socket.io/?EIO=4&transport=polling"]) {
-      const exempt = await request(app).get(socketPath);
-      expect(exempt.status).toBe(200);
-    }
+    const polling = await request(app).get("/socket.io/?EIO=4&transport=polling");
+    expect(polling.status).toBe(200);
+
+    const bare = await request(app).get("/socket.io");
+    expect(bare.status).toBe(429);
+
     for (const sibling of ["/socket.io-client", "/socket.iox"]) {
       const blocked = await request(app).get(sibling);
       expect(blocked.status).toBe(429);

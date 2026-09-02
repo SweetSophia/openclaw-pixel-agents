@@ -8,11 +8,11 @@
 
 import { execFile } from "node:child_process";
 import { isIP } from "node:net";
-import express from "express";
+import express, { type Response } from "express";
 import helmet from "helmet";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, createReadStream } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, opendirSync, unlinkSync, createReadStream } from "node:fs";
 import { stat as statAsync } from "node:fs/promises";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -24,9 +24,13 @@ import {
   applyCliFailure,
   classifyCliExecError,
   createInitialDataSourceState,
+  INITIAL_CLI_POLL_HEALTH,
   isCliPollingActive,
   isIngestWritesActive,
+  OPENCLAW_SESSIONS_EXEC_OPTIONS,
+  updateCliPollHealth,
   type CliFailureKind,
+  type CliPollHealth,
   type ConfiguredDataSource,
 } from "./dataSource";
 import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
@@ -193,15 +197,25 @@ app.use((_req, res, next) => {
 
 app.use(correlationMiddleware);
 app.use(httpRequestLogMiddleware);
+// Reject and throttle mutating API traffic before express.json() performs
+// bounded-but-still-expensive body buffering/parsing. Ingest has its own
+// pre-auth budget; all other writes retain the existing Origin boundary and
+// then enter their per-IP write budget.
+// CodeQL models only supported third-party limiter packages; the HTTP tests in
+// rateLimit.test.ts pin both custom guards' thresholds and pre-parser order.
+// codeql[js/missing-rate-limiting]
+app.use("/api/ingest/agents", ingestPreAuthRateLimiter);
+// codeql[js/missing-rate-limiting]
+app.use("/api", apiMutationGuard);
 app.use(express.json({ limit: "100kb" }));
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js).
 // FRONTEND_DIR is env-overridable for HTTP-level tests (issue #125).
 const FRONTEND_DIR = process.env.FRONTEND_DIR || resolve(__dirname, "..", "..", "client");
 // Throttle unauthenticated GET/HEAD traffic before both the static middleware
-// and the unconditional SPA fallback. The limiter self-skips API and Socket.IO
-// namespaces, so its availability must not depend on the frontend directory
-// already existing at boot (issue #156).
+// and the unconditional SPA fallback. The limiter self-skips /api and the
+// Engine.IO path prefix /socket.io/; availability must not depend on the
+// frontend directory already existing at boot (issue #156).
 app.use(publicGetRateLimiter);
 if (existsSync(FRONTEND_DIR)) {
   app.use(express.static(FRONTEND_DIR));
@@ -220,7 +234,7 @@ const AGENTS_DIR = process.env.OPENCLAW_AGENTS_DIR || join(process.env.HOME || "
 
 /**
  * Data source mode:
- *   "auto"    — try CLI polling; if openclaw not found and ingest token is set, use ingest-only
+ *   "auto"    — try CLI polling; on operator-action-required failure with an ingest token, use ingest-only
  *   "cli"     — always poll via local openclaw CLI (original behavior)
  *   "ingest"  — only accept pushed data via the ingest API (no local CLI needed)
  */
@@ -231,6 +245,7 @@ const DATA_SOURCE: ConfiguredDataSource = configuredDataSource === "cli"
   ? configuredDataSource
   : "auto";
 let dataSourceState = createInitialDataSourceState(DATA_SOURCE, !!INGEST_TOKEN);
+let cliPollHealth: CliPollHealth = INITIAL_CLI_POLL_HEALTH;
 
 // ---- Known agents from config ----
 
@@ -329,6 +344,7 @@ interface CliSessionsResult {
   count: number;
   sourceError?: boolean;
   cliFailureKind?: CliFailureKind;
+  error?: unknown;
 }
 
 /**
@@ -346,11 +362,10 @@ function pollSessions(): Promise<CliSessionsResult> {
       "--active", String(ACTIVE_THRESHOLD_MIN),
     ];
 
-    execFile(OPENCLAW_BIN, args, { timeout: 10000 }, (err, stdout, stderr) => {
+    execFile(OPENCLAW_BIN, args, OPENCLAW_SESSIONS_EXEC_OPTIONS, (err, stdout, stderr) => {
       if (err) {
         const cliFailureKind = classifyCliExecError(err);
-        logger.error({ err, subsystem: "poll" }, "cli error");
-        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind });
+        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind, error: err });
         return;
       }
 
@@ -361,8 +376,13 @@ function pollSessions(): Promise<CliSessionsResult> {
           count: data.count || 0,
         });
       } catch (parseErr) {
-        logger.error({ err: parseErr, subsystem: "poll" }, "json parse error");
-        resolve({ sessions: [], count: 0, sourceError: true, cliFailureKind: "transient" });
+        resolve({
+          sessions: [],
+          count: 0,
+          sourceError: true,
+          cliFailureKind: "transient",
+          error: parseErr,
+        });
       }
     });
   });
@@ -729,7 +749,7 @@ async function pollAndBroadcast(): Promise<void> {
   isPolling = true;
   const cycleLog = logger.child({ cycleId: randomUUID(), subsystem: "poll" });
   try {
-    const { sessions, sourceError, cliFailureKind } = await pollSessions();
+    const { sessions, sourceError, cliFailureKind, error } = await pollSessions();
     if (sourceError && cliFailureKind) {
       const nextState = applyCliFailure(dataSourceState, cliFailureKind);
       if (nextState !== dataSourceState) {
@@ -739,19 +759,43 @@ async function pollAndBroadcast(): Promise<void> {
           pollTimer = undefined;
         }
         cycleLog.warn({
+          err: error,
           configured: dataSourceState.configured,
           effective: dataSourceState.effective,
           failureKind: cliFailureKind,
-        }, "CLI executable unavailable; transitioned permanently to ingest-only");
+        }, "CLI unavailable without operator action; transitioned permanently to ingest-only");
         return;
+      }
+
+      const healthUpdate = updateCliPollHealth(cliPollHealth, cliFailureKind);
+      cliPollHealth = healthUpdate.health;
+      if (healthUpdate.action === "incident") {
+        cycleLog.error({
+          err: error,
+          failureKind: cliFailureKind,
+          count: cliPollHealth.consecutiveFailures,
+        }, "cli error");
+      } else if (healthUpdate.action === "reminder") {
+        cycleLog.warn({
+          failureKind: cliFailureKind,
+          count: cliPollHealth.consecutiveFailures,
+        }, "cli error (ongoing)");
+      }
+    } else if (!sourceError) {
+      const priorHealth = cliPollHealth;
+      const healthUpdate = updateCliPollHealth(cliPollHealth, null);
+      cliPollHealth = healthUpdate.health;
+      if (healthUpdate.action === "recovered") {
+        cycleLog.info({
+          failureKind: priorHealth.lastFailureKind,
+          count: priorHealth.consecutiveFailures,
+        }, "cli polling recovered");
       }
     }
     const agentMap = sourceError ? undefined : mapToAgentStates(sessions);
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
-    if (!applied) {
-      cycleLog.warn("keeping previous agent snapshot after source error");
-    } else {
+    if (applied) {
       // Broadcast only when the visible agent snapshot actually changes.
       io.emit("agents:update", snapshot);
     }
@@ -816,6 +860,7 @@ export function _resetRateLimitBuckets(): void {
   ingestRateBuckets.clear();
   ingestPreAuthBuckets.clear();
   publicGetRateBuckets.clear();
+  apiWriteRateBuckets.clear();
 }
 
 /** @deprecated Use _resetRateLimitBuckets — alias kept for import compatibility. */
@@ -834,55 +879,101 @@ export const _resetIngestRateBuckets = _resetRateLimitBuckets;
 // - PRE_AUTH: throttles unauthenticated/failed-token attempts per IP (CWE-770)
 // - POST_AUTH: caps authenticated push frequency per token digest
 // - PUBLIC_GET: app-wide throttle for unauthenticated GET traffic (SPA + static)
+// - PREFS_WRITE: caps agent preference persistence/broadcasts per IP
+// - LAYOUT_WRITE: caps layout filesystem mutations/broadcasts per IP
+function parseRateLimitMax(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Invalid ${name} value: "${raw}". Expected a positive integer.`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Invalid ${name} value: "${raw}". Expected a positive integer.`);
+  }
+  return value;
+}
+
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 10;          // post-auth: 10 pushes/min per token
-const PRE_AUTH_RATE_LIMIT_MAX = 5;   // pre-auth: 5 attempts/min per IP
-const PUBLIC_GET_RATE_LIMIT_MAX = 120; // public GET: 120 req/min per IP (SPA + static)
+const RATE_LIMIT_MAX = parseRateLimitMax("RATE_LIMIT_MAX", 10);
+const PRE_AUTH_RATE_LIMIT_MAX = parseRateLimitMax("PRE_AUTH_RATE_LIMIT_MAX", 5);
+const PUBLIC_GET_RATE_LIMIT_MAX = parseRateLimitMax("PUBLIC_GET_RATE_LIMIT_MAX", 120);
+const PREFS_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("PREFS_WRITE_RATE_LIMIT_MAX", 60);
+// The editor can autosave every two seconds (30/minute) and this bucket also
+// covers create/delete/keepalive writes, so keep 3x headroom for normal use.
+const LAYOUT_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("LAYOUT_WRITE_RATE_LIMIT_MAX", 90);
 const ingestRateBuckets = new Map<string, number[]>();
 const ingestPreAuthBuckets = new Map<string, number[]>();
 const publicGetRateBuckets = new Map<string, number[]>();
+const apiWriteRateBuckets = new Map<string, number[]>();
 
-/**
- * Check whether an unauthenticated GET/HEAD request from this IP is within the
- * public rate limit. Keyed on req.ip. Returns true if allowed, false if
- * the caller should respond 429. Client-IP identity depends on the explicit
- * TRUST_PROXY contract configured at startup (see parseTrustProxy); with the
- * default no-trust setting req.ip is the direct peer.
- */
-export function checkPublicGetRateLimit(req: express.Request): boolean {
-  const ip = req.ip || "unknown";
-  const key = `get:${ip}`;
+type RateLimitDecision =
+  | Readonly<{ allowed: true; limit: number; remaining: number }>
+  | Readonly<{ allowed: false; limit: number; remaining: 0; retryAfterSeconds: number }>;
+
+function takeRateLimit(
+  buckets: Map<string, number[]>,
+  key: string,
+  limit: number,
+): RateLimitDecision {
   const now = Date.now();
-  const bucket = publicGetRateBuckets.get(key) || [];
   const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recent = bucket.filter(t => t > windowStart);
-  if (recent.length >= PUBLIC_GET_RATE_LIMIT_MAX) return false;
+  const recent = (buckets.get(key) || []).filter(timestamp => timestamp > windowStart);
+
+  if (recent.length >= limit) {
+    // Keep the filtered bucket so entries that expired between prune ticks do
+    // not inflate the next Retry-After calculation.
+    buckets.set(key, recent);
+    return {
+      allowed: false,
+      limit,
+      remaining: 0,
+      retryAfterSeconds: Math.max(1, Math.ceil((recent[0] + RATE_LIMIT_WINDOW_MS - now) / 1000)),
+    };
+  }
+
   recent.push(now);
-  publicGetRateBuckets.set(key, recent);
-  return true;
+  buckets.set(key, recent);
+  return { allowed: true, limit, remaining: limit - recent.length };
+}
+
+function sendRateLimitResponse(
+  res: express.Response,
+  decision: Extract<RateLimitDecision, { allowed: false }>,
+): void {
+  res.setHeader("X-RateLimit-Limit", String(decision.limit));
+  res.setHeader("X-RateLimit-Remaining", String(decision.remaining));
+  res.setHeader("Retry-After", String(decision.retryAfterSeconds));
+  res.status(429).json({ error: "Too many requests" });
 }
 
 /**
  * Middleware: applies the public rate limit and returns 429 when exceeded.
  * Scope contract (issues #125 and #156): only GET and HEAD requests outside
- * the API and Socket.IO namespaces are counted. HEAD is included because
- * express.static and the SPA sendFile fallback perform the same filesystem
- * work for HEAD as for GET — leaving it uncounted would let clients bypass
- * the bound. Exemptions use exact namespace boundaries so sibling public
- * paths (for example, "/apiary" or "/socket.io-client") stay rate-limited.
+ * the API namespace and the Engine.IO path prefix ("/socket.io/") are counted.
+ * HEAD is included because express.static and the SPA sendFile fallback
+ * perform the same filesystem work for HEAD as for GET — leaving it uncounted
+ * would let clients bypass the bound. Exemptions use exact namespace
+ * boundaries so sibling public paths (for example, "/apiary" or
+ * "/socket.io-client") stay rate-limited. Bare "/socket.io" is not consumed
+ * by Engine.IO and remains in the public SPA/static bucket.
  */
 function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
   if (req.method !== "GET" && req.method !== "HEAD") { next(); return; }
   if (req.path === "/api" || req.path.startsWith("/api/")) { next(); return; }
-  if (req.path === "/socket.io" || req.path.startsWith("/socket.io/")) { next(); return; }
-  if (!checkPublicGetRateLimit(req)) {
-    res.status(429).json({ error: "Too many requests" });
+  // Engine.IO intercepts "/socket.io/*" on the HTTP server. Bare "/socket.io"
+  // falls through to the SPA fallback and must still consume this budget.
+  if (req.path.startsWith("/socket.io/")) { next(); return; }
+  const ip = req.ip || "unknown";
+  const decision = takeRateLimit(publicGetRateBuckets, `get:${ip}`, PUBLIC_GET_RATE_LIMIT_MAX);
+  if (!decision.allowed) {
+    sendRateLimitResponse(res, decision);
     return;
   }
   next();
 }
 
-// Prune all three bucket maps on the same interval to prevent memory leaks
+// Prune every bucket map on the same interval to prevent memory leaks.
 const ingestPruneTimer = setInterval(() => {
   const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
   for (const [key, timestamps] of ingestRateBuckets) {
@@ -900,40 +991,74 @@ const ingestPruneTimer = setInterval(() => {
     if (pruned.length === 0) publicGetRateBuckets.delete(key);
     else publicGetRateBuckets.set(key, pruned);
   }
+  for (const [key, timestamps] of apiWriteRateBuckets) {
+    const pruned = timestamps.filter(t => t > cutoff);
+    if (pruned.length === 0) apiWriteRateBuckets.delete(key);
+    else apiWriteRateBuckets.set(key, pruned);
+  }
 }, RATE_LIMIT_WINDOW_MS);
 ingestPruneTimer.unref?.();
 
 /**
- * Check pre-auth rate limit for a request. Returns true if the request should
- * be allowed through, false if it exceeded the threshold (caller sends 429).
+ * Check the pre-auth rate limit for a request and return the remaining budget
+ * or the backoff duration for a 429 response.
  * Keyed on req.ip — trusts X-Forwarded-For only behind an explicit proxy.
  */
-function checkPreAuthRateLimit(req: express.Request): boolean {
+function checkPreAuthRateLimit(req: express.Request): RateLimitDecision {
   const ip = req.ip || "unknown";
-  const key = `preauth:${ip}`;
-  const now = Date.now();
-  const bucket = ingestPreAuthBuckets.get(key) || [];
-  const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recent = bucket.filter(t => t > windowStart);
-  if (recent.length >= PRE_AUTH_RATE_LIMIT_MAX) return false;
-  recent.push(now);
-  ingestPreAuthBuckets.set(key, recent);
-  return true;
+  return takeRateLimit(ingestPreAuthBuckets, `preauth:${ip}`, PRE_AUTH_RATE_LIMIT_MAX);
 }
 
-app.post("/api/ingest/agents", (req, res) => {
+function ingestPostAuthRateKey(req: express.Request): string {
+  const rawKey = req.headers.authorization || req.ip || "unknown";
+  let hash = 0;
+  for (let i = 0; i < rawKey.length; i++) {
+    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
+  }
+  return `ingest:${hash}`;
+}
+
+function checkPostAuthRateLimit(req: express.Request): RateLimitDecision {
+  return takeRateLimit(ingestRateBuckets, ingestPostAuthRateKey(req), RATE_LIMIT_MAX);
+}
+
+function ingestPreAuthRateLimiter(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (req.method !== "POST") { next(); return; }
+  // Preserve the existing 501 contract while rejecting before JSON parsing.
   if (!INGEST_TOKEN) {
     res.status(501).json({ error: "Ingest not configured (no INGEST_API_TOKEN)" });
     return;
   }
-
-  // Pre-auth rate limit: throttle unauthenticated requests per IP before
-  // the token check to prevent brute-force and resource-exhaustion attacks.
-  if (!checkPreAuthRateLimit(req)) {
-    res.status(429).json({ error: "Too many requests" });
+  // Classify the bearer header before body parsing so valid collectors bypass
+  // the failed-attempt bucket while invalid or missing credentials remain
+  // bounded. Valid tokens still spend the post-auth budget here so malformed
+  // JSON cannot skip throttling. authenticateIngest hashes both configured
+  // and provided values to fixed-length digests before the timing-safe comparison.
+  if (authenticateIngest(req, res)) {
+    const postAuth = checkPostAuthRateLimit(req);
+    if (!postAuth.allowed) {
+      sendRateLimitResponse(res, postAuth);
+      return;
+    }
+    next();
     return;
   }
+  const decision = checkPreAuthRateLimit(req);
+  if (!decision.allowed) {
+    sendRateLimitResponse(res, decision);
+    return;
+  }
+  next();
+}
 
+// ingestPreAuthRateLimiter is mounted before JSON parsing and this handler;
+// CodeQL cannot infer the repository's custom sliding-window middleware.
+// codeql[js/missing-rate-limiting]
+app.post("/api/ingest/agents", (req, res) => {
   if (!authenticateIngest(req, res)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -944,25 +1069,6 @@ app.post("/api/ingest/agents", (req, res) => {
     res.status(409).json({ error: "Ingest unavailable while CLI polling is active" });
     return;
   }
-
-  // Rate limiting: track requests per derived key (avoid storing raw token)
-  const rawKey = req.headers.authorization || req.ip || "unknown";
-  // Simple hash to avoid keeping sensitive tokens in memory
-  let hash = 0;
-  for (let i = 0; i < rawKey.length; i++) {
-    hash = ((hash << 5) - hash + rawKey.charCodeAt(i)) | 0;
-  }
-  const rateKey = `ingest:${hash}`;
-  const now = Date.now();
-  const bucket = ingestRateBuckets.get(rateKey) || [];
-  const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recentRequests = bucket.filter(t => t > windowStart);
-  if (recentRequests.length >= RATE_LIMIT_MAX) {
-    res.status(429).json({ error: "Too many requests" });
-    return;
-  }
-  recentRequests.push(now);
-  ingestRateBuckets.set(rateKey, recentRequests);
 
   const sessions = req.body?.sessions;
   if (!Array.isArray(sessions)) {
@@ -1005,15 +1111,26 @@ let lastIngestAt = 0;
 
 const MUTATING_API_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-app.use("/api", (req, res, next) => {
+function apiMutationGuard(req: express.Request, res: express.Response, next: express.NextFunction): void {
   if (!MUTATING_API_METHODS.has(req.method)) return next();
-  // Ingest runs above this middleware and ends the chain with a response, so
-  // this exemption is defensive belt-and-suspenders for the future ordering.
+  // Ingest has its own pre-auth middleware and authenticated per-token budget.
   if (req.path === "/ingest/agents") return next();
-  if (isOriginAllowed(req.headers.origin, corsConfig)) return next();
+  if (!isOriginAllowed(req.headers.origin, corsConfig)) {
+    res.status(403).json({ error: "Forbidden origin" });
+    return;
+  }
 
-  res.status(403).json({ error: "Forbidden origin" });
-});
+  const ip = req.ip || "unknown";
+  const isLayoutWrite = req.path === "/layouts" || req.path.startsWith("/layouts/");
+  const scope = isLayoutWrite ? "layouts" : "prefs";
+  const limit = isLayoutWrite ? LAYOUT_WRITE_RATE_LIMIT_MAX : PREFS_WRITE_RATE_LIMIT_MAX;
+  const decision = takeRateLimit(apiWriteRateBuckets, `write:${scope}:${ip}`, limit);
+  if (!decision.allowed) {
+    sendRateLimitResponse(res, decision);
+    return;
+  }
+  next();
+}
 
 app.get("/api/agents", (_req, res) => {
   res.json({ agents: Array.from(agentStates.values()) });
@@ -1175,17 +1292,48 @@ app.get("/api/rooms", (_req, res) => {
 // ---- Layout persistence ----
 
 const LAYOUTS_DIR = join(DATA_DIR, "layouts");
+const MAX_LAYOUT_FILES = 100;
+
+function respondLayoutCapacityExceeded(res: Response) {
+  return res.status(507).json({ error: `Layout limit reached (${MAX_LAYOUT_FILES})` });
+}
 
 function ensureLayoutsDir() {
   mkdirSync(LAYOUTS_DIR, { recursive: true });
 }
 
-function listLayouts(): OfficeLayoutDoc[] {
+function readLayoutDirectory(limit: number): { files: string[]; entryCount: number } {
+  ensureLayoutsDir();
+  const directory = opendirSync(LAYOUTS_DIR);
+  const files: string[] = [];
+  let entryCount = 0;
+  try {
+    while (entryCount < limit) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      entryCount += 1;
+      // Every directory entry consumes capacity. JSON entries are collected
+      // without inspecting their type so malformed/non-regular entries retain
+      // the same resource-budget impact as persisted layout files.
+      if (entry.name.endsWith(".json")) files.push(entry.name);
+    }
+    return { files, entryCount };
+  } finally {
+    directory.closeSync();
+  }
+}
+
+function countLayoutEntries(): number {
+  return readLayoutDirectory(MAX_LAYOUT_FILES).entryCount;
+}
+
+function listLayouts(): { layouts: OfficeLayoutDoc[]; overCapacity: boolean } {
   ensureLayoutsDir();
   try {
-    const files = readdirSync(LAYOUTS_DIR).filter(f => f.endsWith(".json"));
+    const { files, entryCount } = readLayoutDirectory(MAX_LAYOUT_FILES + 1);
+    const overCapacity = entryCount > MAX_LAYOUT_FILES;
     const layouts: OfficeLayoutDoc[] = [];
-    for (const file of files) {
+    for (const file of files.slice(0, MAX_LAYOUT_FILES)) {
       try {
         const raw = readFileSync(join(LAYOUTS_DIR, file), "utf-8");
         const layout = parseOfficeLayoutDoc(JSON.parse(raw));
@@ -1195,9 +1343,9 @@ function listLayouts(): OfficeLayoutDoc[] {
         logger.warn({ err, file, subsystem: "layout" }, "skipping unreadable layout file");
       }
     }
-    return layouts.sort((a, b) => b.updatedAt - a.updatedAt);
+    return { layouts: layouts.sort((a, b) => b.updatedAt - a.updatedAt), overCapacity };
   } catch {
-    return [];
+    return { layouts: [], overCapacity: false };
   }
 }
 
@@ -1217,13 +1365,22 @@ function loadLayout(id: string): OfficeLayoutDoc | null {
   }
 }
 
-function saveLayout(layout: OfficeLayoutDoc): void {
+function saveLayout(layout: OfficeLayoutDoc): boolean {
   if (!isValidLayoutId(layout.id)) throw new Error(`Invalid layout ID: ${layout.id}`);
   ensureLayoutsDir();
-  layout.updatedAt = Date.now();
-  const validated = parseOfficeLayoutDoc(layout);
+  const validated = parseOfficeLayoutDoc({ ...layout, updatedAt: Date.now() });
   if (!validated) throw new Error(`Invalid layout document: ${layout.id}`);
-  writeFileSync(join(LAYOUTS_DIR, `${validated.id}.json`), JSON.stringify(validated, null, 2));
+  // Construct filesystem paths only from the schema-validated document. This
+  // keeps the path boundary explicit for both humans and static analysis.
+  const target = join(LAYOUTS_DIR, `${validated.id}.json`);
+  // The server is a single Node process and all operations below are
+  // synchronous, so the capacity decision and write run in one event-loop
+  // turn. Existing files remain replaceable, including malformed files that
+  // an operator is repairing.
+  if (!existsSync(target) && countLayoutEntries() >= MAX_LAYOUT_FILES) return false;
+  layout.updatedAt = validated.updatedAt;
+  writeFileSync(target, JSON.stringify(validated, null, 2));
+  return true;
 }
 
 function deleteLayout(id: string): boolean {
@@ -1276,14 +1433,18 @@ function getDefaultLayout(): OfficeLayoutDoc {
 // Layout REST API
 
 app.get("/api/layouts", (_req, res) => {
-  const layouts = listLayouts();
+  const { layouts, overCapacity } = listLayouts();
   // Always include default if empty
-  if (layouts.length === 0) {
+  if (layouts.length === 0 && !overCapacity) {
     const def = getDefaultLayout();
-    saveLayout(def);
+    if (!saveLayout(def)) {
+      return respondLayoutCapacityExceeded(res);
+    }
     layouts.push(def);
   }
-  res.json({ layouts });
+  res.json(overCapacity
+    ? { layouts, overCapacity: true, layoutLimit: MAX_LAYOUT_FILES }
+    : { layouts });
 });
 
 app.get("/api/layouts/:id", (req, res) => {
@@ -1295,7 +1456,9 @@ app.get("/api/layouts/:id", (req, res) => {
     // Auto-create default
     if (id === "default") {
       const def = getDefaultLayout();
-      saveLayout(def);
+      if (!saveLayout(def)) {
+        return respondLayoutCapacityExceeded(res);
+      }
       return res.json(def);
     }
     return res.status(404).json({ error: "Layout not found" });
@@ -1327,15 +1490,17 @@ app.put("/api/layouts/:id", (req, res) => {
     id, // prevent id overwrite
   };
   if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
-  saveLayout(layout);
+  if (!saveLayout(layout)) {
+    return respondLayoutCapacityExceeded(res);
+  }
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });
 
 app.post("/api/layouts", (req, res) => {
-  const id = `layout-${randomUUID()}`;
   const parsed = parseLayoutMutationBody(req.body, { width: 24, height: 16 });
   if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  const id = `layout-${randomUUID()}`;
 
   const layout: OfficeLayoutDoc = {
     id,
@@ -1347,7 +1512,9 @@ app.post("/api/layouts", (req, res) => {
     updatedAt: Date.now(),
   };
   if (!parseOfficeLayoutDoc(layout)) return res.status(400).json({ error: "Invalid layout document" });
-  saveLayout(layout);
+  if (!saveLayout(layout)) {
+    return respondLayoutCapacityExceeded(res);
+  }
   io.emit("layout:update", layout);
   res.json({ success: true, layout });
 });
