@@ -96,8 +96,9 @@ export function bfsPathfind(
   const ex = Math.round(end.x);
   const ey = Math.round(end.y);
 
-  // Same tile — no path needed
-  if (sx === ex && sy === ey) return [];
+  // Same free tile — no path needed. A blocked shared tile still needs
+  // nearest-free resolution so we do not treat occupancy as a free gap close.
+  if (sx === ex && sy === ey && !obstacleGrid[sy]?.[sx]) return [];
 
   // End is blocked — try adjacent tiles
   const targets = findNearestFree(obstacleGrid, ex, ey, gridW, gridH);

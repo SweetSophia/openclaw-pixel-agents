@@ -49,4 +49,16 @@ describe('Pathfinder', () => {
       { x: 4, y: 4, w: 2, h: 1, rotation: 45 },
     ])).toThrow(/quarter turn/i);
   });
+
+  it('routes a blocked same-tile origin to the nearest free ring', () => {
+    const grid = buildObstacleMap(9, 9, [
+      { x: 4, y: 4, w: 2, h: 1 },
+    ]);
+
+    const path = bfsPathfind(grid, { x: 4.2, y: 4.2 }, { x: 4.4, y: 4.4 }, 9, 9);
+
+    expect(path.length).toBeGreaterThan(0);
+    expect(path.every(({ x, y }) => !grid[y][x])).toBe(true);
+    expect(path.some(({ x, y }) => x === 4 && y === 4)).toBe(false);
+  });
 });

@@ -441,6 +441,40 @@ describe('GameEngine integration: obstacle-aware movement', () => {
     expect(character.x).toBeCloseTo(2, 5);
     expect(character.y).toBeCloseTo(4, 5);
   });
+
+  it('does not close a sub-tile gap into a blocked shared tile', () => {
+    const desk: PlacedFurniture = {
+      id: 'desk',
+      type: 'MISSING_SPRITE',
+      x: 4,
+      y: 3,
+      rotation: 0,
+    };
+    engine.setLayout([desk], { walker: { x: 4, y: 3 } });
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 4.2, y: 3.2, state: 'idle' });
+
+    engine.updateCharacter('walker', { state: 'typing' });
+
+    const character = engine.characters.get('walker')!;
+    const blocked = new Set(['4,3', '5,3']);
+    const destination = character.path[character.path.length - 1];
+    expect(destination).toBeDefined();
+    expect(character.path.every(({ x, y }) => !blocked.has(`${x},${y}`))).toBe(true);
+    expect(blocked.has(`${destination.x},${destination.y}`)).toBe(false);
+
+    for (let step = 0; step < 100; step++) {
+      engine.update(0.1);
+      if (
+        Math.abs(character.x - destination.x) < 0.05
+        && Math.abs(character.y - destination.y) < 0.05
+      ) break;
+    }
+
+    expect(blocked.has(`${Math.round(character.x)},${Math.round(character.y)}`))
+      .toBe(false);
+    expect(character.x).toBeCloseTo(destination.x, 1);
+    expect(character.y).toBeCloseTo(destination.y, 1);
+  });
 });
 
 // ── Sub-agent lifecycle describe ─────────────────────────────────────────────
