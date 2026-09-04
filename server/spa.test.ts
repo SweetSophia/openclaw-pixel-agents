@@ -156,6 +156,21 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     expect(publicRequest.status).toBe(200);
   });
 
+  it("keeps Engine.IO handshake available after the public GET bucket is full", async () => {
+    for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
+      await request(app).get("/assets/fixture.txt");
+    }
+    const blocked = await request(app).get("/assets/fixture.txt");
+    expect(blocked.status).toBe(429);
+
+    const handshake = await request(httpServer)
+      .get("/socket.io/?EIO=4&transport=polling")
+      .set("Origin", "https://pixel.test");
+    expect(handshake.status).toBe(200);
+    expect(handshake.text).not.toContain("spa-fixture");
+    expect(handshake.text).toMatch(/^0\{/);
+  });
+
   it("exempts /socket.io/ on Express without exempting the bare path or siblings", async () => {
     for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
       await request(app).get("/assets/fixture.txt");
@@ -163,6 +178,7 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
 
     const polling = await request(app).get("/socket.io/?EIO=4&transport=polling");
     expect(polling.status).toBe(200);
+    expect(polling.text).toContain("spa-fixture");
 
     const bare = await request(app).get("/socket.io");
     expect(bare.status).toBe(429);
@@ -170,6 +186,11 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     for (const sibling of ["/socket.io-client", "/socket.iox"]) {
       const blocked = await request(app).get(sibling);
       expect(blocked.status).toBe(429);
+    }
+
+    for (const path of ["/socket.io", "/socket.io?n=1"]) {
+      const httpBare = await request(httpServer).get(path);
+      expect(httpBare.status).toBe(429);
     }
   });
 
