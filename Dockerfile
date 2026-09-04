@@ -37,7 +37,8 @@ ENV PORT=3001 DATA_SOURCE=ingest DATA_DIR=/app/data
 EXPOSE 3001
 
 # Node 22 has global fetch — no wget/curl in the alpine image.
+# Read PORT from the same env the server binds (default 3001).
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3001/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 CMD ["node", "dist/server/server/index.js"]
