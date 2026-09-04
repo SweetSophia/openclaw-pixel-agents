@@ -249,7 +249,7 @@ If you terminate TLS or rewrite requests in a reverse proxy in front of the Node
 
 #### Client identity and rate limiting (`TRUST_PROXY`)
 
-By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it the public GET/HEAD and API-write rate buckets. One noisy client can then exhaust a shared budget for everyone behind that proxy.
+By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it the public GET/HEAD (120 req/min; `/api` and `/socket.io/` are exempt) and API-write rate buckets. One noisy client can then exhaust a shared budget for everyone behind that proxy.
 
 Set `TRUST_PROXY` to restore per-client limiting:
 

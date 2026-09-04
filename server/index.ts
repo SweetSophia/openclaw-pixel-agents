@@ -212,11 +212,12 @@ app.use(express.json({ limit: "100kb" }));
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js).
 // FRONTEND_DIR is env-overridable for HTTP-level tests (issue #125).
 const FRONTEND_DIR = process.env.FRONTEND_DIR || resolve(__dirname, "..", "..", "client");
+// Throttle unauthenticated GET/HEAD traffic before both the static middleware
+// and the unconditional SPA fallback. The limiter self-skips /api and the
+// Engine.IO path prefix /socket.io/; availability must not depend on the
+// frontend directory already existing at boot (issue #156).
+app.use(publicGetRateLimiter);
 if (existsSync(FRONTEND_DIR)) {
-  // Throttle unauthenticated GET/HEAD traffic before the static middleware so
-  // express.static's filesystem access is rate-limited per IP (issue #125).
-  // The middleware itself skips /api paths — see publicGetRateLimiter.
-  app.use(publicGetRateLimiter);
   app.use(express.static(FRONTEND_DIR));
 }
 
@@ -948,19 +949,21 @@ function sendRateLimitResponse(
 
 /**
  * Middleware: applies the public rate limit and returns 429 when exceeded.
- * Scope contract (issue #125, review): only GET and HEAD requests to
- * non-API paths are counted. HEAD is included because express.static and
- * the SPA sendFile fallback perform the same filesystem work for HEAD as
- * for GET — leaving it uncounted would let clients bypass the bound.
- * /api reads are exempt via an exact namespace boundary — "/api" itself and
- * "/api/*" only — so dashboard polling and other API traffic never consume
- * the static/SPA budget, while sibling public paths that merely share the
- * prefix ("/apiary", "/api-v2") stay rate-limited instead of leaking past
- * the limiter to the SPA filesystem path (review finding).
+ * Scope contract (issues #125 and #156): only GET and HEAD requests outside
+ * the API namespace and the Engine.IO path prefix ("/socket.io/") are counted.
+ * HEAD is included because express.static and the SPA sendFile fallback
+ * perform the same filesystem work for HEAD as for GET — leaving it uncounted
+ * would let clients bypass the bound. Exemptions use exact namespace
+ * boundaries so sibling public paths (for example, "/apiary" or
+ * "/socket.io-client") stay rate-limited. Bare "/socket.io" is not consumed
+ * by Engine.IO and remains in the public SPA/static bucket.
  */
 function publicGetRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction): void {
   if (req.method !== "GET" && req.method !== "HEAD") { next(); return; }
   if (req.path === "/api" || req.path.startsWith("/api/")) { next(); return; }
+  // Engine.IO intercepts "/socket.io/*" on the HTTP server. Bare "/socket.io"
+  // falls through to the SPA fallback and must still consume this budget.
+  if (req.path.startsWith("/socket.io/")) { next(); return; }
   const ip = req.ip || "unknown";
   const decision = takeRateLimit(publicGetRateBuckets, `get:${ip}`, PUBLIC_GET_RATE_LIMIT_MAX);
   if (!decision.allowed) {
