@@ -13,6 +13,7 @@ describe("Dockerfile", () => {
     const fromLines = dockerfile.split("\n").filter((line) => line.startsWith("FROM "));
     expect(fromLines).toHaveLength(2);
     const digest = /@sha256:([a-f0-9]{64})/.exec(fromLines[0])?.[1];
+    expect(digest).toMatch(/^[a-f0-9]{64}$/);
     expect(fromLines[0]).toBe(`FROM node:22.22.2-alpine@sha256:${digest} AS builder`);
     expect(fromLines[1]).toBe(`FROM node:22.22.2-alpine@sha256:${digest}`);
   });
