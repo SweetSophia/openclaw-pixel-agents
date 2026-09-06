@@ -357,7 +357,7 @@ export class GameEngine {
       const sprite = this.furniture.get(f.type);
       const fw = sprite ? sprite.footprintW : 2;
       const fh = sprite ? sprite.footprintH : 1;
-      return { x: f.x, y: f.y, w: fw, h: fh };
+      return { x: f.x, y: f.y, w: fw, h: fh, rotation: f.rotation };
     });
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
@@ -386,13 +386,19 @@ export class GameEngine {
     this.ensureObstacles();
     if (!this.obstacleGrid) return [{ x: char.targetX, y: char.targetY }];
 
-    return bfsPathfind(
+    const path = bfsPathfind(
       this.obstacleGrid,
       { x: Math.round(char.x), y: Math.round(char.y) },
       { x: Math.round(char.targetX), y: Math.round(char.targetY) },
       this.config.gridWidth,
       this.config.gridHeight,
     );
+    const destination = path[path.length - 1];
+    if (destination) {
+      char.targetX = destination.x;
+      char.targetY = destination.y;
+    }
+    return path;
   }
 
   // ── Update ───────────────────────────────────────────
@@ -447,6 +453,8 @@ export class GameEngine {
       const dx = char.targetX - char.x;
       const dy = char.targetY - char.y;
       const speed = 3;
+      const targetSharesRoundedTile = Math.round(char.x) === Math.round(char.targetX)
+        && Math.round(char.y) === Math.round(char.targetY);
 
       if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
         // If we have a path, follow waypoints
@@ -471,13 +479,25 @@ export class GameEngine {
               ? (wpDx > 0 ? 'right' : 'left')
               : (wpDy > 0 ? 'down' : 'up');
           }
-        } else {
-          // Straight line fallback (no path or path complete, still moving)
+        } else if (
+          char.path.length > 0
+          || (
+            targetSharesRoundedTile
+            && !this.obstacleGrid?.[Math.round(char.targetY)]?.[Math.round(char.targetX)]
+          )
+        ) {
+          // Close the remaining gap after the last waypoint, or a same-tile
+          // offset on a free tile. A blocked shared tile is not a safe close.
           char.x += Math.sign(dx) * Math.min(speed * dt, Math.abs(dx));
           char.y += Math.sign(dy) * Math.min(speed * dt, Math.abs(dy));
           char.direction = Math.abs(dx) > Math.abs(dy)
             ? (dx > 0 ? 'right' : 'left')
             : (dy > 0 ? 'down' : 'up');
+        } else {
+          // An empty path means the destination is unreachable. Cancel the
+          // target instead of walking straight through the blocking tiles.
+          char.targetX = char.x;
+          char.targetY = char.y;
         }
       } else if (char.path.length > 0) {
         // Arrived — clear path

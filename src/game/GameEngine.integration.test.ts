@@ -28,6 +28,7 @@ import type { EditorCallbacks } from './EditorController';
 import type { PlacedFurniture } from '../../shared/types';
 import { SUBAGENT_FADE_DURATION } from './SubAgentFSM';
 import { getDayPhase } from './Schedule';
+import type { Point } from './Pathfinder';
 import type { ReadonlyLoadedCharacter } from './SpriteLoader';
 import { sfx } from '../audio/SoundFX';
 
@@ -62,6 +63,12 @@ type RecordingContext = {
 // proceed normally because TS `private` is a compile-time annotation only.
 type SubAgentCharacter = {
   id: string;
+  x: number;
+  y: number;
+  targetX: number;
+  targetY: number;
+  path: Point[];
+  pathIndex: number;
   fadeAlpha: number;
   dying: boolean;
   spawnTime: number;
@@ -85,12 +92,15 @@ type TestGameEngine = {
     state: string;
     lastMessage?: string;
   }): void;
+  updateCharacter(id: string, updates: Partial<{
+    state: string;
+  }>): void;
   setEditorMode(enabled: boolean): void;
   setSelectedFurnitureType(type: string | null): void;
   setSelectedFurnitureId(id: string | null): void;
   setEditorCallbacks(cb: EditorCallbacks): void;
   setGameCallbacks(cb: GameCallbacks): void;
-  setLayout(furniture: PlacedFurniture[]): void;
+  setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>): void;
   getPlacedFurniture(): PlacedFurniture[];
   spawnSubAgent(parentId: string, subId: string, subName: string): void;
   killSubAgent(subId: string): void;
@@ -315,6 +325,155 @@ describe('GameEngine integration: editor adapters', () => {
     expect(engine.getPlacedFurniture()[0].rotation).toBe(90);
     expect(callerFurniture[0].rotation).toBe(0);
     expect(editorCallbacks.onRotateFurniture).toHaveBeenCalledWith('desk-1', 90);
+  });
+});
+
+describe('GameEngine integration: obstacle-aware movement', () => {
+  let engine: TestGameEngine;
+  let canvas: HTMLCanvasElement;
+
+  beforeEach(() => {
+    const made = makeCanvasWithStubbedContext();
+    canvas = made.canvas;
+    engine = new GameEngine(canvas, GRID) as unknown as TestGameEngine;
+  });
+
+  afterEach(() => {
+    engine.stop();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  const clickGrid = (gridX: number, gridY: number) => {
+    const target = clientCenterOf(gridX, gridY);
+    canvas.dispatchEvent(new MouseEvent('click', { clientX: target.x, clientY: target.y }));
+  };
+
+  it('routes around the rendered footprint of rotated fallback furniture', () => {
+    // Missing furniture sprites intentionally use the conservative 2x1
+    // footprint. At 90 degrees that occupies (4,3) and (4,4), not (5,3).
+    engine.setLayout([
+      { id: 'rotated-fallback', type: 'MISSING_SPRITE', x: 4, y: 3, rotation: 90 },
+    ]);
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 2, y: 4, state: 'idle' });
+
+    clickGrid(2, 4);
+    clickGrid(6, 4);
+
+    const character = engine.characters.get('walker')!;
+    const rotatedObstacleTiles = new Set(['4,3', '4,4']);
+    expect(character.path.every(({ x, y }) => !rotatedObstacleTiles.has(`${x},${y}`)))
+      .toBe(true);
+
+    for (let step = 0; step < 100; step++) {
+      engine.update(0.1);
+      expect(rotatedObstacleTiles.has(`${Math.round(character.x)},${Math.round(character.y)}`))
+        .toBe(false);
+      if (Math.abs(character.x - 6) < 0.05 && Math.abs(character.y - 4) < 0.05) break;
+    }
+    expect(character.x).toBeCloseTo(6, 1);
+    expect(character.y).toBeCloseTo(4, 1);
+  });
+
+  it('stops at the expanded-ring destination instead of entering blocked furniture', () => {
+    const boxedTarget: PlacedFurniture[] = [5, 6, 7].flatMap(y => [5, 7].map(x => ({
+      id: `box-${x}-${y}`,
+      type: 'MISSING_SPRITE',
+      x,
+      y,
+      rotation: 0,
+    })));
+    engine.setLayout(boxedTarget, { walker: { x: 6, y: 6 } });
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 2, y: 6, state: 'idle' });
+
+    engine.updateCharacter('walker', { state: 'typing' });
+
+    const character = engine.characters.get('walker')!;
+    expect(character.path[character.path.length - 1]).toEqual({ x: 4, y: 6 });
+    expect({ x: character.targetX, y: character.targetY }).toEqual({ x: 4, y: 6 });
+
+    const obstacleTiles = new Set(
+      boxedTarget.flatMap(({ x, y }) => [`${x},${y}`, `${x + 1},${y}`]),
+    );
+    for (let step = 0; step < 100; step++) {
+      engine.update(0.1);
+      expect(obstacleTiles.has(`${Math.round(character.x)},${Math.round(character.y)}`))
+        .toBe(false);
+    }
+    expect(character.x).toBeCloseTo(4, 1);
+    expect(character.y).toBeCloseTo(6, 1);
+  });
+
+  it('does not use straight-line movement when no path exists through a solid wall', () => {
+    const wall: PlacedFurniture[] = Array.from({ length: 14 }, (_, index) => ({
+      id: `wall-${index + 1}`,
+      type: 'MISSING_SPRITE',
+      x: 12,
+      y: index + 1,
+      rotation: 0,
+    }));
+    engine.setLayout(wall);
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 4, y: 8, state: 'idle' });
+
+    clickGrid(4, 8);
+    clickGrid(18, 8);
+
+    const character = engine.characters.get('walker')!;
+    for (let step = 0; step < 100; step++) {
+      engine.update(0.1);
+      expect(character.x).toBeLessThan(12);
+    }
+
+    expect(character.x).toBeCloseTo(4, 5);
+    expect(character.y).toBeCloseTo(8, 5);
+  });
+
+  it('closes a safe sub-tile gap when BFS needs no waypoints', () => {
+    engine.setLayout([], { walker: { x: 2, y: 4 } });
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 2.4, y: 4, state: 'idle' });
+
+    engine.updateCharacter('walker', { state: 'typing' });
+
+    const character = engine.characters.get('walker')!;
+    expect(character.path).toEqual([]);
+    for (let step = 0; step < 10; step++) engine.update(0.1);
+
+    expect(character.x).toBeCloseTo(2, 5);
+    expect(character.y).toBeCloseTo(4, 5);
+  });
+
+  it('does not close a sub-tile gap into a blocked shared tile', () => {
+    const desk: PlacedFurniture = {
+      id: 'desk',
+      type: 'MISSING_SPRITE',
+      x: 4,
+      y: 3,
+      rotation: 0,
+    };
+    engine.setLayout([desk], { walker: { x: 4, y: 3 } });
+    engine.addCharacter({ id: 'walker', name: 'Walker', x: 4.2, y: 3.2, state: 'idle' });
+
+    engine.updateCharacter('walker', { state: 'typing' });
+
+    const character = engine.characters.get('walker')!;
+    const blocked = new Set(['4,3', '5,3']);
+    const destination = character.path[character.path.length - 1];
+    expect(destination).toBeDefined();
+    expect(character.path.every(({ x, y }) => !blocked.has(`${x},${y}`))).toBe(true);
+    expect(blocked.has(`${destination.x},${destination.y}`)).toBe(false);
+
+    for (let step = 0; step < 100; step++) {
+      engine.update(0.1);
+      if (
+        Math.abs(character.x - destination.x) < 0.05
+        && Math.abs(character.y - destination.y) < 0.05
+      ) break;
+    }
+
+    expect(blocked.has(`${Math.round(character.x)},${Math.round(character.y)}`))
+      .toBe(false);
+    expect(character.x).toBeCloseTo(destination.x, 1);
+    expect(character.y).toBeCloseTo(destination.y, 1);
   });
 });
 
