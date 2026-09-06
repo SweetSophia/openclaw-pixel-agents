@@ -208,7 +208,11 @@ describe("collector execution bounds (issue #99)", () => {
     expect(calls).toEqual([[
       "/opt/openclaw/bin/openclaw",
       ["sessions", "--all-agents", "--json", "--active", "30"],
-      expect.objectContaining({ timeout: 10_000, killSignal: "SIGKILL" }),
+      expect.objectContaining({
+        timeout: 10_000,
+        maxBuffer: 10 * 1024 * 1024,
+        killSignal: "SIGKILL",
+      }),
     ]]);
     expect(calls[0][2].env).toEqual({
       PIXEL_AGENTS_URL: "http://localhost:3000",

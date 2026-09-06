@@ -60,6 +60,7 @@ function makeProps(overrides: Partial<Record<string, unknown>> = {}) {
     catalog: ['DESK'],
     activeLayout: defaultLayout,
     isDirty: false,
+    layoutError: null,
     layouts: [defaultLayout, customLayout],
     editorMode: true,
     selectedFurnitureType: null,
@@ -74,7 +75,8 @@ function makeProps(overrides: Partial<Record<string, unknown>> = {}) {
     onToggleDeleteMode: vi.fn(),
     onSave: vi.fn(),
     onLoad: vi.fn(),
-    onCreate: vi.fn(),
+    onCreate: vi.fn().mockResolvedValue(defaultLayout),
+    onClearLayoutError: vi.fn(),
     // Strict-boolean result contract (Sophie review @78f2bc3): the barrier
     // closes only on a literal `true`, so the default mock must resolve true.
     onDeleteLayout: vi.fn().mockResolvedValue(true),

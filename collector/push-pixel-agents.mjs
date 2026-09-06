@@ -83,6 +83,7 @@ export function fetchOpenClawSessions({
     "--active", activeMinutes,
   ], {
     encoding: "utf8",
+    // Keep aligned with server/dataSource.ts OPENCLAW_SESSIONS_EXEC_OPTIONS.
     maxBuffer: 10 * 1024 * 1024,
     timeout: timeoutMs,
     killSignal: "SIGKILL",

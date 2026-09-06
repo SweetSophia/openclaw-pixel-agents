@@ -10,6 +10,7 @@ interface Props {
   isDirty: boolean;
   /** Save lifecycle feedback from useLayoutStore (optional for tests). */
   saveStatus?: SaveStatus;
+  layoutError: string | null;
   layouts: LayoutDoc[];
   editorMode: boolean;
   selectedFurnitureType: string | null;
@@ -24,7 +25,8 @@ interface Props {
   onToggleDeleteMode: () => void;
   onSave: () => void;
   onLoad: (id: string) => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string) => Promise<LayoutDoc | null>;
+  onClearLayoutError: () => void;
   onDeleteLayout: (id: string) => boolean | Promise<boolean>;
   onToggleEditor: () => void;
 }
@@ -111,6 +113,7 @@ export const LayoutEditor: React.FC<Props> = ({
   activeLayout,
   isDirty,
   saveStatus = 'idle',
+  layoutError,
   layouts,
   editorMode,
   selectedFurnitureType,
@@ -124,17 +127,20 @@ export const LayoutEditor: React.FC<Props> = ({
   onSave,
   onLoad,
   onCreate,
+  onClearLayoutError,
   onDeleteLayout,
   onToggleEditor,
 }) => {
   const [showPalette, setShowPalette] = useState(false);
   const [showLayouts, setShowLayouts] = useState(false);
   const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<LayoutDoc | null>(null);
   // Confirm lifecycle: disables the buttons while the async delete is in
   // flight (double-submit guard) and surfaces a failure without closing.
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
+  const creatingRef = useRef(false);
   const deletingRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -267,6 +273,25 @@ export const LayoutEditor: React.FC<Props> = ({
     };
   }, [pendingDelete]);
 
+  const handleCreate = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = newName.trim();
+    if (!name || creatingRef.current) return;
+
+    creatingRef.current = true;
+    setCreating(true);
+    try {
+      const createdLayout = await onCreate(name);
+      if (createdLayout) setNewName('');
+    } catch {
+      // The layout store owns the user-facing error message. Keep the entered
+      // name intact so the user can recover without retyping it.
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
+  }, [newName, onCreate]);
+
   if (!editorMode) return null;
 
   const selectedFurniture = activeLayout?.furniture.find(f => f.id === selectedFurnitureId);
@@ -281,7 +306,7 @@ export const LayoutEditor: React.FC<Props> = ({
   const saveTitle =
     saveStatus === 'saving' ? 'Saving layout…'
     : saveStatus === 'saved' ? 'Layout saved'
-    : saveStatus === 'error' ? 'Couldn\'t save — the app retries automatically; click to retry now'
+    : saveStatus === 'error' ? 'Couldn\'t save — click to retry'
     : isDirty ? 'Save layout (unsaved changes)'
     : 'Save layout (no unsaved changes)';
   const saveDisabled = saveStatus === 'saving' || (!isDirty && saveStatus !== 'error');
@@ -394,6 +419,21 @@ export const LayoutEditor: React.FC<Props> = ({
       {showLayouts && (
         <div className="layout-manager">
           <h3>📐 Layouts</h3>
+          {layoutError && (
+            <div className="layout-alert" role="alert">
+              <span className="layout-alert-icon" aria-hidden="true">⚠</span>
+              <p className="layout-alert-message">{layoutError}</p>
+              <button
+                type="button"
+                className="layout-alert-dismiss"
+                onClick={onClearLayoutError}
+                aria-label="Dismiss layout warning"
+                title="Dismiss warning"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <div className="layout-list">
             {layouts.map(layout => (
               <div
@@ -421,23 +461,19 @@ export const LayoutEditor: React.FC<Props> = ({
               </div>
             ))}
           </div>
-          <div className="layout-create">
+          <form className="layout-create" onSubmit={handleCreate} aria-busy={creating}>
             <input
               type="text"
               placeholder="New layout name..."
+              aria-label="New layout name"
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && newName.trim()) {
-                  onCreate(newName.trim());
-                  setNewName('');
-                }
-              }}
+              readOnly={creating}
             />
-            <button onClick={() => { if (newName.trim()) { onCreate(newName.trim()); setNewName(''); } }}>
-              ➕ Create
+            <button type="submit" disabled={creating || !newName.trim()}>
+              {creating ? 'Creating…' : '➕ Create'}
             </button>
-          </div>
+          </form>
         </div>
       )}
 

@@ -16,8 +16,8 @@ import './App.css';
 export const App: React.FC = () => {
   const { agents, connected, toggleAgent, toggleAll, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
   const {
-    layouts, activeLayout, isDirty, saveStatus, catalog,
-    loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
+    layouts, activeLayout, isDirty, saveStatus, layoutError, catalog,
+    clearLayoutError, loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
   } = useLayoutStore();
 
   const [editorMode, setEditorMode] = useState(false);
@@ -191,6 +191,7 @@ export const App: React.FC = () => {
               activeLayout={activeLayout}
               isDirty={isDirty}
               saveStatus={saveStatus}
+              layoutError={layoutError}
               layouts={layouts}
               editorMode={editorMode}
               selectedFurnitureType={selectedFurnitureType}
@@ -209,6 +210,7 @@ export const App: React.FC = () => {
               onSave={() => saveActiveLayout()}
               onLoad={loadLayoutById}
               onCreate={createLayout}
+              onClearLayoutError={clearLayoutError}
               onDeleteLayout={deleteLayout}
               onToggleEditor={() => { setEditorMode(false); setDeleteMode(false); }}
             />
