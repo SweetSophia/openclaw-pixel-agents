@@ -9,7 +9,9 @@ import {
 import { randomUUID } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
 
-const SAFE_PERSISTED_FILENAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+// First character may be `_` or `-` so layout IDs (`/^[a-zA-Z0-9_-]+$/`) remain
+// representable as `${id}.json` without a second, stricter leaf alphabet.
+const SAFE_PERSISTED_FILENAME_RE = /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,127}$/;
 const WINDOWS_RESERVED_BASENAME_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
 function isMissingFileError(error: unknown): boolean {
@@ -28,7 +30,7 @@ type AtomicWriteOptions = Readonly<{
   writeFile?: typeof writeFileSync;
 }>;
 
-function isSafePersistedFilename(fileName: string): boolean {
+export function isSafePersistedFilename(fileName: string): boolean {
   return SAFE_PERSISTED_FILENAME_RE.test(fileName)
     && !fileName.endsWith(".")
     && !WINDOWS_RESERVED_BASENAME_RE.test(fileName);

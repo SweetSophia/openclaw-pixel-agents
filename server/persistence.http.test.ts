@@ -107,6 +107,42 @@ describe("atomic server persistence call paths", () => {
     expect(atomicWriteFileSync).not.toHaveBeenCalled();
   });
 
+  it("accepts a leading-underscore layout ID at the route boundary", async () => {
+    await request(app)
+      .put("/api/layouts/_foo")
+      .set("Origin", appOrigin)
+      .send({
+        name: "Underscore",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+      })
+      .expect(200);
+
+    expect(atomicWriteFileSync).toHaveBeenCalledWith(
+      join(dataDir, "layouts"),
+      "_foo.json",
+      expect.any(String),
+    );
+  });
+
+  it("rejects a Windows reserved layout ID with 400 before persistence", async () => {
+    await request(app)
+      .put("/api/layouts/con")
+      .set("Origin", appOrigin)
+      .send({
+        name: "Reserved",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+      })
+      .expect(400);
+
+    expect(atomicWriteFileSync).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid layout ID at the route boundary before persistence", async () => {
     await request(app)
       .put("/api/layouts/bad.id")

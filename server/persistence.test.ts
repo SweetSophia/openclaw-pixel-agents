@@ -23,6 +23,17 @@ describe("atomicWriteFileSync", () => {
     }
   });
 
+  it("accepts layout-id leaves that start with underscore or hyphen", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pixel-agents-atomic-prefix-"));
+    directories.push(directory);
+
+    atomicWriteFileSync(directory, "_foo.json", "underscore");
+    atomicWriteFileSync(directory, "-bar.json", "hyphen");
+
+    expect(readFileSync(join(directory, "_foo.json"), "utf8")).toBe("underscore");
+    expect(readFileSync(join(directory, "-bar.json"), "utf8")).toBe("hyphen");
+  });
+
   it("atomically replaces an existing persisted file without leaving a temporary file", () => {
     const directory = mkdtempSync(join(tmpdir(), "pixel-agents-atomic-write-"));
     directories.push(directory);

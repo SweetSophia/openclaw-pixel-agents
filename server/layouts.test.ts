@@ -24,4 +24,16 @@ describe("isValidLayoutId", () => {
     expect(isValidLayoutId("x".repeat(64))).toBe(true);
     expect(isValidLayoutId("x".repeat(65))).toBe(false);
   });
+
+  it("accepts leading underscore and hyphen prefixes that the ID regex allows", () => {
+    expect(isValidLayoutId("_foo")).toBe(true);
+    expect(isValidLayoutId("-bar")).toBe(true);
+  });
+
+  it("rejects Windows reserved device names so persistence cannot 500 after a 400-eligible ID", () => {
+    expect(isValidLayoutId("con")).toBe(false);
+    expect(isValidLayoutId("nul")).toBe(false);
+    expect(isValidLayoutId("COM1")).toBe(false);
+    expect(isValidLayoutId("aux")).toBe(false);
+  });
 });

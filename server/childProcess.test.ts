@@ -23,11 +23,12 @@ describe("CLI child-process environment", () => {
 
   it("does not pass INGEST_API_TOKEN to the OpenClaw CLI while preserving unrelated variables", async () => {
     const execFileStub = vi.fn((...args: unknown[]) => {
-      const options = args[2] as { env?: NodeJS.ProcessEnv };
+      const options = args[2] as { env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number };
       const callback = args[3] as (error: null, stdout: string, stderr: string) => void;
 
       expect(options.env).not.toHaveProperty("INGEST_API_TOKEN");
       expect(options.env).toMatchObject({ PIXEL_CHILD_ENV_SENTINEL: "preserved" });
+      expect(options).toMatchObject({ timeout: 10_000, maxBuffer: 10 * 1024 * 1024 });
       callback(null, JSON.stringify({ sessions: [], count: 0 }), "");
       return {};
     });

@@ -43,7 +43,7 @@ npm start                                # production build; build first
 
 - `DATA_DIR` defaults to `join(__dirname, "data")`, so dev writes under `server/data/` and standalone compiled startup writes under `dist/server/server/data/`; do not assume repo-root `data/`. Docker sets `DATA_DIR=/app/data`.
 - Use `OPENCLAW_BIN` for the CLI path. The `OPENCLAW_CLI` name still shown in README is stale.
-- Layout IDs must pass `/^[a-zA-Z0-9_-]+$/`, max 64 chars; `default` cannot be deleted.
+- Layout IDs must pass `/^[a-zA-Z0-9_-]+$/`, max 64 chars, and `${id}.json` must pass `isSafePersistedFilename` (Windows reserved device names such as `con`/`nul`/`com1` are rejected at the ID boundary); `default` cannot be deleted.
 - Layout writes use optimistic concurrency via `baseUpdatedAt`. The client refreshes revisions and retries `409`/server failures with bounded backoff; do not replace newer local edits with stale save responses.
 - Programmatic load/create/save-response changes must go through `setActiveLayoutProgrammatic()` so `skipAutoSaveRef` suppresses stale auto-saves. Saves are serialized through `savePromiseRef`; dirty furniture changes debounce for 2 seconds.
 - `PixelOffice` re-syncs `GameEngine` through serialized `furnitureKey` and `seatsKey` dependencies. If the engine starts reading another `PlacedFurniture` field, include it in `furnitureKey`.
