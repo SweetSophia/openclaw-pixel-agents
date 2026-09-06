@@ -60,6 +60,7 @@ function makeProps(overrides: Partial<Record<string, unknown>> = {}) {
     catalog: ['DESK'],
     activeLayout: defaultLayout,
     isDirty: false,
+    layoutError: null,
     layouts: [defaultLayout, customLayout],
     editorMode: true,
     selectedFurnitureType: null,
@@ -74,7 +75,8 @@ function makeProps(overrides: Partial<Record<string, unknown>> = {}) {
     onToggleDeleteMode: vi.fn(),
     onSave: vi.fn(),
     onLoad: vi.fn(),
-    onCreate: vi.fn(),
+    onCreate: vi.fn().mockResolvedValue(defaultLayout),
+    onClearLayoutError: vi.fn(),
     // Strict-boolean result contract (Sophie review @78f2bc3): the barrier
     // closes only on a literal `true`, so the default mock must resolve true.
     onDeleteLayout: vi.fn().mockResolvedValue(true),
@@ -353,7 +355,8 @@ describe('Issue #109 — delete confirmation guard', () => {
     // toggle — never on <body>, even though Escape was pressed mid-flight.
     resolveDelete(true);
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(document.activeElement).toBe(screen.getByTitle('Layout manager'));
+    // Dialog removal can precede the effect cleanup that restores focus.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTitle('Layout manager')));
     expect(document.activeElement).not.toBe(document.body);
   });
 

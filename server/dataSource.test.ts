@@ -3,8 +3,11 @@ import {
   applyCliFailure,
   classifyCliExecError,
   createInitialDataSourceState,
+  INITIAL_CLI_POLL_HEALTH,
   isCliPollingActive,
   isIngestWritesActive,
+  OPENCLAW_SESSIONS_EXEC_OPTIONS,
+  updateCliPollHealth,
   type CliFailureKind,
   type ConfiguredDataSource,
 } from "./dataSource";
@@ -33,15 +36,15 @@ describe("data-source policy", () => {
   );
 
   it.each([
-    ["auto", false, "missing-executable", "cli-poll", false],
+    ["auto", false, "operator-action-required", "cli-poll", false],
     ["auto", false, "transient", "cli-poll", false],
-    ["auto", true, "missing-executable", "ingest-only", true],
+    ["auto", true, "operator-action-required", "ingest-only", true],
     ["auto", true, "transient", "cli-poll", false],
-    ["cli", false, "missing-executable", "cli-poll", false],
-    ["cli", true, "missing-executable", "cli-poll", false],
+    ["cli", false, "operator-action-required", "cli-poll", false],
+    ["cli", true, "operator-action-required", "cli-poll", false],
     ["cli", true, "transient", "cli-poll", false],
-    ["ingest", false, "missing-executable", "ingest-only", false],
-    ["ingest", true, "missing-executable", "ingest-only", false],
+    ["ingest", false, "operator-action-required", "ingest-only", false],
+    ["ingest", true, "operator-action-required", "ingest-only", false],
     ["ingest", true, "transient", "ingest-only", false],
   ] as const)(
     "%s with token=%s and %s remains/transitions to %s",
@@ -57,18 +60,116 @@ describe("data-source policy", () => {
 
   it("makes the fallback transition sticky and idempotent", () => {
     const initial = createInitialDataSourceState("auto", true);
-    const transitioned = applyCliFailure(initial, "missing-executable");
+    const transitioned = applyCliFailure(initial, "operator-action-required");
 
-    expect(applyCliFailure(transitioned, "missing-executable")).toBe(transitioned);
+    expect(applyCliFailure(transitioned, "operator-action-required")).toBe(transitioned);
     expect(applyCliFailure(transitioned, "transient")).toBe(transitioned);
     expect(transitioned.effective).toBe("ingest-only");
   });
 
+  describe("CLI poll health logging", () => {
+    it("reports the first failure as an incident and suppresses repeats 2-19", () => {
+      let health = INITIAL_CLI_POLL_HEALTH;
+
+      const first = updateCliPollHealth(health, "transient");
+      expect(first).toEqual({
+        health: { consecutiveFailures: 1, lastFailureKind: "transient" },
+        action: "incident",
+      });
+      health = first.health;
+
+      for (let count = 2; count <= 19; count++) {
+        const update = updateCliPollHealth(health, "transient");
+        expect(update.action).toBe("none");
+        expect(update.health.consecutiveFailures).toBe(count);
+        health = update.health;
+      }
+    });
+
+    it("reports reminders on the 20th and 40th same-kind failures only", () => {
+      let health = INITIAL_CLI_POLL_HEALTH;
+      const actions = new Map<number, string>();
+
+      for (let count = 1; count <= 40; count++) {
+        const update = updateCliPollHealth(health, "transient");
+        actions.set(count, update.action);
+        health = update.health;
+      }
+
+      expect(actions.get(1)).toBe("incident");
+      expect(actions.get(19)).toBe("none");
+      expect(actions.get(20)).toBe("reminder");
+      expect(actions.get(21)).toBe("none");
+      expect(actions.get(39)).toBe("none");
+      expect(actions.get(40)).toBe("reminder");
+    });
+
+    it("starts a new incident when the failure kind changes", () => {
+      const transient = updateCliPollHealth(INITIAL_CLI_POLL_HEALTH, "transient");
+      const repeated = updateCliPollHealth(transient.health, "transient");
+      const changed = updateCliPollHealth(repeated.health, "operator-action-required");
+
+      expect(changed).toEqual({
+        health: {
+          consecutiveFailures: 1,
+          lastFailureKind: "operator-action-required",
+        },
+        action: "incident",
+      });
+    });
+
+    it("reports one recovery, resets health, and stays quiet while healthy", () => {
+      const failed = updateCliPollHealth(INITIAL_CLI_POLL_HEALTH, "transient");
+      const recovered = updateCliPollHealth(failed.health, null);
+      const healthy = updateCliPollHealth(recovered.health, null);
+
+      expect(recovered).toEqual({ health: INITIAL_CLI_POLL_HEALTH, action: "recovered" });
+      expect(healthy).toEqual({ health: INITIAL_CLI_POLL_HEALTH, action: "none" });
+      expect(healthy.health).toBe(INITIAL_CLI_POLL_HEALTH);
+    });
+
+    it("does not mutate inputs and freezes every returned health object", () => {
+      const input = Object.freeze({
+        consecutiveFailures: 19,
+        lastFailureKind: "transient" as const,
+      });
+      const before = { ...input };
+      const unfrozenHealthy = {
+        consecutiveFailures: 0,
+        lastFailureKind: null,
+      };
+
+      const reminder = updateCliPollHealth(input, "transient");
+      const recovered = updateCliPollHealth(reminder.health, null);
+      const stillHealthy = updateCliPollHealth(unfrozenHealthy, null);
+
+      expect(input).toEqual(before);
+      expect(unfrozenHealthy).toEqual({ consecutiveFailures: 0, lastFailureKind: null });
+      expect(reminder.health).not.toBe(input);
+      expect(Object.isFrozen(reminder.health)).toBe(true);
+      expect(Object.isFrozen(recovered.health)).toBe(true);
+      expect(Object.isFrozen(stillHealthy.health)).toBe(true);
+      expect(Object.isFrozen(reminder)).toBe(true);
+      expect(Object.isFrozen(recovered)).toBe(true);
+    });
+  });
+
   it.each([
-    [{ code: "ENOENT" }, "missing-executable"],
-    [{ code: "ENOTDIR" }, "missing-executable"],
+    [{ code: "ENOENT" }, "operator-action-required"],
+    [{ code: "ENOTDIR" }, "operator-action-required"],
+    [{ code: "EISDIR" }, "operator-action-required"],
+    [{ code: "EACCES" }, "operator-action-required"],
+    [{ code: "EPERM" }, "operator-action-required"],
+    [{ code: "ENOEXEC" }, "operator-action-required"],
+    [{ code: "EFTYPE" }, "operator-action-required"],
+    [{ code: "ELOOP" }, "operator-action-required"],
+    [{ code: "ENAMETOOLONG" }, "operator-action-required"],
+    [{ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }, "operator-action-required"],
+    [{ code: "UNKNOWN" }, "transient"],
+    [{ code: "EAGAIN" }, "transient"],
+    [{ code: "EBUSY" }, "transient"],
+    [{ code: "EMFILE" }, "transient"],
     [{ code: 1 }, "transient"],
-    [{ code: "EACCES" }, "transient"],
     [{ code: "ETIMEDOUT", killed: true }, "transient"],
     [{ killed: true, signal: "SIGTERM" }, "transient"],
     [new SyntaxError("bad JSON"), "transient"],
@@ -78,12 +179,37 @@ describe("data-source policy", () => {
     expect(classifyCliExecError(error)).toBe(expected);
   });
 
+  it.each(["EACCES", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"])(
+    "transitions auto mode with an ingest token after permanent %s failures",
+    (code) => {
+      const initial = createInitialDataSourceState("auto", true);
+      const failure = classifyCliExecError({ code });
+      const next = applyCliFailure(initial, failure);
+
+      expect(failure).toBe("operator-action-required");
+      expect(next).toEqual({
+        configured: "auto",
+        effective: "ingest-only",
+        hasIngestToken: true,
+        transitioned: true,
+      });
+    },
+  );
+
+  it("caps CLI session output at the collector's 10 MiB contract", () => {
+    expect(OPENCLAW_SESSIONS_EXEC_OPTIONS).toEqual({
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    expect(Object.isFrozen(OPENCLAW_SESSIONS_EXEC_OPTIONS)).toBe(true);
+  });
+
   it.each([
     ["auto", false, undefined, true, false],
     ["auto", true, undefined, true, false],
     ["auto", true, "transient", true, false],
-    ["auto", true, "missing-executable", false, true],
-    ["cli", true, "missing-executable", true, false],
+    ["auto", true, "operator-action-required", false, true],
+    ["cli", true, "operator-action-required", true, false],
     ["ingest", true, undefined, false, true],
   ] as const)(
     "enforces one writer for %s with token=%s and failure=%s",
