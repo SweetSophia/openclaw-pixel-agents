@@ -355,7 +355,8 @@ describe('Issue #109 — delete confirmation guard', () => {
     // toggle — never on <body>, even though Escape was pressed mid-flight.
     resolveDelete(true);
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(document.activeElement).toBe(screen.getByTitle('Layout manager'));
+    // Dialog removal can precede the effect cleanup that restores focus.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTitle('Layout manager')));
     expect(document.activeElement).not.toBe(document.body);
   });
 
