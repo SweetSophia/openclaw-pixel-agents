@@ -37,7 +37,7 @@
     "@types/supertest": "^7.2.0",
     "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.9",
-    "concurrently": "^10.0.4",
+    "concurrently": "^10.0.5",
     "jsdom": "^30.0.1",
     "postcss": "^8.5.26",
     "supertest": "^7.2.2",
