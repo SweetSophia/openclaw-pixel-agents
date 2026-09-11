@@ -44,7 +44,7 @@
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   },
   "license": "MIT",
   "repository": {
