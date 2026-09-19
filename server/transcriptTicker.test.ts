@@ -364,6 +364,46 @@ describe("transcript ticker boundary", () => {
     expect(message.text).toBe("x".repeat(150));
   });
 
+  it("skips prefix rehashing on append-only polls (issue #217)", async () => {
+    // Regression: the post-read digest re-verification used to gate on
+    // `mtimeMs !== baselineModifiedMs`, which fires on every poll for an
+    // actively-appending agent (mtime changes on every write). For a 10
+    // MiB transcript that meant ~100 ms+ of SHA-256 hashing per poll
+    // — a material regression vs the old seek-and-read path. The fix
+    // gates on `finalStat.size !== fileSize` (size-only), so
+    // mtime-only changes (e.g. touch, no extension) skip the rehash.
+    //
+    // Test: spy on `readTranscriptDigest` to count how many times it
+    // fires. After the initial poll establishes the baseline, three
+    // append-only polls must invoke `readTranscriptDigest` exactly 0
+    // times — each poll reads the new bytes via the streaming path
+    // and trusts the in-memory digest. The next poll's initial
+    // verification handles file replacement / truncation.
+    const transcriptPath = join(sessionsDir, "append-only.jsonl");
+    writeFileSync(transcriptPath, makeLine("first message"));
+
+    // Establish baseline.
+    await tailTranscript("main", "Shodan", transcriptPath);
+
+    // Spy AFTER the baseline poll — we only care about append-only
+    // calls, not the initial verification.
+    const indexModule = await import("./index");
+    const spy = vi.spyOn(indexModule, "readTranscriptDigest");
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        appendFileSync(transcriptPath, makeLine(`append ${i + 1}`));
+        await tailTranscript("main", "Shodan", transcriptPath);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Three append-only polls, each with size growth — no rehash
+    // should be triggered (the in-memory digest chain is correct
+    // because appends don't modify the committed prefix).
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("skips an oversized record while advancing to the next complete record", async () => {
     const transcriptPath = join(sessionsDir, "oversized-record.jsonl");
     writeFileSync(
