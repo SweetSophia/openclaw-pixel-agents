@@ -390,7 +390,7 @@ export function useLayoutStore() {
       const currentLayout = activeLayoutRef.current;
       if (!currentLayout) return;
       if (remoteReconciliationRef.current?.id === currentLayout.id) {
-        scheduleSaveRetry(() => { void saveActiveLayout(); });
+        scheduleSaveRetry(() => { void saveActiveLayout(updates); });
         return;
       }
       if (remotelyDeletedIdsRef.current.has(currentLayout.id)) {
@@ -424,15 +424,15 @@ export function useLayoutStore() {
           } else if (response.status === 409) {
             await refreshPersistedRevision(merged.id);
             if (activeLayoutRef.current?.id === merged.id) {
-              scheduleSaveRetry(() => { void saveActiveLayout(); });
+              scheduleSaveRetry(() => { void saveActiveLayout(updates); });
             }
           } else if (response.status === 429) {
             scheduleSaveRetry(
-              () => { void saveActiveLayout(); },
+              () => { void saveActiveLayout(updates); },
               parseRetryAfterMs(response.headers.get('Retry-After')),
             );
           } else if (response.status >= 500) {
-            scheduleSaveRetry(() => { void saveActiveLayout(); });
+            scheduleSaveRetry(() => { void saveActiveLayout(updates); });
           }
           markSaveStatus('error');
           return;
@@ -446,7 +446,7 @@ export function useLayoutStore() {
           console.error(`Failed to save layout: ${reason}`);
           await refreshPersistedRevision(merged.id);
           if (activeLayoutRef.current?.id === merged.id) {
-            scheduleSaveRetry(() => { void saveActiveLayout(); });
+            scheduleSaveRetry(() => { void saveActiveLayout(updates); });
           }
           markSaveStatus('error');
           return;
@@ -479,7 +479,7 @@ export function useLayoutStore() {
         console.error('Failed to save layout:', err);
         // Network error — retry with backoff
         markSaveStatus('error');
-        scheduleSaveRetry(() => { void saveActiveLayout(); });
+        scheduleSaveRetry(() => { void saveActiveLayout(updates); });
       }
     });
     return savePromiseRef.current;
