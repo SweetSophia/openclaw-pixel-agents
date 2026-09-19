@@ -840,6 +840,8 @@ export async function tailTranscript(
       seenIds = passSeenIds;
       newMessages.push(...passMessages);
       modifiedMs = finalStat.mtimeMs;
+      baselineOffset = committedOffset;
+      baselineModifiedMs = finalStat.mtimeMs;
       const physicalEnd = readStart + physicalBytesRead;
       if (finalStat.size <= physicalEnd) break;
     }
