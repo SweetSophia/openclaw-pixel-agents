@@ -92,12 +92,14 @@ describe("layout persistence capacity", () => {
       .expect(507)
       .expect({ error: "Layout limit reached (100)" });
 
+    // PUT is update-only in this PR — a non-existent layout cannot be created
+    // via PUT, so it returns 404 instead of 507. The capacity enforcement
+    // applies to POST (creation) and to GET (which seeds `default`).
     await request(app)
       .put("/api/layouts/new-upsert")
       .set("Origin", appOrigin)
       .send(body)
-      .expect(507)
-      .expect({ error: "Layout limit reached (100)" });
+      .expect(404);
 
     await request(app)
       .get("/api/layouts/default")

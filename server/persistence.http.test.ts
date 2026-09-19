@@ -66,8 +66,10 @@ describe("atomic server persistence call paths", () => {
   });
 
   it("routes layout writes through the atomic replacement helper", async () => {
-    await request(app)
-      .put("/api/layouts/atomic-route")
+    // POST creates a new layout (id is generated server-side). PUT is update-only
+    // and only writes if the layout already exists.
+    const create = await request(app)
+      .post("/api/layouts")
       .set("Origin", appOrigin)
       .send({
         name: "Atomic Route",
@@ -78,16 +80,36 @@ describe("atomic server persistence call paths", () => {
       })
       .expect(200);
 
+    const newId = create.body.layout.id as string;
     const layoutsDir = join(dataDir, "layouts");
-    const target = join(layoutsDir, "atomic-route.json");
+    const target = join(layoutsDir, `${newId}.json`);
     expect(atomicWriteFileSync).toHaveBeenCalledWith(
       layoutsDir,
-      "atomic-route.json",
+      `${newId}.json`,
       expect.any(String),
     );
     expect(JSON.parse(readFileSync(target, "utf8"))).toMatchObject({
-      id: "atomic-route",
+      id: newId,
       name: "Atomic Route",
+    });
+
+    // PUT update path: the same layout, sent with new content, also routes through
+    // the atomic replacement helper.
+    await request(app)
+      .put(`/api/layouts/${newId}`)
+      .set("Origin", appOrigin)
+      .send({
+        name: "Atomic Route Updated",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+      })
+      .expect(200);
+
+    expect(JSON.parse(readFileSync(target, "utf8"))).toMatchObject({
+      id: newId,
+      name: "Atomic Route Updated",
     });
   });
 
@@ -108,11 +130,30 @@ describe("atomic server persistence call paths", () => {
   });
 
   it("accepts a leading-underscore layout ID at the route boundary", async () => {
+    // PUT is update-only, so pre-seed `_foo.json` on disk to assert that a
+    // leading-underscore ID passes isValidLayoutId + isSafePersistedFilename
+    // and is routed through the atomic replacement helper.
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const layoutsDir = join(dataDir, "layouts");
+    mkdirSync(layoutsDir, { recursive: true });
+    writeFileSync(
+      join(layoutsDir, "_foo.json"),
+      JSON.stringify({
+        id: "_foo",
+        name: "Underscore",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+        updatedAt: 1000,
+      }),
+    );
+
     await request(app)
       .put("/api/layouts/_foo")
       .set("Origin", appOrigin)
       .send({
-        name: "Underscore",
+        name: "Underscore Updated",
         width: 24,
         height: 16,
         furniture: [],
