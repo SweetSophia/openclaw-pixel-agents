@@ -94,6 +94,18 @@ describe("API write rate limiting (issue #154)", () => {
         updatedAt: 1000,
       }),
     );
+    writeFileSync(
+      join(layoutsDir, "write-limit-2.json"),
+      JSON.stringify({
+        id: "write-limit-2",
+        name: "Write Limit 2",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+        updatedAt: 1000,
+      }),
+    );
 
     await request(app)
       .put("/api/layouts/write-limit")
