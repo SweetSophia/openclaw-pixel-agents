@@ -47,8 +47,9 @@ npm start                                # production build; build first
 - Use `OPENCLAW_BIN` for the CLI path; the collector requires it to be absolute (`collector/README.md`). `OPENCLAW_CLI` is fully removed from the README.
 - Layout IDs must pass `/^[a-zA-Z0-9_-]+$/` and pass `isSafePersistedFilename` (so `${id}.json` is not a Windows reserved device basename like `con`/`nul`/`com1`/`aux`); max 64 chars; `default` cannot be deleted.
 - Layout writes use optimistic concurrency via `baseUpdatedAt`. The client refreshes revisions and retries `409`/server failures with bounded backoff; do not replace newer local edits with stale save responses.
+- **REST contract for layouts**: `PUT /api/layouts/:id` is **update-only** — returns `404` for unknown IDs to prevent a stale client from resurrecting a layout another client just deleted. `POST /api/layouts` is the sole creation path (server-assigned `layout-${uuid}` id). Capacity enforcement (100 layouts, `507 Layout limit reached`) applies at create time and on `GET` of `default`, not on PUT updates. `loadLayout` returns `null` for malformed JSON files, so PUT cannot repair a corrupted layout via the API — operators must delete the file and recreate it.
 - Programmatic load/create/save-response changes must go through `setActiveLayoutProgrammatic()` so `skipAutoSaveRef` suppresses stale auto-saves. Saves are serialized through `savePromiseRef`; dirty furniture changes debounce for 2 seconds.
-- `PixelOffice` re-syncs `GameEngine` through serialized `furnitureKey` (currently `id:x,y,rotation`) and `seatsKey` (full seats object) dependencies. If the engine starts reading another `PlacedFurniture` field (`type` / `state`), include it in `furnitureKey`.
+- `PixelOffice` re-syncs `GameEngine` through serialized `furnitureKey` (currently `id:type:x,y,rotation` — `type` is required so a furniture type swap at the same coordinates is detected) and `seatsKey` (full seats object) dependencies. If the engine starts reading another `PlacedFurniture` field (`state`), include it in `furnitureKey`.
 - Furniture discovery is not fully automatic: add assets and `manifest.json` under `public/assets/furniture/<TYPE>/`, then add the type to the static `/api/furniture-catalog` list in `server/index.ts`.
 
 ## Game and Client Invariants
@@ -62,6 +63,7 @@ npm start                                # production build; build first
 - Missing furniture sprites use a 2×1 obstacle footprint (`GameEngine.rebuildObstacles` + `findFurnitureAt`). Preserve this conservative pathfinding fallback.
 - Use `newEntityId()` from `src/util/id.ts` instead of calling `crypto.randomUUID()` directly; non-secure contexts require its `getRandomValues`/`Math.random` fallbacks.
 - `CharacterRecipe` intentionally exists in both `shared/types.ts` and `CharacterComposer.ts`; keep their index ranges synchronized (`bodyIndex` 0–5, `hairIndex` 0–8, `outfitIndex` 0–5).
+- **Live-sync events**: `useLiveSync` (in `src/hooks/useLiveSync.ts`) owns the `layout:update` socket subscription; `useAgentStore` owns `recipe-update`. Both validate payloads (`/^[a-zA-Z0-9_-]+$/` ≤ 64 chars for IDs, integer indices within the documented sprite ranges) before any state mutation — invalid events are dropped silently. The hooks must funnel mutations through `updateAgents`/`reconcileRemoteLayout`, not raw `setAgents`/`setActiveLayout`, so the revision counters stay consistent.
 
 ## Asset Contracts
 
