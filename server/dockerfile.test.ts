@@ -9,13 +9,16 @@ const dockerfile = readFileSync(
 );
 
 describe("Dockerfile", () => {
-  it("pins both stages to the same Node 26.8.1 alpine index digest", () => {
+  it("pins both stages to the same alpine index digest", () => {
     const fromLines = dockerfile.split("\n").filter((line) => line.startsWith("FROM "));
     expect(fromLines).toHaveLength(2);
-    const digest = /@sha256:([a-f0-9]{64})/.exec(fromLines[0])?.[1];
-    expect(digest).toMatch(/^[a-f0-9]{64}$/);
-    expect(fromLines[0]).toBe(`FROM node:26.8.1-alpine@sha256:${digest} AS builder`);
-    expect(fromLines[1]).toBe(`FROM node:26.8.1-alpine@sha256:${digest}`);
+    // Extract the version tag from the first FROM line so the assertion tracks
+    // upstream Node bumps (Dependabot) without a per-bump test rewrite.
+    const versionMatch = /^FROM node:([\d.]+-alpine)@sha256:([a-f0-9]{64})/.exec(fromLines[0]);
+    expect(versionMatch).not.toBeNull();
+    const [, version, digest] = versionMatch!;
+    expect(fromLines[0]).toBe(`FROM node:${version}@sha256:${digest} AS builder`);
+    expect(fromLines[1]).toBe(`FROM node:${version}@sha256:${digest}`);
   });
 
   it("healthchecks /api/status with Node fetch on process.env.PORT", () => {
