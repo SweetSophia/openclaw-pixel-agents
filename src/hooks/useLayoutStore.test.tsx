@@ -1840,4 +1840,60 @@ describe('useLayoutStore', () => {
     // Only the saveActiveLayout-related PUTs should be present, not auto-save
     expect(putCalls.length).toBe(0);
   });
+
+  it('preserves the original `updates` payload through a 429 retry (issue #219)', async () => {
+    // Regression: every retry callback used to call `saveActiveLayout()`
+    // without arguments, dropping any caller-supplied `updates` payload.
+    // The retry path now closes over `updates` so a manual save retrying
+    // during reconciliation / rate-limit / 5xx retains its intended
+    // changes.
+    await renderStoreProbe();
+    vi.useFakeTimers();
+
+    const initialFetch = fetch;
+    const putBodies: Array<LayoutDoc & { baseUpdatedAt?: number; name?: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.endsWith('/api/layouts/default') && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string);
+        putBodies.push(body);
+        if (putBodies.length === 1) {
+          return new Response(JSON.stringify({ error: 'Too many requests' }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': '5' },
+          });
+        }
+        return new Response(JSON.stringify({ layout: { ...body, updatedAt: 2_000 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return initialFetch(input, init);
+    }));
+
+    // Manual save with an explicit `updates` payload.
+    await act(async () => {
+      await latest(snapshots).saveActiveLayout({ name: 'manual-rename' });
+    });
+    expect(putBodies).toHaveLength(1);
+    expect(putBodies[0].name).toBe('manual-rename');
+
+    // After the 429 Retry-After (5s) elapses, the retry fires. The
+    // pre-fix code would have re-called `saveActiveLayout()` with no
+    // arguments, dropping the `name: 'manual-rename'` update. The fix
+    // closes over `updates`, so the retry carries the same payload.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_100);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(putBodies).toHaveLength(2);
+    expect(putBodies[1].name).toBe('manual-rename');
+  });
 });
