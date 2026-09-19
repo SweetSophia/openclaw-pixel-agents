@@ -14,17 +14,17 @@ npm run test:watch                       # interactive Vitest
 npm run build                            # dist/client + compiled server
 npm test                                 # all tests once
 npm run test:coverage                    # V8 coverage
-npm run typecheck                        # client tsc --noEmit
+npm run typecheck                        # `tsc --noEmit` (browser) && `tsc --noEmit -p tsconfig.test.json` (test config adds Node + DOM types)
 npm start                                # production build; build first
 ```
 
-- Vitest runs in jsdom, loads `src/test/setup.ts`, and excludes `dist/**` plus `.worktrees/**`.
-- CI runs CodeQL, Socket, Sourcery, dependency review, build, test, and typecheck on every push via `.github/workflows/`. Browser-level geometry and hit-testing are not yet covered there; for those, follow the manual browser-testing steps in `CONTRIBUTING.md` (run `npm run dev` and verify in the browser).
+- Vitest runs in jsdom, loads `src/test/setup.ts`, and excludes `dist/**` plus `.worktrees/**`. Coverage floors (repository-wide, all four evaluated together): branches 36, functions 37, lines 41, statements 39.
+- CI: `codeql.yml` scans JS/TS on every push/PR plus weekly on `main`; `ci.yml` runs typecheck → test → test:coverage → build → `npm audit --omit=dev --audit-level=high`; `dependency-review-action` runs on PRs only and fails on high/critical additions. **No Socket or Sourcery workflows exist** — treat any reference to them as stale. Browser-level geometry and hit-testing are not covered in CI; follow the manual browser-testing steps in `CONTRIBUTING.md` (run `npm run dev` and verify in the browser).
 - `npm start` sets `NODE_ENV=production` and runs the non-obvious path `dist/server/server/index.js`.
 
 ## Real Boundaries
 
-- `server/index.ts` wires Express, Socket.IO, polling, ingest, persistence, and routes; keep reusable policy in `server/{validation,cors,correlation,errors,logger,layouts,agentSnapshots}.ts` instead of growing the entrypoint.
+- `server/index.ts` wires Express, Socket.IO, polling, ingest, persistence, and routes; keep reusable policy in `server/{validation,cors,correlation,errors,logger,layouts,agentSnapshots,ingestSessions}.ts` instead of growing the entrypoint. Rate limiters (`ingestPreAuthRateLimiter`, `apiMutationGuard`, `publicGetRateLimiter`) currently live inline in `index.ts` — move to a dedicated module once they grow beyond their single-page definitions.
 - `shared/types.ts` is the network contract. `@shared` maps to `shared/` in Vite; server code uses relative imports.
 - `src/components/PixelOffice.tsx` is the React↔canvas adapter. `GameEngine` owns rendering and side effects; `EditorController`, `Schedule`, `SubAgentFSM`, `inputGeometry`, and `Pathfinder` hold extracted behavior.
 - `collector/push-pixel-agents.mjs` runs on the OpenClaw host and pushes into the ingest API; it is not part of the dashboard server process.
@@ -36,17 +36,19 @@ npm start                                # production build; build first
 - `applyAgentSnapshot()` preserves the last non-empty snapshot on CLI execution/JSON errors, but a successful empty session list replaces it. Keep `AgentState` deeply cloneable.
 - `isPolling` prevents overlapping poll cycles. Transcript offsets advance only through complete newline-terminated JSONL records; partial EOF records must be reread next cycle.
 - Production startup requires a comma-separated `CORS_ORIGIN`. Reverse proxies must preserve the browser `Origin` header or mutating REST requests and Socket.IO upgrades are rejected.
-- Ingest auth hashes both configured and supplied bearer tokens to fixed-size SHA-256 digests before `timingSafeEqual`. Timing regression tests must compare equal-length tokens; use separate functional assertions for length sweeps.
+- Ingest auth derives both configured and supplied bearer tokens into fixed 32-byte digests before `timingSafeEqual` — implemented as `HMAC-SHA-256(token, INGEST_TOKEN_DIGEST_CONTEXT)` so both buffers are always 32 bytes regardless of token length. Timing regression tests must compare equal-length tokens; use separate functional assertions for length sweeps.
 - Keep the actual WebSocket scheme-sources in the CSP string, but do not spell the standalone scheme token in TypeScript comments: Sourcery's opengrep rule false-positively flags it.
+- Helmet sets CSP (`connect-src 'self' ws: wss:`), HSTS (production only, 2y), `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`; `Permissions-Policy` disables camera/microphone/geolocation. The three rate limiters (`ingestPreAuthRateLimiter` mounted before JSON parsing, `apiMutationGuard` on mutating `/api`, `publicGetRateLimiter` on unauthenticated GET/HEAD) self-skip `/api` and the Engine.IO path prefix `/socket.io/` and are pinned in `spa.test.ts` / `rateLimit.test.ts`.
+- Data-source mode (`DATA_SOURCE=auto|cli|ingest`, plus `POLL_INTERVAL`, `ACTIVE_MINUTES`, `OPENCLAW_AGENTS_DIR`, `INGEST_API_TOKEN`, `LOG_LEVEL`, `FRONTEND_DIR`) drives sticky CLI→ingest fallback on permanent CLI failures (ENOENT/ENOTDIR/EISDIR, EACCES/EPERM, ENOEXEC/EFTYPE, ELOOP/ENAMETOOLONG, or the 10 MiB stdout cap); transient failures preserve the snapshot without mode change. Without `INGEST_API_TOKEN`, `auto` stays in CLI even on permanent failure. CLI polling and ingest writes are never active at the same time — see `dataSourceState` in `server/index.ts`.
 
 ## Persistence and Layouts
 
 - `DATA_DIR` defaults to `join(__dirname, "data")`, so dev writes under `server/data/` and standalone compiled startup writes under `dist/server/server/data/`; do not assume repo-root `data/`. Docker sets `DATA_DIR=/app/data`.
-- Use `OPENCLAW_BIN` for the CLI path. The `OPENCLAW_CLI` name still shown in README is stale.
-- Layout IDs must pass `/^[a-zA-Z0-9_-]+$/`, max 64 chars, and `${id}.json` must pass `isSafePersistedFilename` (Windows reserved device names such as `con`/`nul`/`com1` are rejected at the ID boundary); `default` cannot be deleted.
+- Use `OPENCLAW_BIN` for the CLI path; the collector requires it to be absolute (`collector/README.md`). `OPENCLAW_CLI` is fully removed from the README.
+- Layout IDs must pass `/^[a-zA-Z0-9_-]+$/`, max 64 chars; `default` cannot be deleted.
 - Layout writes use optimistic concurrency via `baseUpdatedAt`. The client refreshes revisions and retries `409`/server failures with bounded backoff; do not replace newer local edits with stale save responses.
 - Programmatic load/create/save-response changes must go through `setActiveLayoutProgrammatic()` so `skipAutoSaveRef` suppresses stale auto-saves. Saves are serialized through `savePromiseRef`; dirty furniture changes debounce for 2 seconds.
-- `PixelOffice` re-syncs `GameEngine` through serialized `furnitureKey` and `seatsKey` dependencies. If the engine starts reading another `PlacedFurniture` field, include it in `furnitureKey`.
+- `PixelOffice` re-syncs `GameEngine` through serialized `furnitureKey` (currently `id:x,y,rotation`) and `seatsKey` (full seats object) dependencies. If the engine starts reading another `PlacedFurniture` field (`type` / `state`), include it in `furnitureKey`.
 - Furniture discovery is not fully automatic: add assets and `manifest.json` under `public/assets/furniture/<TYPE>/`, then add the type to the static `/api/furniture-catalog` list in `server/index.ts`.
 
 ## Game and Client Invariants
@@ -55,11 +57,11 @@ npm start                                # production build; build first
 - `EditorController` owns canvas mouse/touch listeners. Rotation callbacks carry the exact post-rotation angle so React does not double-increment the shared furniture object.
 - Keep both `GameEngine.screenToGrid` overloads; `EditorController` uses the numeric form and `inputGeometry.ts` owns letterbox/pillarbox edge semantics.
 - `stateJustChanged` is consumed once in `GameEngine.update()` for sound/VFX and then reset; add transition effects before that reset.
-- Typing, reading, running-command, and thinking agents route to assigned seats. Animation rendering groups running-command with typing and thinking with reading.
+- Typing, reading, running-command, and thinking agents route to assigned seats (`GameEngine.updateCharacter`). Animation rendering groups running-command with typing and thinking with reading in `activityToAnimState`.
 - Demo agents are client-side development data only: `PixelOffice` passes `import.meta.env.DEV` to `GameEngine.init`. Production may intentionally render an empty office until real agents arrive.
-- Missing furniture sprites use a 2×1 obstacle footprint. Preserve this conservative pathfinding fallback.
+- Missing furniture sprites use a 2×1 obstacle footprint (`GameEngine.rebuildObstacles` + `findFurnitureAt`). Preserve this conservative pathfinding fallback.
 - Use `newEntityId()` from `src/util/id.ts` instead of calling `crypto.randomUUID()` directly; non-secure contexts require its `getRandomValues`/`Math.random` fallbacks.
-- `CharacterRecipe` intentionally exists in both `shared/types.ts` and `CharacterComposer.ts`; keep their index ranges synchronized.
+- `CharacterRecipe` intentionally exists in both `shared/types.ts` and `CharacterComposer.ts`; keep their index ranges synchronized (`bodyIndex` 0–5, `hairIndex` 0–8, `outfitIndex` 0–5).
 
 ## Asset Contracts
 
