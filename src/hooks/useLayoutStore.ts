@@ -343,19 +343,52 @@ export function useLayoutStore() {
           return;
         }
 
-        const defaultResponse = await fetch(`${API_BASE}/layouts/default`);
-        if (!isCurrent()) return;
-        if (!defaultResponse.ok) throw new Error(`HTTP ${defaultResponse.status}`);
-        const defaultLayout: unknown = await defaultResponse.json();
-        if (!isLayoutDoc(defaultLayout) || defaultLayout.id !== 'default') {
-          throw new Error('Invalid default layout response');
+        try {
+          const defaultResponse = await fetch(`${API_BASE}/layouts/default`);
+          if (!isCurrent()) return;
+          if (!defaultResponse.ok) throw new Error(`HTTP ${defaultResponse.status}`);
+          const defaultLayout: unknown = await defaultResponse.json();
+          if (!isCurrent()) return;
+          if (!isLayoutDoc(defaultLayout) || defaultLayout.id !== 'default') {
+            throw new Error('Invalid default layout response');
+          }
+          if (
+            furnitureEditVersionRef.current !== editVersionAtStart
+            || isDirtyRef.current
+          ) return;
+          setActiveLayoutProgrammatic(defaultLayout);
+          return;
+        } catch {
+          // Default-fetch failed (network rejection, 5xx, parse error,
+          // invalid body). Without this branch, the active layout would
+          // stay pointed at the deleted layout — the user would be
+          // staring at furniture the server says no longer exists, with
+          // no automatic recovery path.
+          //
+          // Mirror the success-path guard: if the user edited furniture
+          // or dirtied the layout while the default request was in
+          // flight, do NOT clear `activeLayout` — the user has unsaved
+          // work that we must not wipe. Just surface the error and
+          // leave the dirty layout alone so the user can recover.
+          //
+          // We must surface the error here directly (not via the outer
+          // catch handler) because `setActiveLayoutProgrammatic(null)`
+          // increments `activeSelectionVersionRef`, which makes
+          // `isCurrent()` return false — the outer handler's
+          // `if (isCurrent())` guard would then skip
+          // `markSaveStatus('error')`.
+          if (!isCurrent()) return;
+          if (
+            furnitureEditVersionRef.current !== editVersionAtStart
+            || isDirtyRef.current
+          ) {
+            markSaveStatus('error');
+            return;
+          }
+          setActiveLayoutProgrammatic(null);
+          markSaveStatus('error');
+          return;
         }
-        if (
-          furnitureEditVersionRef.current !== editVersionAtStart
-          || isDirtyRef.current
-        ) return;
-        setActiveLayoutProgrammatic(defaultLayout);
-        return;
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const layout: unknown = await response.json();

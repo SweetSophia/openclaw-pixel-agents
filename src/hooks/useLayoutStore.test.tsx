@@ -1347,6 +1347,109 @@ describe('useLayoutStore', () => {
     expect(latest(snapshots).saveStatus).toBe('idle');
   });
 
+  it('clears activeLayout when a clean remote deletion cannot fall back to default (issue #221)', async () => {
+    // Regression: when a clean active layout is remotely deleted and the
+    // fallback GET /api/layouts/default fails (500 / network blip / the
+    // default itself is gone), `activeLayout` used to stay pointed at the
+    // deleted layout — the user would be staring at furniture the server
+    // says doesn't exist, with no automatic recovery path. The fix clears
+    // `activeLayout` so the UI doesn't keep rendering the deleted
+    // furniture, and surfaces the error via saveStatus='error'.
+    await renderStoreProbe();
+    await act(async () => { await latest(snapshots).loadLayoutById('other'); });
+    const originalFetch = vi.mocked(fetch);
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/layouts/other')) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
+      }
+      if (url.endsWith('/api/layouts/default') && (!init || init.method === undefined || init.method === 'GET')) {
+        return Promise.resolve(new Response('Internal Server Error', { status: 500 }));
+      }
+      return originalFetch(input, init);
+    }));
+
+    await act(async () => {
+      await latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+    });
+
+    // The UI no longer renders the deleted layout.
+    expect(latest(snapshots).activeLayout).toBeNull();
+    // The error is surfaced via saveStatus so the user can recover.
+    expect(latest(snapshots).saveStatus).toBe('error');
+  });
+
+  it('clears activeLayout when the fallback default fetch rejects at the network level (issue #221)', async () => {
+    // Same regression as above, but covers the path where `fetch` itself
+    // rejects (network error) or `defaultResponse.json()` throws (invalid
+    // body). The original `if (!defaultResponse.ok)` guard skipped both
+    // cases. The fix wraps the default fetch in its own try/catch.
+    await renderStoreProbe();
+    await act(async () => { await latest(snapshots).loadLayoutById('other'); });
+    const originalFetch = vi.mocked(fetch);
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/layouts/other')) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
+      }
+      if (url.endsWith('/api/layouts/default') && (!init || init.method === undefined || init.method === 'GET')) {
+        return Promise.reject(new Error('Network down'));
+      }
+      return originalFetch(input, init);
+    }));
+
+    await act(async () => {
+      await latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+    });
+
+    expect(latest(snapshots).activeLayout).toBeNull();
+    expect(latest(snapshots).saveStatus).toBe('error');
+  });
+
+  it('preserves dirty user edits when default-fetch fails (issue #221 race condition)', async () => {
+    // Regression: the failure-path catch calls `setActiveLayoutProgrammatic(null)`
+    // whenever `isCurrent()` returns true, but `updateFurniture` bumps
+    // `furnitureEditVersionRef` and `isDirtyRef` without bumping
+    // `activeSelectionVersionRef`. Without the same edit-version/dirty
+    // guard the success path uses, an edit made while the default
+    // request is in flight would be silently destroyed.
+    await renderStoreProbe();
+    await act(async () => { await latest(snapshots).loadLayoutById('other'); });
+    const originalFetch = vi.mocked(fetch);
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/layouts/other')) {
+        return Promise.resolve(new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
+      }
+      if (url.endsWith('/api/layouts/default') && (!init || init.method === undefined || init.method === 'GET')) {
+        return Promise.resolve(new Response('Internal Server Error', { status: 500 }));
+      }
+      return originalFetch(input, init);
+    }));
+
+    // Dirty the layout BEFORE reconciliation runs. Without the
+    // edit-version/dirty guard, the catch would still wipe the user's
+    // edits because isCurrent() is true at that point.
+    await act(async () => {
+      latest(snapshots).updateFurniture([
+        { id: 'desk-1', type: 'desk', x: 1, y: 2, rotation: 0 },
+      ]);
+    });
+    expect(latest(snapshots).isDirty).toBe(true);
+
+    await act(async () => {
+      await latest(snapshots).reconcileRemoteLayout({ id: 'other' });
+    });
+
+    // The user's edit must NOT be wiped.
+    expect(latest(snapshots).activeLayout).not.toBeNull();
+    expect(latest(snapshots).activeLayout?.id).toBe('other');
+    expect(latest(snapshots).activeLayout?.furniture[0]?.id).toBe('desk-1');
+    expect(latest(snapshots).isDirty).toBe(true);
+    // The error is still surfaced.
+    expect(latest(snapshots).saveStatus).toBe('error');
+  });
+
   it('ignores an older reconciliation response after a newer request observes deletion', async () => {
     await renderStoreProbe();
     await act(async () => { await latest(snapshots).loadLayoutById('other'); });
