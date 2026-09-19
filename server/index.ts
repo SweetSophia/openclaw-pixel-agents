@@ -604,10 +604,11 @@ function advanceTranscriptDigest(
 
 /**
  * Read and digest the committed prefix of a transcript from offset 0 to
- * `length`. O(n) over `length` — must not be called on every poll for
- * append-only workloads (issue #217). Exported for unit tests.
+ * `length`. O(n) over `length` — issue #217 tracks moving this to
+ * an incremental digest state in the cursor so append-only polls
+ * don't rehash the full prefix.
  */
-export async function readTranscriptDigest(
+async function readTranscriptDigest(
   fileHandle: FileHandle,
   length: number,
 ): Promise<string | null> {
@@ -866,16 +867,6 @@ export async function tailTranscript(
 
       committedOffset = readStart + bytesCommitted;
       const finalStat = await fileHandle.stat();
-      // Gate the post-read prefix re-verification on size-only changes
-      // (issue #217). Append-only growth is the steady-state case for
-      // an active agent — the committed prefix [0, committedOffset] is
-      // unchanged by appends, only [committedOffset, finalSize] is new.
-      // Mtime-only changes also leave the prefix unchanged. Rehashing
-      // the entire committed prefix every poll was a material perf
-      // regression (~100ms+ on a 10 MiB transcript). The next poll's
-      // initial verification (the `metadataUnchanged` check at the top
-      // of `tailTranscript`) still catches copy-truncate of unchanged-size
-      // files via the mtime comparison.
       const needsVerification = committedOffset !== baselineOffset
         || finalStat.size !== fileSize;
       const verifiedDigest = needsVerification
