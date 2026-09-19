@@ -335,7 +335,12 @@ export function useAgentStore() {
     };
     const handleRecipeUpdate = (value: unknown) => {
       if (!isRecipeUpdateEvent(value)) return;
-      setAgents(current => current.map(agent => (
+      // Funnel through `updateAgents` so the recipe mutation participates in
+      // the revision-counter / pending-mutation accounting that every other
+      // mutator in this hook uses. A raw `setAgents` call would let a stale
+      // REST snapshot (or a `toggleAgent` optimistic update that reads from
+      // `agentsRef`) silently overwrite the recipe.
+      updateAgents(current => current.map(agent => (
         agent.id === value.agentId ? { ...agent, recipe: value.recipe } : agent
       )));
     };

@@ -934,6 +934,54 @@ describe('useAgentStore mutation rate limits', () => {
       expect.any(Function),
     );
   });
+
+  it('does not start a stale REST refresh after a recipe-update (issue #220 plumbing)', async () => {
+    // Issue #220: `handleRecipeUpdate` previously used raw `setAgents`,
+    // bypassing `updateAgents` and the revision-counter / agentsRef sync.
+    // The happy path (apply recipe, no extra REST call) is already covered
+    // by the test above. This regression pins the routing: a recipe event
+    // followed by a `toggleAgent` (which reads `agentsRef` to compute the
+    // optimistic state) must observe the recipe change in `agentsRef`.
+    const initialAgent = {
+      id: 'cybera',
+      name: 'Cybera',
+      activity: 'idle',
+      model: 'test',
+      sessionKey: 'agent:cybera:test',
+      active: true,
+      lastActivity: Date.now(),
+      pixelEnabled: true,
+      tags: [],
+      recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ agents: [initialAgent] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    );
+    const { snapshots, unmount } = await renderStoreProbe();
+    const recipe = { bodyIndex: 1, hairIndex: 2, outfitIndex: 3 };
+
+    await act(async () => {
+      socketMock.handlers.get('recipe-update')?.({ agentId: 'cybera', recipe });
+    });
+    expect(latest(snapshots).agents[0]?.recipe).toEqual(recipe);
+
+    // After the recipe update, a follow-up `toggleAgent` must see the new
+    // recipe in `agentsRef` (not a stale ref from before the routing fix).
+    // We assert this indirectly: if `agentsRef` were stale, the optimistic
+    // toggle result would race with the recipe and could revert it.
+    await act(async () => {
+      await latest(snapshots).toggleAgent('cybera', false);
+    });
+    const toggledSnapshot = latest(snapshots).agents[0];
+    expect(toggledSnapshot?.pixelEnabled).toBe(false);
+    expect(toggledSnapshot?.recipe).toEqual(recipe);
+
+    unmount();
+  });
 });
 
 describe('useAgentStore room filtering', () => {
