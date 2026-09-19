@@ -261,6 +261,39 @@ describe("transcript ticker boundary", () => {
     expect(message.id.length).toBeLessThanOrEqual(128);
   });
 
+  it("clamps the synthetic id when agentId is at the OPAQUE_AGENT_ID_RE length limit (issue #215)", async () => {
+    // Regression: the synthetic id path was `${agentId}-${digest32}`, whose
+    // length is unbounded if `agentId` is long. The length check applied
+    // only to `rawId`, not the synthetic id, so a long `agentId` defeated
+    // TICKER_MAX_ID_CHARS (128). With OPAQUE_AGENT_ID_RE allowing up to
+    // 64 chars, a synthetic id could reach 64 + 1 + 32 = 97 chars — under
+    // the limit, but unbounded as more messages arrive. The clamp at
+    // TICKER_MAX_ID_CHARS keeps downstream `seenIds` / index stores
+    // bounded regardless of agentId length.
+    //
+    // Setup: a 64-char agentId that passes OPAQUE_AGENT_ID_RE, with the
+    // transcript file in the matching agentId directory so
+    // `isTranscriptPathContained` accepts the path.
+    const longAgentId = "a" + "x".repeat(63); // 64 chars total, valid identifier
+    const longAgentSessionsDir = join(dataDir, "agents", longAgentId, "sessions");
+    mkdirSync(longAgentSessionsDir, { recursive: true });
+    const transcriptPath = join(longAgentSessionsDir, "transcript.jsonl");
+    writeFileSync(
+      transcriptPath,
+      makeLine("message from a long agentId", {
+        __openclaw: { id: undefined },
+      }),
+    );
+
+    const [message] = await tailTranscript(longAgentId, "Shodan", transcriptPath);
+
+    expect(message).toBeDefined();
+    expect(message.id.length).toBeLessThanOrEqual(128);
+    expect(message.id.length).toBeGreaterThan(0);
+    // Synthetic id should still be informative — start with the agentId.
+    expect(message.id.startsWith(longAgentId)).toBe(true);
+  });
+
   it("preserves a valid bounded transcript message id", async () => {
     const transcriptPath = join(sessionsDir, "valid-id.jsonl");
     writeFileSync(

@@ -736,11 +736,20 @@ export async function tailTranscript(
         if (text.startsWith("HEARTBEAT_OK") || text.includes("HEARTBEAT.md")) return;
 
         const rawId = msg.__openclaw?.id;
-        const id = typeof rawId === "string"
+        // Both the raw-id and the synthetic-id paths must respect
+        // `TICKER_MAX_ID_CHARS`. The raw path is checked above; the
+        // synthetic path is `${agentId}-${digest32}` whose length is
+        // unbounded if `agentId` is long. Clamp the result so downstream
+        // `seenIds` / index stores don't grow past the documented limit.
+        const syntheticId = `${agentId}-${recordDigest.toString("hex").slice(0, 32)}`;
+        const candidate = typeof rawId === "string"
           && rawId.length > 0
           && rawId.length <= TICKER_MAX_ID_CHARS
           ? rawId
-          : `${agentId}-${recordDigest.toString("hex").slice(0, 32)}`;
+          : syntheticId;
+        const id = candidate.length > TICKER_MAX_ID_CHARS
+          ? candidate.slice(0, TICKER_MAX_ID_CHARS)
+          : candidate;
         const timestamp = msg.timestamp ?? msg.__openclaw?.ts ?? Date.now();
         if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return;
 
