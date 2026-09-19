@@ -78,6 +78,35 @@ describe("API write rate limiting (issue #154)", () => {
   });
 
   it("shares the layout budget across PUT, POST creation, and DELETE", async () => {
+    // PUT is update-only in this PR. Pre-seed `write-limit.json` so PUT updates
+    // it (returns 200) and DELETE removes it (returns 200).
+    const layoutsDir = join(dataDir, "layouts");
+    mkdirSync(layoutsDir, { recursive: true });
+    writeFileSync(
+      join(layoutsDir, "write-limit.json"),
+      JSON.stringify({
+        id: "write-limit",
+        name: "Write Limit",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+        updatedAt: 1000,
+      }),
+    );
+    writeFileSync(
+      join(layoutsDir, "write-limit-2.json"),
+      JSON.stringify({
+        id: "write-limit-2",
+        name: "Write Limit 2",
+        width: 24,
+        height: 16,
+        furniture: [],
+        seats: {},
+        updatedAt: 1000,
+      }),
+    );
+
     await request(app)
       .put("/api/layouts/write-limit")
       .set("Origin", appOrigin)
@@ -303,6 +332,22 @@ describe("default layout write headroom", () => {
 
       const serverModule = await import("./index");
       io = serverModule.io;
+      // PUT is update-only in this PR — pre-seed `headroom.json` so PUT updates
+      // it (returns 200 for valid bodies) or returns 400 for bad bodies.
+      const layoutsDir = join(dataDir, "layouts");
+      mkdirSync(layoutsDir, { recursive: true });
+      writeFileSync(
+        join(layoutsDir, "headroom.json"),
+        JSON.stringify({
+          id: "headroom",
+          name: "Headroom",
+          width: 24,
+          height: 16,
+          furniture: [],
+          seats: {},
+          updatedAt: 1000,
+        }),
+      );
       for (let attempt = 0; attempt < 31; attempt++) {
         await request(serverModule.app)
           .put("/api/layouts/headroom")

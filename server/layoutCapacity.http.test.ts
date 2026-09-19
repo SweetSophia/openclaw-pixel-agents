@@ -92,26 +92,29 @@ describe("layout persistence capacity", () => {
       .expect(507)
       .expect({ error: "Layout limit reached (100)" });
 
+    // PUT is update-only in this PR — a non-existent layout cannot be created
+    // via PUT, so it returns 404 instead of 507. The capacity enforcement
+    // applies to POST (creation) and to GET (which seeds `default`).
     await request(app)
       .put("/api/layouts/new-upsert")
       .set("Origin", appOrigin)
       .send(body)
-      .expect(507)
-      .expect({ error: "Layout limit reached (100)" });
+      .expect(404);
 
     await request(app)
       .get("/api/layouts/default")
       .expect(507)
       .expect({ error: "Layout limit reached (100)" });
 
-    // Capacity is a file-count bound, not a write freeze. Replacing an
-    // existing invalid file must remain possible so operators can repair
-    // persisted state without first deleting another layout.
+    // Capacity is a file-count bound, not a write freeze. PUT is update-only
+    // in this PR — it never creates a new file, so it cannot resurrect a
+    // missing layout to push the directory past 100. PUT to a non-existent
+    // (or malformed) layout returns 404; the file count stays at 100.
     await request(app)
       .put("/api/layouts/existing-0")
       .set("Origin", appOrigin)
       .send(body)
-      .expect(200);
+      .expect(404);
 
     expect(readdirSync(layoutsDir).filter((file) => file.endsWith(".json"))).toHaveLength(100);
   });

@@ -312,26 +312,28 @@ describe("API auth boundaries", () => {
   });
 
   it("does not require the collector token for same-origin UI mutation endpoints", async () => {
+    const createdLayout = await request(app).post("/api/layouts").set("Origin", appOrigin).send({
+      name: "Auth Regression Created",
+      width: 24,
+      height: 16,
+      furniture: [],
+      seats: {},
+    }).expect(200);
+    const layoutId = createdLayout.body.layout.id as string;
     const responses = [
       await request(app).post("/api/agents/main/toggle").set("Origin", appOrigin).send({ enabled: false }).expect(200),
       await request(app).post("/api/agents/main/sprite").set("Origin", appOrigin).send({ spriteId: "char_1" }).expect(200),
       await request(app).put("/api/agents/main/recipe").set("Origin", appOrigin).send({ bodyIndex: 0, hairIndex: 0, outfitIndex: 0 }).expect(200),
       await request(app).put("/api/agents/main/tags").set("Origin", appOrigin).send({ tags: ["coding"] }).expect(200),
-      await request(app).put("/api/layouts/auth-regression").set("Origin", appOrigin).send({
+      createdLayout,
+      await request(app).put(`/api/layouts/${layoutId}`).set("Origin", appOrigin).send({
         name: "Auth Regression",
         width: 24,
         height: 16,
         furniture: [],
         seats: {},
       }).expect(200),
-      await request(app).post("/api/layouts").set("Origin", appOrigin).send({
-        name: "Auth Regression Created",
-        width: 24,
-        height: 16,
-        furniture: [],
-        seats: {},
-      }).expect(200),
-      await request(app).delete("/api/layouts/auth-regression").set("Origin", appOrigin).expect(200),
+      await request(app).delete(`/api/layouts/${layoutId}`).set("Origin", appOrigin).expect(200),
     ];
 
     expect(responses.map((response) => response.status)).not.toContain(401);
@@ -360,21 +362,28 @@ describe("API auth boundaries", () => {
   });
 
   it("rejects malformed layout mutation bodies", async () => {
+    const createdLayout = await request(app)
+      .post("/api/layouts")
+      .set("Origin", appOrigin)
+      .send({ name: "Validation Regression" })
+      .expect(200);
+    const layoutId = createdLayout.body.layout.id as string;
+
     await request(app)
-      .put("/api/layouts/validation-regression")
+      .put(`/api/layouts/${layoutId}`)
       .set("Origin", appOrigin)
       .send({ width: "wide" })
       .expect(400);
 
     await request(app)
-      .put("/api/layouts/validation-regression")
+      .put(`/api/layouts/${layoutId}`)
       .set("Origin", appOrigin)
       .send({ baseUpdatedAt: "stale" })
       .expect(400)
       .expect({ error: "baseUpdatedAt must be a non-negative integer" });
 
     await request(app)
-      .put("/api/layouts/validation-regression")
+      .put(`/api/layouts/${layoutId}`)
       .set("Origin", appOrigin)
       .send({ furniture: [{}] })
       .expect(400);
