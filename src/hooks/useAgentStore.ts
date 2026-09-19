@@ -335,7 +335,16 @@ export function useAgentStore() {
     };
     const handleRecipeUpdate = (value: unknown) => {
       if (!isRecipeUpdateEvent(value)) return;
-      setAgents(current => current.map(agent => (
+      // Route through `updateAgents` so the recipe mutation synchronizes
+      // `agentsRef` and `stateRevisionRef` — the same indirection every
+      // other mutator in this hook uses. Raw `setAgents` would let a
+      // subsequent REST snapshot pass its revision-equality check (state
+      // would not have moved past the request's revision) and let
+      // `toggleAgent`'s optimistic path read a stale ref. Note: this
+      // does NOT bump `pendingMutationsRef` — that's reserved for
+      // `startMutation`/`finishMutation` around REST writes; this is a
+      // server-confirmed mutation, not a pending local edit.
+      updateAgents(current => current.map(agent => (
         agent.id === value.agentId ? { ...agent, recipe: value.recipe } : agent
       )));
     };
