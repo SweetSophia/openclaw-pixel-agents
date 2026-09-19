@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server as SocketIOServer } from "socket.io";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { boundTickerMessageId } from "./index";
 
 describe("transcript ticker boundary", () => {
   let dataDir: string;
@@ -261,37 +262,45 @@ describe("transcript ticker boundary", () => {
     expect(message.id.length).toBeLessThanOrEqual(128);
   });
 
-  it("clamps the synthetic id when agentId is at the OPAQUE_AGENT_ID_RE length limit (issue #215)", async () => {
-    // Regression: the synthetic id path was `${agentId}-${digest32}`, whose
-    // length is unbounded if `agentId` is long. The length check applied
-    // only to `rawId`, not the synthetic id, so a long `agentId` defeated
-    // TICKER_MAX_ID_CHARS (128). With OPAQUE_AGENT_ID_RE allowing up to
-    // 64 chars, a synthetic id could reach 64 + 1 + 32 = 97 chars — under
-    // the limit, but unbounded as more messages arrive. The clamp at
-    // TICKER_MAX_ID_CHARS keeps downstream `seenIds` / index stores
-    // bounded regardless of agentId length.
+  it("clamps the synthetic id and preserves the digest tail (issue #215)", async () => {
+    // Regression: the synthetic id path was `${agentId}-${digest32}`,
+    // whose length is unbounded if `agentId` is long. The naive fix was
+    // `candidate.slice(0, TICKER_MAX_ID_CHARS)` which would strip the
+    // digest entirely if `agentId` reached 128 chars, collapsing every
+    // message for that agent to the same id and suppressing all but
+    // the first. The correct fix truncates the agentId prefix only,
+    // keeping the 32-char digest intact at the tail.
     //
-    // Setup: a 64-char agentId that passes OPAQUE_AGENT_ID_RE, with the
-    // transcript file in the matching agentId directory so
-    // `isTranscriptPathContained` accepts the path.
+    // Two messages, same long agentId, different content → different
+    // synthetic ids (digest differs). Both ids end with their respective
+    // 32-char digest (the digest portion is preserved). Both ids are ≤
+    // TICKER_MAX_ID_CHARS.
     const longAgentId = "a" + "x".repeat(63); // 64 chars total, valid identifier
     const longAgentSessionsDir = join(dataDir, "agents", longAgentId, "sessions");
     mkdirSync(longAgentSessionsDir, { recursive: true });
     const transcriptPath = join(longAgentSessionsDir, "transcript.jsonl");
     writeFileSync(
       transcriptPath,
-      makeLine("message from a long agentId", {
-        __openclaw: { id: undefined },
-      }),
+      [
+        makeLine("message one", { __openclaw: { id: undefined } }),
+        makeLine("message two", { __openclaw: { id: undefined } }),
+      ].join(""),
     );
 
-    const [message] = await tailTranscript(longAgentId, "Shodan", transcriptPath);
+    const messages = await tailTranscript(longAgentId, "Shodan", transcriptPath);
 
-    expect(message).toBeDefined();
-    expect(message.id.length).toBeLessThanOrEqual(128);
-    expect(message.id.length).toBeGreaterThan(0);
-    // Synthetic id should still be informative — start with the agentId.
-    expect(message.id.startsWith(longAgentId)).toBe(true);
+    expect(messages).toHaveLength(2);
+    for (const m of messages) {
+      expect(m.id.length).toBeLessThanOrEqual(128);
+      expect(m.id.length).toBeGreaterThan(0);
+      // The synthetic id must keep the digest (last 32 hex chars). If the
+      // naive `slice(0, TICKER_MAX_ID_CHARS)` were applied to an agentId
+      // long enough to overflow, the digest would be stripped — this
+      // assertion catches that regression.
+      expect(m.id).toMatch(/-[0-9a-f]{32}$/);
+    }
+    // Different messages → different digests → different ids.
+    expect(messages[0]?.id).not.toBe(messages[1]?.id);
   });
 
   it("preserves a valid bounded transcript message id", async () => {
@@ -372,5 +381,49 @@ describe("transcript ticker boundary", () => {
     ).resolves.toEqual([
       expect.objectContaining({ text: "partial line completed later" }),
     ]);
+  });
+});
+
+describe("boundTickerMessageId", () => {
+  it("preserves the digest tail even when agentId alone would overflow the cap (issue #215)", () => {
+    // The naive fix would slice the entire candidate, stripping the
+    // digest and collapsing every message for that agent to the same
+    // id (suppressed by `seenIds`). The correct fix truncates the
+    // agentId prefix only, so the 32-char digest is always intact at
+    // the tail and different messages produce different ids.
+    const digest32 = "f".repeat(32);
+    const longAgentId = "a".repeat(200); // 200 chars — well past TICKER_MAX_ID_CHARS
+
+    const id = boundTickerMessageId(null, longAgentId, digest32);
+
+    expect(id.length).toBeLessThanOrEqual(128);
+    // Digest tail preserved.
+    expect(id).toMatch(/-f{32}$/);
+    // Synthetic id starts with the truncated agentId (first 95 chars).
+    expect(id.startsWith(longAgentId.slice(0, 95))).toBe(true);
+  });
+
+  it("returns the rawId when it is within the cap", () => {
+    expect(boundTickerMessageId("short-id", "agent", "f".repeat(32))).toBe("short-id");
+  });
+
+  it("falls back to synthetic when rawId is empty", () => {
+    expect(boundTickerMessageId("", "agent", "f".repeat(32))).toBe("agent-" + "f".repeat(32));
+  });
+
+  it("falls back to synthetic when rawId is null", () => {
+    expect(boundTickerMessageId(null, "agent", "f".repeat(32))).toBe("agent-" + "f".repeat(32));
+  });
+
+  it("clamps rawId that exceeds the cap (defensive)", () => {
+    const longRaw = "r".repeat(200);
+    const id = boundTickerMessageId(longRaw, "agent", "f".repeat(32));
+    expect(id.length).toBeLessThanOrEqual(128);
+  });
+
+  it("produces different ids for different digests at the same agentId", () => {
+    const id1 = boundTickerMessageId(null, "agent", "1".repeat(32));
+    const id2 = boundTickerMessageId(null, "agent", "2".repeat(32));
+    expect(id1).not.toBe(id2);
   });
 });

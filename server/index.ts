@@ -539,6 +539,36 @@ const TICKER_BUFFER_SIZE = 30;
 const TICKER_MAX_CHARS = 150;
 /** Maximum characters accepted from an untrusted transcript message ID */
 const TICKER_MAX_ID_CHARS = 128;
+
+/**
+ * Compute the bounded ticker-message id for a transcript line. Both the
+ * raw `__openclaw.id` path and the synthetic `${agentId}-${digest32}`
+ * path are bounded by `TICKER_MAX_ID_CHARS`. The clamp truncates the
+ * agentId prefix only — slicing the entire candidate would strip the
+ * digest and collapse every message for that agent to the same id
+ * (suppressed by `seenIds`).
+ *
+ * Exported for unit testing — `tailTranscript` only calls it with
+ * already-validated inputs, but the synthetic-id length depends only
+ * on `agentId` and `digest32` (no path/IO), so it can be exercised
+ * with arbitrary-length agentIds.
+ */
+export function boundTickerMessageId(
+  rawId: string | null,
+  agentId: string,
+  digest32: string,
+): string {
+  const syntheticAgentMax = Math.max(0, TICKER_MAX_ID_CHARS - 1 - digest32.length);
+  const syntheticId = `${agentId.slice(0, syntheticAgentMax)}-${digest32}`;
+  const candidate = typeof rawId === "string"
+    && rawId.length > 0
+    && rawId.length <= TICKER_MAX_ID_CHARS
+    ? rawId
+    : syntheticId;
+  return candidate.length > TICKER_MAX_ID_CHARS
+    ? candidate.slice(0, TICKER_MAX_ID_CHARS)
+    : candidate;
+}
 /** Maximum JSONL record size parsed into memory; oversized records are skipped */
 const TICKER_MAX_RECORD_BYTES = 1024 * 1024;
 /** How far back to look for messages (ms) */
@@ -736,20 +766,11 @@ export async function tailTranscript(
         if (text.startsWith("HEARTBEAT_OK") || text.includes("HEARTBEAT.md")) return;
 
         const rawId = msg.__openclaw?.id;
-        // Both the raw-id and the synthetic-id paths must respect
-        // `TICKER_MAX_ID_CHARS`. The raw path is checked above; the
-        // synthetic path is `${agentId}-${digest32}` whose length is
-        // unbounded if `agentId` is long. Clamp the result so downstream
-        // `seenIds` / index stores don't grow past the documented limit.
-        const syntheticId = `${agentId}-${recordDigest.toString("hex").slice(0, 32)}`;
-        const candidate = typeof rawId === "string"
-          && rawId.length > 0
-          && rawId.length <= TICKER_MAX_ID_CHARS
-          ? rawId
-          : syntheticId;
-        const id = candidate.length > TICKER_MAX_ID_CHARS
-          ? candidate.slice(0, TICKER_MAX_ID_CHARS)
-          : candidate;
+        const id = boundTickerMessageId(
+          typeof rawId === "string" && rawId.length > 0 ? rawId : null,
+          agentId,
+          recordDigest.toString("hex").slice(0, 32),
+        );
         const timestamp = msg.timestamp ?? msg.__openclaw?.ts ?? Date.now();
         if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return;
 
