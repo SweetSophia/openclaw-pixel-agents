@@ -799,7 +799,12 @@ export async function tailTranscript(
       let bytesCommitted = 0;
       let recordLength = 0;
       let recordHash = createHash("sha256");
-      let pending = Buffer.alloc(0);
+      // Accumulate content segments in an array and `Buffer.concat` once per
+      // record (at the newline terminator), not once per chunk. The
+      // previous `pending = Buffer.concat([pending, contentSegment])` was
+      // O(n^2) for an n-byte record split across many chunks.
+      let pendingLength = 0;
+      const pendingSegments: Buffer[] = [];
       let recordTooLarge = false;
       const passMessages: TickerMessage[] = [];
       const passSeenIds = new Set(seenIds);
@@ -825,10 +830,12 @@ export async function tailTranscript(
             const contentSegment = newlineIndex === -1
               ? segment
               : segment.subarray(0, -1);
-            if (pending.length + contentSegment.length <= TICKER_MAX_RECORD_BYTES) {
-              pending = Buffer.concat([pending, contentSegment]);
+            if (pendingLength + contentSegment.length <= TICKER_MAX_RECORD_BYTES) {
+              pendingSegments.push(contentSegment);
+              pendingLength += contentSegment.length;
             } else {
-              pending = Buffer.alloc(0);
+              pendingSegments.length = 0;
+              pendingLength = 0;
               recordTooLarge = true;
             }
           }
@@ -837,12 +844,16 @@ export async function tailTranscript(
           bytesCommitted += recordLength;
           const recordDigest = recordHash.digest();
           if (!recordTooLarge) {
+            const pending = pendingLength === 0
+              ? Buffer.alloc(0)
+              : Buffer.concat(pendingSegments, pendingLength);
             processLine(pending, recordDigest, passMessages, passSeenIds);
           }
           digest = advanceTranscriptDigest(digest, recordDigest);
           recordLength = 0;
           recordHash = createHash("sha256");
-          pending = Buffer.alloc(0);
+          pendingSegments.length = 0;
+          pendingLength = 0;
           recordTooLarge = false;
           chunkOffset = segmentEnd;
         }

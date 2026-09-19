@@ -342,6 +342,28 @@ describe("transcript ticker boundary", () => {
     ]);
   });
 
+  it("assembles a large record split across many chunks correctly (issue #216)", async () => {
+    // Regression: the previous `pending = Buffer.concat([pending, contentSegment])`
+    // inside the per-chunk loop was O(n^2) for an n-byte record split
+    // across many chunks. The fix accumulates segments in an array and
+    // concatenates once per record (at the newline terminator). This
+    // regression pins correctness with a large record that exercises
+    // many chunks (text is truncated to TICKER_MAX_CHARS at the message
+    // boundary, so we assert on the truncated length, not the source).
+    const transcriptPath = join(sessionsDir, "large-record.jsonl");
+    const largeText = "x".repeat(64 * 1024);
+    writeFileSync(transcriptPath, makeLine(largeText));
+
+    const [message] = await tailTranscript("main", "Shodan", transcriptPath);
+
+    expect(message).toBeDefined();
+    // Text is truncated to TICKER_MAX_CHARS (150) at message construction.
+    expect(message.text.length).toBe(150);
+    // All 150 chars must be the same `x` content (no truncation mid-byte
+    // crossing chunk boundaries).
+    expect(message.text).toBe("x".repeat(150));
+  });
+
   it("skips an oversized record while advancing to the next complete record", async () => {
     const transcriptPath = join(sessionsDir, "oversized-record.jsonl");
     writeFileSync(
