@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { io as socketIO } from 'socket.io-client';
+import { getSharedSocket } from '../socket';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
@@ -38,7 +38,10 @@ export default function MessageTicker() {
   // Connect to WebSocket
   useEffect(() => {
     let isCancelled = false;
-    const socket = socketIO({ transports: ['websocket', 'polling'] });
+    // Issue #218: reuse the shared module-level socket instead of opening
+    // a fresh connection. The dashboard previously maintained three
+    // WebSocket connections per browser; the singleton collapses that to one.
+    const socket = getSharedSocket();
 
     const handleConnect = () => { if (!isCancelled) setConnected(true); };
     const handleDisconnect = () => { if (!isCancelled) setConnected(false); };
@@ -63,7 +66,8 @@ export default function MessageTicker() {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('ticker:messages', handleMessages);
-      socket.disconnect();
+      // Do NOT call socket.disconnect() — the socket is shared with
+      // useAgentStore and useLiveSync.
     };
   }, []);
 

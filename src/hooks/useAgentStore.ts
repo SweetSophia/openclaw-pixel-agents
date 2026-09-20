@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { io as socketIO } from 'socket.io-client';
+import { getSharedSocket } from '../socket';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, resolveRoomByTags, type AgentTag } from '../../shared/types';
 
@@ -321,7 +321,11 @@ export function useAgentStore() {
   }, [updateAgents]);
 
   useEffect(() => {
-    const socket = socketIO({ transports: ['websocket', 'polling'] });
+    // Issue #218: reuse the shared module-level socket instead of opening
+    // a fresh connection. The dashboard previously maintained three
+    // WebSocket connections per browser (this hook, useLiveSync, and
+    // MessageTicker); the singleton collapses that to one.
+    const socket = getSharedSocket();
 
     // Transport connectivity alone does not mean client state is fresh. Keep
     // the REST fallback active until this connection delivers its first snapshot.
@@ -359,7 +363,8 @@ export function useAgentStore() {
       socket.off('disconnect', handleDisconnect);
       socket.off('agents:update', handleUpdate);
       socket.off('recipe-update', handleRecipeUpdate);
-      socket.disconnect();
+      // Do NOT call socket.disconnect() — the socket is shared with
+      // useLiveSync and MessageTicker.
     };
   }, [updateAgents]);
 

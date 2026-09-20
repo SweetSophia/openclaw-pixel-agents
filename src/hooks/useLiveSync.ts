@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { io as socketIO } from 'socket.io-client';
+import { getSharedSocket } from '../socket';
 import type { RemoteLayoutEvent } from './useLayoutStore';
 
 type Refresh = () => void | Promise<unknown>;
@@ -34,18 +34,30 @@ function runRefresh(callback: Refresh, label: string): void {
  * Consume layout broadcasts as invalidation signals. The event payload is
  * intentionally not authoritative; the store resolves the current REST
  * document (or its absence) before changing active-layout state.
+ *
+ * Uses the shared module-level socket (`src/socket.ts`) so the dashboard
+ * maintains a single WebSocket connection rather than three — issue #218.
+ * The `socket.disconnect()` call is intentionally omitted from the cleanup:
+ * the socket is shared across consumers and torn down at page unload.
  */
 export function useLiveSync(options: LiveSyncOptions): void {
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
   useEffect(() => {
-    const socket = socketIO({ transports: ['websocket', 'polling'] });
+    const socket = getSharedSocket();
 
     const handleLayoutUpdate = (event: unknown) => {
       if (!isLayoutUpdateEvent(event)) return;
       const current = optionsRef.current;
-      runRefresh(current.refreshLayouts, 'layout catalog');
+      // Issue #218 perf: skip the catalog refresh when the broadcast
+      // identifies the currently-active layout — `reconcileLayout` will
+      // already pull the fresh content, so the catalog listing would
+      // just round-trip back unchanged. For N connected clients per
+      // active layout, this halves the HTTP fan-out per PUT.
+      if (current.activeLayoutId !== event.id) {
+        runRefresh(current.refreshLayouts, 'layout catalog');
+      }
       runRefresh(() => current.reconcileLayout({ id: event.id }), 'active layout');
     };
 
@@ -65,7 +77,8 @@ export function useLiveSync(options: LiveSyncOptions): void {
     return () => {
       socket.off('connect', handleConnect);
       socket.off('layout:update', handleLayoutUpdate);
-      socket.disconnect();
+      // Do NOT call socket.disconnect() — the socket is shared with
+      // useAgentStore and MessageTicker.
     };
   }, []);
 }

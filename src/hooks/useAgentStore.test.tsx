@@ -150,11 +150,17 @@ describe('useAgentStore REST polling fallback', () => {
     unmount();
   });
 
-  it('disconnects the socket on unmount', async () => {
+  it('does not disconnect the shared socket on unmount (issue #218)', async () => {
+    // Issue #218: useAgentStore now reuses a module-level shared
+    // socket alongside useLiveSync and MessageTicker. The shared
+    // socket is torn down only on page unload, not on per-hook
+    // unmount. This keeps the dashboard on a single WebSocket
+    // connection regardless of which subset of the three consumers
+    // is mounted.
     const { unmount } = await renderStoreProbe();
 
     unmount();
-    expect(socketMock.socket.disconnect).toHaveBeenCalledTimes(1);
+    expect(socketMock.socket.disconnect).not.toHaveBeenCalled();
   });
 
   it('does not let an in-flight REST response overwrite a newer socket snapshot', async () => {
