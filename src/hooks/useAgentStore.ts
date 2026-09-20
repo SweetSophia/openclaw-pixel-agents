@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { io as socketIO } from 'socket.io-client';
+import { getCachedAgentsUpdate, getSharedSocket } from '../socket';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, resolveRoomByTags, type AgentTag } from '../../shared/types';
 
@@ -321,7 +321,11 @@ export function useAgentStore() {
   }, [updateAgents]);
 
   useEffect(() => {
-    const socket = socketIO({ transports: ['websocket', 'polling'] });
+    // Issue #218: reuse the shared module-level socket instead of opening
+    // a fresh connection. The dashboard previously maintained three
+    // WebSocket connections per browser (this hook, useLiveSync, and
+    // MessageTicker); the singleton collapses that to one.
+    const socket = getSharedSocket();
 
     // Transport connectivity alone does not mean client state is fresh. Keep
     // the REST fallback active until this connection delivers its first snapshot.
@@ -354,12 +358,33 @@ export function useAgentStore() {
     socket.on('agents:update', handleUpdate);
     socket.on('recipe-update', handleRecipeUpdate);
 
+    // Issue #218: a consumer mounting after the shared singleton has
+    // already connected would miss the initial `connect` event. Run
+    // the handler immediately so the store stays in its
+    // "transport-up, snapshot-pending" state — `handleConnect` keeps
+    // `connected=false` so the REST polling fallback remains armed
+    // until `agents:update` arrives to mark state fresh.
+    if (socket.connected) {
+      handleConnect();
+    }
+
+    // Issue #218 (singleton + late consumers): if another consumer
+    // has already received an `agents:update` snapshot, this
+    // consumer missed it. Seed our state from the cached payload so
+    // we don't render an empty list until the next broadcast.
+    const cachedAgents = getCachedAgentsUpdate();
+    if (cachedAgents) {
+      socketRevisionRef.current += 1;
+      updateAgents(() => cachedAgents);
+    }
+
     return () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('agents:update', handleUpdate);
       socket.off('recipe-update', handleRecipeUpdate);
-      socket.disconnect();
+      // Do NOT call socket.disconnect() — the socket is shared with
+      // useLiveSync and MessageTicker.
     };
   }, [updateAgents]);
 

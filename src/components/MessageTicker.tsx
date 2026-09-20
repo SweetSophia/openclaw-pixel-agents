@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { io as socketIO } from 'socket.io-client';
+import { getCachedTickerMessages, getSharedSocket } from '../socket';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
@@ -38,7 +38,10 @@ export default function MessageTicker() {
   // Connect to WebSocket
   useEffect(() => {
     let isCancelled = false;
-    const socket = socketIO({ transports: ['websocket', 'polling'] });
+    // Issue #218: reuse the shared module-level socket instead of opening
+    // a fresh connection. The dashboard previously maintained three
+    // WebSocket connections per browser; the singleton collapses that to one.
+    const socket = getSharedSocket();
 
     const handleConnect = () => { if (!isCancelled) setConnected(true); };
     const handleDisconnect = () => { if (!isCancelled) setConnected(false); };
@@ -47,6 +50,22 @@ export default function MessageTicker() {
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('ticker:messages', handleMessages);
+
+    // Issue #218: a consumer mounting after the shared singleton has
+    // already connected would miss the initial `connect` event. Run
+    // the handler immediately if the socket is already connected.
+    if (socket.connected) {
+      handleConnect();
+    }
+
+    // Issue #218 (singleton + late consumers): if another consumer has
+    // already received a `ticker:messages` snapshot, this consumer
+    // missed it. Seed from the cached payload so we render the latest
+    // ticker immediately rather than waiting for the next broadcast.
+    const cachedMessages = getCachedTickerMessages();
+    if (cachedMessages) {
+      setMessages(cachedMessages);
+    }
 
     // Fetch initial state; abort if this effect is cleaned up before it resolves
     const controller = new AbortController();
@@ -63,7 +82,8 @@ export default function MessageTicker() {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('ticker:messages', handleMessages);
-      socket.disconnect();
+      // Do NOT call socket.disconnect() — the socket is shared with
+      // useAgentStore and useLiveSync.
     };
   }, []);
 
