@@ -5,16 +5,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from './useAgentStore';
 
 const socketMock = vi.hoisted(() => {
-  const handlers = new Map<string, (...args: unknown[]) => void>();
+  // Issue #218: real socket.io allows multiple listeners per event.
+  // The previous mock replaced handlers on each `.on` call, which
+  // broke the shared-socket cache (the singleton's cache handler
+  // would be silently overwritten by the next consumer's `.on`). Use
+  // a list-per-event. The `emit(event, ...args)` helper fans out to
+  // all listeners — used by tests that need to drive socket events
+  // without coupling to which handler was registered first.
+  const handlers = new Map<string, Array<(...args: unknown[]) => void>>();
   const socket = {
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-      handlers.set(event, handler);
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
       return socket;
     }),
     off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-      if (handlers.get(event) === handler) handlers.delete(event);
+      const list = handlers.get(event);
+      if (list) {
+        const idx = list.indexOf(handler);
+        if (idx !== -1) list.splice(idx, 1);
+      }
       return socket;
     }),
+    emit: (event: string, ...args: unknown[]) => {
+      const list = handlers.get(event);
+      if (!list) return;
+      for (const handler of list) handler(...args);
+    },
     disconnect: vi.fn(),
     connected: false,
   };
@@ -57,9 +75,23 @@ async function flushMicrotasks() {
 
 async function emitSocketEvent(event: 'connect' | 'disconnect' | 'agents:update', ...args: unknown[]) {
   await act(async () => {
-    socketMock.handlers.get(event)?.(...args);
+    // Issue #218: socket.io allows multiple listeners per event; the
+    // mock's `.on` registers them all. Fire every registered handler.
+    const list = socketMock.handlers.get(event);
+    if (list) for (const h of list) h(...args);
   });
   await flushMicrotasks();
+}
+
+/**
+ * Fire a single socket event handler (the FIRST registered listener).
+ * Useful for cache-population tests where we want only the
+ * singleton's cache listener to run, not a not-yet-mounted consumer's
+ * update handler.
+ */
+function fireEventFirstListener(event: string, ...args: unknown[]): void {
+  const list = socketMock.handlers.get(event);
+  list?.[0]?.(...args);
 }
 
 async function renderStoreProbe() {
@@ -188,6 +220,69 @@ describe('useAgentStore REST polling fallback', () => {
     socketMock.socket.connected = false;
     expect((socketMock.socket.on as ReturnType<typeof vi.fn>).mock.calls.length)
       .toBeGreaterThan(handlerCountBefore);
+  });
+
+  it('seeds the store from the cached agents:update snapshot when another consumer connected first (issue #218)', async () => {
+    // Late-mount scenario: a previous consumer (e.g. useLiveSync or
+    // MessageTicker) connected the singleton and received an
+    // agents:update. This consumer mounts after and would normally
+    // miss the initial snapshot (the server only emits it on its
+    // connection callback). The shared-socket singleton caches the
+    // last received payload so this consumer can seed from it.
+    //
+    // To isolate the cache-seeding path we stub `fetch` to return a
+    // never-resolving Promise — the REST polling fallback starts but
+    // never completes, so the cache seed isn't overwritten by an
+    // empty REST snapshot.
+    const { resetSharedSocketForTesting } = await import('../socket');
+    resetSharedSocketForTesting();
+
+    const restResolvers: Array<(response: Response) => void> = [];
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>((resolve) => {
+      restResolvers.push(resolve);
+    }));
+
+    const { getSharedSocket, getCachedAgentsUpdate } = await import('../socket');
+    getSharedSocket(); // initialize singleton, attach cache listener
+
+    // We only want the cache listener to run (the store isn't mounted
+    // yet, so its update handler isn't registered). Fire only the
+    // first registered listener — that's the singleton's cache listener.
+    fireEventFirstListener('agents:update', [{
+      id: 'cached-agent',
+      name: 'Cached',
+      activity: 'idle',
+      model: 'test',
+      sessionKey: 'agent:cached-agent:test',
+      active: true,
+      lastActivity: 1000,
+      pixelEnabled: true,
+      tags: [],
+      recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 },
+    }]);
+
+    // Sanity check: the cache must have the payload before mount.
+    expect(getCachedAgentsUpdate()).toEqual([{
+      id: 'cached-agent',
+      name: 'Cached',
+      activity: 'idle',
+      model: 'test',
+      sessionKey: 'agent:cached-agent:test',
+      active: true,
+      lastActivity: 1000,
+      pixelEnabled: true,
+      tags: [],
+      recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 },
+    }]);
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(latest(snapshots).agents).toHaveLength(1);
+    expect(latest(snapshots).agents[0]?.id).toBe('cached-agent');
+
+    unmount();
   });
 
   it('does not let an in-flight REST response overwrite a newer socket snapshot', async () => {
@@ -943,7 +1038,7 @@ describe('useAgentStore mutation rate limits', () => {
     const recipe = { bodyIndex: 1, hairIndex: 2, outfitIndex: 3 };
 
     await act(async () => {
-      socketMock.handlers.get('recipe-update')?.({ agentId: 'cybera', recipe });
+      socketMock.socket.emit('recipe-update', { agentId: 'cybera', recipe });
     });
 
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(callsBeforeEvent);
@@ -954,7 +1049,7 @@ describe('useAgentStore mutation rate limits', () => {
     });
 
     await act(async () => {
-      socketMock.handlers.get('recipe-update')?.({
+      socketMock.socket.emit('recipe-update', {
         agentId: '../cybera',
         recipe: { bodyIndex: 5, hairIndex: 8, outfitIndex: 5 },
       });
@@ -998,7 +1093,7 @@ describe('useAgentStore mutation rate limits', () => {
     const recipe = { bodyIndex: 1, hairIndex: 2, outfitIndex: 3 };
 
     await act(async () => {
-      socketMock.handlers.get('recipe-update')?.({ agentId: 'cybera', recipe });
+      socketMock.socket.emit('recipe-update', { agentId: 'cybera', recipe });
     });
     expect(latest(snapshots).agents[0]?.recipe).toEqual(recipe);
 

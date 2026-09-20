@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getSharedSocket } from '../socket';
+import { getCachedAgentsUpdate, getSharedSocket } from '../socket';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, resolveRoomByTags, type AgentTag } from '../../shared/types';
 
@@ -360,10 +360,22 @@ export function useAgentStore() {
 
     // Issue #218: a consumer mounting after the shared singleton has
     // already connected would miss the initial `connect` event. Run
-    // the handler immediately if the socket is already connected so
-    // `connected=true` is set before the first REST fallback poll.
+    // the handler immediately so the store stays in its
+    // "transport-up, snapshot-pending" state — `handleConnect` keeps
+    // `connected=false` so the REST polling fallback remains armed
+    // until `agents:update` arrives to mark state fresh.
     if (socket.connected) {
       handleConnect();
+    }
+
+    // Issue #218 (singleton + late consumers): if another consumer
+    // has already received an `agents:update` snapshot, this
+    // consumer missed it. Seed our state from the cached payload so
+    // we don't render an empty list until the next broadcast.
+    const cachedAgents = getCachedAgentsUpdate();
+    if (cachedAgents) {
+      socketRevisionRef.current += 1;
+      updateAgents(() => cachedAgents);
     }
 
     return () => {

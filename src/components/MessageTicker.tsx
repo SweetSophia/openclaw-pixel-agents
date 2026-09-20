@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { getSharedSocket } from '../socket';
+import { getCachedTickerMessages, getSharedSocket } from '../socket';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
@@ -56,6 +56,15 @@ export default function MessageTicker() {
     // the handler immediately if the socket is already connected.
     if (socket.connected) {
       handleConnect();
+    }
+
+    // Issue #218 (singleton + late consumers): if another consumer has
+    // already received a `ticker:messages` snapshot, this consumer
+    // missed it. Seed from the cached payload so we render the latest
+    // ticker immediately rather than waiting for the next broadcast.
+    const cachedMessages = getCachedTickerMessages();
+    if (cachedMessages) {
+      setMessages(cachedMessages);
     }
 
     // Fetch initial state; abort if this effect is cleaned up before it resolves

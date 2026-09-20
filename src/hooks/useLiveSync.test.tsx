@@ -4,28 +4,38 @@ import { useLiveSync } from './useLiveSync';
 import { resetSharedSocketForTesting } from '../socket';
 
 const socketMock = vi.hoisted(() => {
-  const handlers = new Map<string, (...args: unknown[]) => void>();
+  // Issue #218: real socket.io allows multiple listeners per event.
+  // The previous mock replaced handlers on each `.on` call, which
+  // broke the shared-socket cache (the singleton's cache handler
+  // would be silently overwritten by the next consumer's `.on`).
+  // Use a list-per-event with an `emit` helper to fan out to all
+  // listeners (replacing the single-call `.handlers.get(event)?.(...)`
+  // pattern that only fired the first listener).
+  const handlers = new Map<string, Array<(...args: unknown[]) => void>>();
+  const socket = {
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      const list = handlers.get(event) ?? [];
+      list.push(handler);
+      handlers.set(event, list);
+      return socket;
+    }),
+    off: vi.fn(),
+    disconnect: vi.fn(),
+    connected: false,
+    emit: (event: string, ...args: unknown[]) => {
+      const list = handlers.get(event);
+      if (list) for (const handler of list) handler(...args);
+    },
+  };
   return {
     handlers,
-    socket: {
-      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-        handlers.set(event, handler);
-      }),
-      off: vi.fn(),
-      disconnect: vi.fn(),
-      connected: false,
-    },
+    io: vi.fn(() => socket),
+    socket,
   };
 });
 
 vi.mock('socket.io-client', () => ({
-  io: vi.fn(() => {
-    // Issue #218: each `io()` call would normally create a fresh
-    // socket; for the singleton pattern, we reuse the same mock
-    // across calls and let the test reset `socket.connected` as
-    // needed.
-    return socketMock.socket;
-  }),
+  io: socketMock.io,
 }));
 
 describe('useLiveSync', () => {
@@ -52,7 +62,7 @@ describe('useLiveSync', () => {
       reconcileLayout,
     }));
 
-    act(() => socketMock.handlers.get('layout:update')?.({ id: 'office' }));
+    act(() => socketMock.socket.emit('layout:update', { id: 'office' }));
 
     // The catalog-visible fields (name, etc.) may change on any PUT
     // even when the active layout is the affected one — e.g. a
@@ -70,7 +80,7 @@ describe('useLiveSync', () => {
       reconcileLayout,
     }));
 
-    act(() => socketMock.handlers.get('layout:update')?.({ id: 'other-layout' }));
+    act(() => socketMock.socket.emit('layout:update', { id: 'other-layout' }));
 
     expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'other-layout' });
@@ -83,7 +93,7 @@ describe('useLiveSync', () => {
       reconcileLayout,
     }));
 
-    act(() => socketMock.handlers.get('layout:update')?.({ id: 'custom', deleted: true }));
+    act(() => socketMock.socket.emit('layout:update', { id: 'custom', deleted: true }));
     expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'custom' });
   });
@@ -95,7 +105,7 @@ describe('useLiveSync', () => {
       reconcileLayout,
     }));
 
-    act(() => socketMock.handlers.get('connect')?.());
+    act(() => socketMock.socket.emit('connect', ));
     expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'office' });
   });
@@ -125,7 +135,7 @@ describe('useLiveSync', () => {
       reconcileLayout,
     }));
 
-    act(() => socketMock.handlers.get('layout:update')?.({ id: '../escape' }));
+    act(() => socketMock.socket.emit('layout:update', { id: '../escape' }));
     expect(refreshLayouts).not.toHaveBeenCalled();
     unmount();
     expect(socketMock.socket.off).toHaveBeenCalledWith(

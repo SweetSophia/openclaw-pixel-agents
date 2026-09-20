@@ -55,6 +55,11 @@ export function useLiveSync(options: LiveSyncOptions): void {
       // active-layout updates — if a user renames the active layout,
       // the layout picker needs to reflect the new name. The active-
       // layout reconcile doesn't touch the catalog state.
+      //
+      // This also covers deletion events: a deleted active layout
+      // would otherwise stay in the layout selector until the next
+      // reconnect. `refreshLayouts` updates the catalog to remove
+      // it; `reconcileLayout` handles the fallback-to-default flow.
       runRefresh(current.refreshLayouts, 'layout catalog');
       runRefresh(() => current.reconcileLayout({ id: event.id }), 'active layout');
     };
@@ -74,9 +79,9 @@ export function useLiveSync(options: LiveSyncOptions): void {
     socket.on('layout:update', handleLayoutUpdate);
 
     // Issue #218: a consumer mounting after the shared singleton has
-    // already connected would miss the initial `connect` event and
-    // stay in its disconnected/perpetual-polling state forever. Run
-    // the handler immediately if the socket is already connected.
+    // already connected would miss the initial `connect` event, leaving
+    // the catalog and active layout un-refreshed on first mount. Run the
+    // handler immediately if the socket is already connected.
     if (socket.connected) {
       handleConnect();
     }
