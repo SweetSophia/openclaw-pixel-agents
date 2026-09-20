@@ -13,10 +13,27 @@ export const RoomSwitcher: React.FC<Props> = ({ activeRoomId, onRoomChange, agen
   const [rooms, setRooms] = useState<Room[]>([]);
 
   useEffect(() => {
-    fetch('/api/rooms')
+    // Issue #164: abort on unmount AND guard against a setState race
+    // when `fetch` resolves between the controller abort and the next
+    // microtask. Mirror MessageTicker's `isCancelled` flag pattern so
+    // a late `setRooms` call after unmount can't fire.
+    let isCancelled = false;
+    const controller = new AbortController();
+    fetch('/api/rooms', { signal: controller.signal })
       .then(r => r.json())
-      .then(data => setRooms(data.rooms || []))
-      .catch((err) => console.error('[RoomSwitcher] Failed to fetch rooms:', err));
+      .then(data => {
+        if (isCancelled) return;
+        setRooms(data.rooms || []);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (isCancelled) return;
+        console.error('[RoomSwitcher] Failed to fetch rooms:', err);
+      });
+    return () => {
+      isCancelled = true;
+      controller.abort();
+    };
   }, []);
 
   return (

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ALL_TAGS, TAG_COLORS, type AgentTag } from '../../shared/types';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -20,6 +20,21 @@ export const TagEditor: React.FC<Props> = ({ agentId, agentName, currentTags, on
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useModalFocus({ overlayRef, initialFocusRef: cancelRef, onClose });
+
+  // Issue #164: reset local form state when the agent identity
+  // changes — but key on `agentId` ONLY (not `currentTags`).
+  // AgentSidebar passes `currentTags={agent.tags ?? []}` and the
+  // `??` fallback is a fresh array literal on every render, so
+  // depending on `currentTags` would re-fire this effect on every
+  // unrelated parent re-render (socket event, sidebar toggle, etc.)
+  // and silently clobber the user's in-progress selection. The
+  // initial `useState([...currentTags])` already seeds state from
+  // props on mount; this effect handles the later case where
+  // `agentId` itself changes (modal reuse / switch-agent control).
+  useEffect(() => {
+    setSelectedTags([...currentTags]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);

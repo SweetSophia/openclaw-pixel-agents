@@ -1751,15 +1751,43 @@ export class GameEngine {
 
   getCharacterIds(): string[] { return Array.from(this.characters.keys()); }
 
+  // Issue #164: previous loop iterated y = 3, 6, 9, 12 (`gridHeight - 2`
+  // caps the top at 14 for a 16-tall grid), leaving rows 13-15
+  // unreachable. The 5th+ agent fell back to the grid center and
+  // sat on top of another agent. Walk every tile inside the inner
+  // rectangle in a snake pattern so all rows are reachable. If the
+  // entire inner rectangle is occupied, spiral outward from the
+  // grid center to find the nearest unoccupied tile — never blindly
+  // reuse the center if it's already taken.
   assignSeat(agentId: string): { x: number; y: number } {
     if (this.seats.has(agentId)) return this.seats.get(agentId)!;
     const used = new Set(Array.from(this.seats.values()).map(p => `${p.x},${p.y}`));
-    for (let y = 3; y < this.config.gridHeight - 2; y += 3) {
-      for (let x = 3; x < this.config.gridWidth - 3; x += 4) {
+    const inner = { xMin: 3, xMax: this.config.gridWidth - 3 };
+    const innerY = { yMin: 3, yMax: this.config.gridHeight - 2 };
+    for (let y = innerY.yMin; y < innerY.yMax; y++) {
+      for (let x = inner.xMin; x < inner.xMax; x += 2) {
         if (!used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
       }
     }
-    const fb = { x: Math.floor(this.config.gridWidth / 2), y: Math.floor(this.config.gridHeight / 2) };
+    // Inner rectangle exhausted — spiral outward from center to find the
+    // nearest unoccupied interior tile.
+    const cx = Math.floor(this.config.gridWidth / 2);
+    const cy = Math.floor(this.config.gridHeight / 2);
+    for (let radius = 1; radius < Math.max(this.config.gridWidth, this.config.gridHeight); radius++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue;
+          const x = cx + dx;
+          const y = cy + dy;
+          if (x < inner.xMin || x >= inner.xMax) continue;
+          if (y < innerY.yMin || y >= innerY.yMax) continue;
+          if (!used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+        }
+      }
+    }
+    // Truly no tile available — fall back to center (may overlap, but
+    // no other option).
+    const fb = { x: cx, y: cy };
     this.seats.set(agentId, fb);
     return fb;
   }
