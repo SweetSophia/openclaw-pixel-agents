@@ -1754,11 +1754,17 @@ export class GameEngine {
   // Issue #164: previous loop iterated y = 3, 6, 9, 12 (`gridHeight - 2`
   // caps the top at 14 for a 16-tall grid), leaving rows 13-15
   // unreachable. The 5th+ agent fell back to the grid center and
-  // sat on top of another agent. Walk every tile inside the inner
-  // rectangle in a snake pattern so all rows are reachable. If the
-  // entire inner rectangle is occupied, spiral outward from the
-  // grid center to find the nearest unoccupied tile — never blindly
-  // reuse the center if it's already taken.
+  // sat on top of another agent. Walk every cell inside the inner
+  // rectangle in row-major order (`y += 1`, `x += 2` within row) so
+  // all rows are reachable; the column stride of 2 leaves room for
+  // adjacent placement. If the entire inner rectangle is occupied,
+  // spiral outward from the grid center to find the nearest
+  // unoccupied tile. Only when even the spiral is exhausted do we
+  // fall back to the center — and even then we offset by a per-
+  // engine overflow counter so successive overflow agents don't all
+  // stack on the same tile.
+  private overflowOffset = 0;
+
   assignSeat(agentId: string): { x: number; y: number } {
     if (this.seats.has(agentId)) return this.seats.get(agentId)!;
     const used = new Set(Array.from(this.seats.values()).map(p => `${p.x},${p.y}`));
@@ -1785,9 +1791,14 @@ export class GameEngine {
         }
       }
     }
-    // Truly no tile available — fall back to center (may overlap, but
-    // no other option).
-    const fb = { x: cx, y: cy };
+    // Truly no tile available — fall back to (cx, cy) but offset by
+    // the per-engine overflow counter so successive overflow agents
+    // don't all stack on the same tile. Bounded by the inner
+    // rectangle dimensions; in practice the office has far fewer
+    // agents than inner-rectangle capacity (99 cells in a 24×16 grid)
+    // so this branch rarely fires.
+    const offset = this.overflowOffset++;
+    const fb = { x: cx + (offset % 3), y: cy + (offset % 3) };
     this.seats.set(agentId, fb);
     return fb;
   }
