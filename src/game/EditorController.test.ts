@@ -37,6 +37,12 @@ describe('EditorController', () => {
       findCharacterAt: vi.fn(() => null),
       hasSelectedAgent: vi.fn(() => false),
       handleTouchGridTap: vi.fn(),
+      // Issue #164 follow-up: footprint-aware clamp. Default to 1×1 so
+      // the existing clamp expectations (which used `gridWidth - 3`)
+      // continue to pass; the integration test in the next describe
+      // exercises the real footprints.
+      getFootprint: vi.fn(() => ({ width: 1, height: 1 })),
+      getFootprintForId: vi.fn(() => ({ width: 1, height: 1 })),
     };
     sounds = { place: vi.fn(), pickup: vi.fn() };
     callbacks = {
@@ -104,6 +110,12 @@ describe('EditorController', () => {
   });
 
   it('preserves mouse drag clamping and its no-offset behavior', () => {
+    // Issue #164 follow-up: footprint-aware clamp with the default
+    // 1×1 footprint (`getFootprint` mock returns `{ width: 1, height: 1 }`)
+    // gives `[1, gridW-1] x [1, gridH-1]` = `[1, 23] x [1, 15]` for a
+    // 24×16 grid. With the mock `screenToGrid` returning `{ gridX: 99,
+    // gridY: 99 }` for the (99, 99) mousedown / mousemove / mouseup, the
+    // clamped values are `(23, 15)`.
     furniture = { id: 'desk-1', x: 3, y: 4 };
     controller.attach();
     controller.setEditorMode(true);
@@ -112,8 +124,8 @@ describe('EditorController', () => {
     canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
     canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
 
-    expect(host.previewFurnitureMove).toHaveBeenCalledWith('desk-1', 21, 13);
-    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 21, 13);
+    expect(host.previewFurnitureMove).toHaveBeenCalledWith('desk-1', 23, 15);
+    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 23, 15);
     expect(sounds.pickup).toHaveBeenCalledOnce();
     expect(sounds.place).toHaveBeenCalledOnce();
   });
@@ -300,7 +312,7 @@ describe('EditorController', () => {
     expect(sounds.place).not.toHaveBeenCalled();
 
     canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
-    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 21, 13);
+    expect(callbacks.onMoveFurniture).toHaveBeenCalledWith('desk-1', 23, 15);
     expect(sounds.place).toHaveBeenCalledOnce();
   });
 
@@ -314,5 +326,55 @@ describe('EditorController', () => {
 
     expect(callbacks.onPlaceFurniture).toHaveBeenCalledWith('DESK', 5, 6);
     expect(sounds.place).toHaveBeenCalledOnce();
+  });
+
+  it('clamps the placement anchor to the selected type\'s rotated footprint (issue #164 follow-up)', () => {
+    // When placing a new furniture, the EditorController looks up the
+    // selected type's rotated footprint via `host.getFootprint`. A DESK (3×2)
+    // clamped to [1, gridW-3] = [1, 21] for a 24-tall grid. The test mock
+    // exposes `_selectedFurnitureType` via `setSelectedFurnitureType` and
+    // returns a 3×2 footprint.
+    furniture = { id: 'desk-1', x: 3, y: 4 };
+    controller.attach();
+    controller.setEditorMode(true);
+    controller.setSelectedFurnitureType('DESK');
+    (host.getFootprint as ReturnType<typeof vi.fn>).mockReturnValue({
+      width: 3,
+      height: 2,
+    });
+
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 99, clientY: 99 }));
+
+    // The DESK anchor clamps to x ≤ 21 (was 23 with the old 1×1 default).
+    expect(callbacks.onPlaceFurniture).toHaveBeenLastCalledWith('DESK', 21, 14);
+  });
+
+  it('clamps the drag anchor to the dragged furniture\'s rotated footprint (issue #164 follow-up)', () => {
+    // Default 1×1 footprint mock gives [1, gridW-1] x [1, gridH-1].
+    // Override the mock per-case to exercise the footprint-aware path:
+    // a DESK (3×2) clamped to [1, gridW-3] so the rightmost tile doesn't
+    // enter the 1-tile wall. A LARGE_PLANT (2×3) at rotation 90° has
+    // effective width 3, same clamp as DESK.
+    furniture = { id: 'desk-1', x: 3, y: 4 };
+    controller.attach();
+    controller.setEditorMode(true);
+
+    // DESK (3×2, rotation 0°): anchor clamps to x ≤ 24 - 3 = 21.
+    (host.getFootprintForId as ReturnType<typeof vi.fn>).mockReturnValue({
+      width: 3,
+      height: 2,
+    });
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 5, clientY: 7 }));
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
+    canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
+    expect(host.previewFurnitureMove).toHaveBeenLastCalledWith('desk-1', 21, 14);
+    expect(callbacks.onMoveFurniture).toHaveBeenLastCalledWith('desk-1', 21, 14);
+
+    // LARGE_PLANT (2×3) at rotation 90°: effective footprint 3×2,
+    // same clamp behavior.
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 5, clientY: 7 }));
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
+    canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
+    expect(host.previewFurnitureMove).toHaveBeenLastCalledWith('desk-1', 21, 14);
   });
 });

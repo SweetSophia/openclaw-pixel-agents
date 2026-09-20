@@ -26,6 +26,20 @@ export interface EditorControllerHost {
   findCharacterAt: (gridX: number, gridY: number) => string | null;
   hasSelectedAgent: () => boolean;
   handleTouchGridTap: (gridX: number, gridY: number) => void;
+  /**
+   * Return the rotated footprint dimensions (anchor-relative) of a
+   * furniture type. Used to make the drag clamp footprint-aware: a
+   * DESK is 3×2, so an anchor at `gridWidth - 2` would extend into
+   * the 1-tile wall. `null` is returned for unknown types (clamps fall
+   * back to the safe default of `[1, gridW-2]`).
+   */
+  getFootprint: (type: string, rotation: number) => { width: number; height: number } | null;
+  /**
+   * Convenience for the dragging case: look up the rotated footprint of
+   * the furniture currently being dragged by id. Returns `null` if the
+   * id is unknown (clamps fall back to the safe default).
+   */
+  getFootprintForId: (id: string) => { width: number; height: number } | null;
 }
 
 export interface EditorControllerSounds {
@@ -52,6 +66,10 @@ export class EditorController {
   private deleteMode = false;
   private _selectedFurnitureType: string | null = null;
   private _selectedFurnitureId: string | null = null;
+  // Rotation of the currently selected furniture type (for placement
+  // footprint lookup). Initial value matches `_selectedFurnitureType =
+  // null` (no selection = no rotation).
+  private _selectedFurnitureRotation = 0;
   private dragging: { id: string } | null = null;
   private callbacks: EditorCallbacks | null = null;
   private _mouseGridX = -1;
@@ -131,12 +149,24 @@ export class EditorController {
     this._selectedFurnitureType = null;
   }
 
-  private clampX(gridX: number): number {
-    return Math.max(1, Math.min(this.config.gridWidth - 3, gridX));
+  // Issue #164 follow-up: clamp the anchor so the placed footprint stays
+  // inside the obstacle map. The obstacle map blocks the outermost tile
+  // (1-tile border for walls), so the anchor must satisfy
+  // `anchor + footprint - 1 ≤ gridW - 1` (and similarly for height).
+  // - 1×1 chair → `footprintW = 1` → bound `[1, gridW - 2]`.
+  // - 3×2 DESK  → `footprintW = 3` → bound `[1, gridW - 4]` so the
+  //   anchor's rightmost tile doesn't enter the wall.
+  // - 2×3 LARGE_PLANT rotated 90° → `footprintW = 3` → same as DESK.
+  // The previous `gridWidth - 3` clamp was correct only for the
+  // worst-case 3-tile footprint, which left 1×1 furniture two tiles
+  // short of the wall. The new clamp threads the footprint through
+  // for accuracy.
+  private clampX(gridX: number, footprintW = 1): number {
+    return Math.max(1, Math.min(this.config.gridWidth - footprintW, gridX));
   }
 
-  private clampY(gridY: number): number {
-    return Math.max(1, Math.min(this.config.gridHeight - 3, gridY));
+  private clampY(gridY: number, footprintH = 1): number {
+    return Math.max(1, Math.min(this.config.gridHeight - footprintH, gridY));
   }
 
   private handleMouseMove = (event: MouseEvent): void => {
@@ -147,7 +177,13 @@ export class EditorController {
     this._mouseGridY = gridY;
 
     if (this.dragging) {
-      this.host.previewFurnitureMove(this.dragging.id, this.clampX(gridX), this.clampY(gridY));
+      // Footprint-aware clamp: for a DESK (3×2) an anchor at `gridW - 2`
+      // would extend into the wall — only clamp up to `gridW - 3`. For a
+      // 1×1 chair, the anchor can reach `gridW - 2`.
+      const fp = this.host.getFootprintForId(this.dragging.id);
+      const fw = fp?.width ?? 1;
+      const fh = fp?.height ?? 1;
+      this.host.previewFurnitureMove(this.dragging.id, this.clampX(gridX, fw), this.clampY(gridY, fh));
     }
 
     if (this._editorMode) {
@@ -174,7 +210,16 @@ export class EditorController {
 
     if (event.button !== 0) return;
     if (this._selectedFurnitureType) {
-      this.callbacks?.onPlaceFurniture(this._selectedFurnitureType, gridX, gridY);
+      // Footprint-aware placement: clamp to the anchor range that keeps
+      // the selected furniture's footprint inside the obstacle map.
+      const fp = this.host.getFootprint(this._selectedFurnitureType, this._selectedFurnitureRotation);
+      const fw = fp?.width ?? 1;
+      const fh = fp?.height ?? 1;
+      this.callbacks?.onPlaceFurniture(
+        this._selectedFurnitureType,
+        this.clampX(gridX, fw),
+        this.clampY(gridY, fh),
+      );
       this.sounds.place();
       return;
     }
@@ -200,10 +245,14 @@ export class EditorController {
     if (event.button !== 0) return;
     const result = this.host.screenToGrid(event.clientX, event.clientY);
     if (!result) return;
+    // Footprint-aware drop: clamp using the dragged furniture's footprint.
+    const fp = this.host.getFootprintForId(this.dragging.id);
+    const fw = fp?.width ?? 1;
+    const fh = fp?.height ?? 1;
     this.callbacks?.onMoveFurniture(
       this.dragging.id,
-      this.clampX(result.gridX),
-      this.clampY(result.gridY),
+      this.clampX(result.gridX, fw),
+      this.clampY(result.gridY, fh),
     );
     this.sounds.place();
     this.dragging = null;
@@ -300,10 +349,14 @@ export class EditorController {
     // A furniture hit becomes a drag only after the touch crosses the
     // tap threshold. This keeps ordinary finger jitter eligible for a tap.
     if (this._editorMode && this.touchDragging && this.touchMoved) {
+      // Footprint-aware touch drag clamp.
+      const fp = this.host.getFootprintForId(this.touchDragging.id);
+      const fw = fp?.width ?? 1;
+      const fh = fp?.height ?? 1;
       this.host.previewFurnitureMove(
         this.touchDragging.id,
-        this.clampX(result.gridX - this.touchDragging.offsetX),
-        this.clampY(result.gridY - this.touchDragging.offsetY),
+        this.clampX(result.gridX - this.touchDragging.offsetX, fw),
+        this.clampY(result.gridY - this.touchDragging.offsetY, fh),
       );
     }
   };
@@ -321,10 +374,14 @@ export class EditorController {
         if (this.touchCurrentPos) {
           const result = this.host.screenToGrid(this.touchCurrentPos.x, this.touchCurrentPos.y);
           if (result) {
+            // Footprint-aware touch drop clamp.
+            const fp = this.host.getFootprintForId(dragging.id);
+            const fw = fp?.width ?? 1;
+            const fh = fp?.height ?? 1;
             this.callbacks?.onMoveFurniture(
               dragging.id,
-              this.clampX(result.gridX - dragging.offsetX),
-              this.clampY(result.gridY - dragging.offsetY),
+              this.clampX(result.gridX - dragging.offsetX, fw),
+              this.clampY(result.gridY - dragging.offsetY, fh),
             );
             this.sounds.place();
           }
