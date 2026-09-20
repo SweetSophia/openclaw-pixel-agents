@@ -51,6 +51,13 @@ export default function MessageTicker() {
     socket.on('disconnect', handleDisconnect);
     socket.on('ticker:messages', handleMessages);
 
+    // Issue #218: a consumer mounting after the shared singleton has
+    // already connected would miss the initial `connect` event. Run
+    // the handler immediately if the socket is already connected.
+    if (socket.connected) {
+      handleConnect();
+    }
+
     // Fetch initial state; abort if this effect is cleaned up before it resolves
     const controller = new AbortController();
     fetch("/api/messages", { signal: controller.signal })

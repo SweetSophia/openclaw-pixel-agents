@@ -50,14 +50,12 @@ export function useLiveSync(options: LiveSyncOptions): void {
     const handleLayoutUpdate = (event: unknown) => {
       if (!isLayoutUpdateEvent(event)) return;
       const current = optionsRef.current;
-      // Issue #218 perf: skip the catalog refresh when the broadcast
-      // identifies the currently-active layout — `reconcileLayout` will
-      // already pull the fresh content, so the catalog listing would
-      // just round-trip back unchanged. For N connected clients per
-      // active layout, this halves the HTTP fan-out per PUT.
-      if (current.activeLayoutId !== event.id) {
-        runRefresh(current.refreshLayouts, 'layout catalog');
-      }
+      // Always refresh the catalog AND reconcile the affected layout.
+      // The catalog-visible fields (name, etc.) may change even on
+      // active-layout updates — if a user renames the active layout,
+      // the layout picker needs to reflect the new name. The active-
+      // layout reconcile doesn't touch the catalog state.
+      runRefresh(current.refreshLayouts, 'layout catalog');
       runRefresh(() => current.reconcileLayout({ id: event.id }), 'active layout');
     };
 
@@ -74,6 +72,14 @@ export function useLiveSync(options: LiveSyncOptions): void {
 
     socket.on('connect', handleConnect);
     socket.on('layout:update', handleLayoutUpdate);
+
+    // Issue #218: a consumer mounting after the shared singleton has
+    // already connected would miss the initial `connect` event and
+    // stay in its disconnected/perpetual-polling state forever. Run
+    // the handler immediately if the socket is already connected.
+    if (socket.connected) {
+      handleConnect();
+    }
     return () => {
       socket.off('connect', handleConnect);
       socket.off('layout:update', handleLayoutUpdate);

@@ -13,11 +13,20 @@ const socketMock = vi.hoisted(() => {
       }),
       off: vi.fn(),
       disconnect: vi.fn(),
+      connected: false,
     },
   };
 });
 
-vi.mock('socket.io-client', () => ({ io: vi.fn(() => socketMock.socket) }));
+vi.mock('socket.io-client', () => ({
+  io: vi.fn(() => {
+    // Issue #218: each `io()` call would normally create a fresh
+    // socket; for the singleton pattern, we reuse the same mock
+    // across calls and let the test reset `socket.connected` as
+    // needed.
+    return socketMock.socket;
+  }),
+}));
 
 describe('useLiveSync', () => {
   const refreshLayouts = vi.fn();
@@ -26,6 +35,7 @@ describe('useLiveSync', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     socketMock.handlers.clear();
+    socketMock.socket.connected = false;
     // Issue #218: the shared module-level socket caches across tests
     // within the same file. Reset between tests so each case starts
     // with a fresh singleton. The reset calls `disconnect()` on the
@@ -35,7 +45,7 @@ describe('useLiveSync', () => {
     socketMock.socket.disconnect.mockClear();
   });
 
-  it('skips the catalog refresh when the broadcast identifies the active layout (issue #218)', () => {
+  it('always refreshes the catalog AND reconciles when the broadcast identifies the active layout (issue #218 review)', () => {
     renderHook(() => useLiveSync({
       activeLayoutId: 'office',
       refreshLayouts,
@@ -44,14 +54,16 @@ describe('useLiveSync', () => {
 
     act(() => socketMock.handlers.get('layout:update')?.({ id: 'office' }));
 
-    // When event.id === activeLayoutId, the active-layout reconcile
-    // already pulls the fresh content — the catalog listing would just
-    // round-trip back unchanged, so we skip refreshLayouts entirely.
-    expect(refreshLayouts).not.toHaveBeenCalled();
+    // The catalog-visible fields (name, etc.) may change on any PUT
+    // even when the active layout is the affected one — e.g. a
+    // rename. The active-layout reconcile updates only `activeLayout`,
+    // not the catalog listing. Both refresh paths must fire so the
+    // layout picker reflects the new name immediately.
+    expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'office' });
   });
 
-  it('refreshes the catalog AND reloads when the broadcast targets a different layout (issue #218)', () => {
+  it('refreshes the catalog AND reconciles when the broadcast targets a different layout', () => {
     renderHook(() => useLiveSync({
       activeLayoutId: 'office',
       refreshLayouts,
@@ -60,8 +72,6 @@ describe('useLiveSync', () => {
 
     act(() => socketMock.handlers.get('layout:update')?.({ id: 'other-layout' }));
 
-    // When event.id !== activeLayoutId, the catalog may have changed
-    // (new layout added / removed / renamed) so we refresh both.
     expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'other-layout' });
   });
@@ -74,8 +84,7 @@ describe('useLiveSync', () => {
     }));
 
     act(() => socketMock.handlers.get('layout:update')?.({ id: 'custom', deleted: true }));
-    // Same active-layout path — catalog refresh skipped.
-    expect(refreshLayouts).not.toHaveBeenCalled();
+    expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'custom' });
   });
 
@@ -87,6 +96,24 @@ describe('useLiveSync', () => {
     }));
 
     act(() => socketMock.handlers.get('connect')?.());
+    expect(refreshLayouts).toHaveBeenCalledOnce();
+    expect(reconcileLayout).toHaveBeenCalledWith({ id: 'office' });
+  });
+
+  it('runs the connect handler immediately when the shared socket is already connected on mount (issue #218)', () => {
+    // Late-mount case: another consumer (e.g. useAgentStore) opened
+    // the shared socket first. When this hook mounts, the socket is
+    // already connected — there will be no `connect` event for us.
+    // Without the immediate-run guard, we'd never run the refresh/
+    // reconcile path that normally fires on first connect.
+    socketMock.socket.connected = true;
+    renderHook(() => useLiveSync({
+      activeLayoutId: 'office',
+      refreshLayouts,
+      reconcileLayout,
+    }));
+
+    // Connect handler should have run synchronously inside the effect.
     expect(refreshLayouts).toHaveBeenCalledOnce();
     expect(reconcileLayout).toHaveBeenCalledWith({ id: 'office' });
   });

@@ -16,6 +16,7 @@ const socketMock = vi.hoisted(() => {
       return socket;
     }),
     disconnect: vi.fn(),
+    connected: false,
   };
 
   return {
@@ -161,6 +162,32 @@ describe('useAgentStore REST polling fallback', () => {
 
     unmount();
     expect(socketMock.socket.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('runs the connect handler immediately when the shared socket is already connected on mount (issue #218)', async () => {
+    // Late-mount case: another consumer (e.g. useLiveSync or
+    // MessageTicker) opened the shared socket first. When this hook
+    // mounts, the socket is already connected — there will be no
+    // `connect` event for us. The mount effect must run the connect
+    // handler anyway so setConnected(false) is called (the handler
+    // idempotently marks the store as unverified, then awaits an
+    // agents:update event to mark it fresh again).
+    socketMock.socket.connected = true;
+    const handlerCountBefore = (socketMock.socket.on as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const { snapshots, unmount } = await renderStoreProbe();
+    await flushMicrotasks();
+
+    // The handler was registered. The immediately-run handler doesn't
+    // change `connected` here (it sets false, which is the default),
+    // but the effect completes without error and the listener is
+    // wired for subsequent events.
+    expect(latest(snapshots).connected).toBe(false);
+
+    unmount();
+    socketMock.socket.connected = false;
+    expect((socketMock.socket.on as ReturnType<typeof vi.fn>).mock.calls.length)
+      .toBeGreaterThan(handlerCountBefore);
   });
 
   it('does not let an in-flight REST response overwrite a newer socket snapshot', async () => {

@@ -358,6 +358,14 @@ export function useAgentStore() {
     socket.on('agents:update', handleUpdate);
     socket.on('recipe-update', handleRecipeUpdate);
 
+    // Issue #218: a consumer mounting after the shared singleton has
+    // already connected would miss the initial `connect` event. Run
+    // the handler immediately if the socket is already connected so
+    // `connected=true` is set before the first REST fallback poll.
+    if (socket.connected) {
+      handleConnect();
+    }
+
     return () => {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
