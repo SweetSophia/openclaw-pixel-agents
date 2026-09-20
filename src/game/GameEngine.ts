@@ -152,6 +152,24 @@ const IDLE_ACTION_DURATION: Record<IdleAction, number> = {
 };
 const IDLE_CHANCE = 0.15; // chance per second of starting an idle action
 
+/**
+ * Return the rotated dimensions of a footprint. At rotation 0°/180° the
+ * width/height stay the same; at 90°/270° they swap. Used by the
+ * EditorController's footprint-aware clamp — without this, dragging a
+ * DESK (3×2) to `gridW - 2` lets the rightmost tile enter the 1-tile
+ * wall (footprint-aware clamp notes from Copilot review on #234).
+ */
+export function rotatedFootprint(
+  width: number,
+  height: number,
+  rotation: number,
+): { width: number; height: number } {
+  const normalized = ((rotation % 360) + 360) % 360;
+  return normalized === 90 || normalized === 270
+    ? { width: height, height: width }
+    : { width, height };
+}
+
 export class GameEngine {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -239,6 +257,18 @@ export class GameEngine {
         findCharacterAt: (gridX, gridY) => this.findCharacterAt(gridX, gridY),
         hasSelectedAgent: () => this.selectedAgentId !== null,
         handleTouchGridTap: (gridX, gridY) => this.handleTouchGridTap(gridX, gridY),
+        getFootprint: (type, rotation) => {
+          const item = this.furniture.get(type);
+          if (!item) return null;
+          return rotatedFootprint(item.footprintW, item.footprintH, rotation);
+        },
+        getFootprintForId: (id) => {
+          const item = this.placedFurniture.find(furniture => furniture.id === id);
+          if (!item) return null;
+          const asset = this.furniture.get(item.type);
+          if (!asset) return null;
+          return rotatedFootprint(asset.footprintW, asset.footprintH, item.rotation || 0);
+        },
       },
       sfx,
     );
