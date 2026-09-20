@@ -36,6 +36,21 @@ export const App: React.FC = () => {
   // Agents drawer (≤1024px the sidebar is off-canvas; see AgentSidebar.css)
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Issue #164: EditorController clears its own `_selectedFurnitureType` /
+  // `_selectedFurnitureId` on `setEditorMode`, but the React mirrors used
+  // to stay populated. Sync them in lockstep with editorMode so the
+  // palette / placement hint can't drift from the canvas (toolbar
+  // toggle, palette click ordering, and re-entering edit mode with a
+  // stale selection). Guard is `editorMode → false` only — on entry,
+  // the engine already clears its own state, so re-clearing here would
+  // be a redundant no-op.
+  useEffect(() => {
+    if (!editorMode) {
+      setSelectedFurnitureType(null);
+      setSelectedFurnitureId(null);
+    }
+  }, [editorMode]);
+
   const enabledAgentCount = agents.filter(a => a.pixelEnabled).length;
   const selectedAgent = selectedAgentId
     ? agents.find(agent => agent.id === selectedAgentId) ?? null
