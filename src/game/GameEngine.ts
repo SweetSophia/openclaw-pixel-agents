@@ -555,11 +555,28 @@ export class GameEngine {
         p.vy -= 15 * dt; // slight upward drift
         p.life -= dt;
       }
-      fx.particles = fx.particles.filter(p => p.life > 0);
+      // Issue #165: in-place compaction (avoid per-frame array
+      // allocations at 60 Hz). The `updateAmbientParticles` pattern
+      // below does the same — applying it here too.
+      let writeIdx = 0;
+      for (let i = 0; i < fx.particles.length; i++) {
+        if (fx.particles[i].life > 0) {
+          fx.particles[writeIdx++] = fx.particles[i];
+        }
+      }
+      fx.particles.length = writeIdx;
     }
-    this.stateEffects = this.stateEffects.filter(fx =>
-      this.nowMs - fx.startTime < fx.duration || fx.particles.length > 0
-    );
+    // Same in-place compaction for the effects list itself.
+    {
+      let writeIdx = 0;
+      for (let i = 0; i < this.stateEffects.length; i++) {
+        const fx = this.stateEffects[i];
+        if (this.nowMs - fx.startTime < fx.duration || fx.particles.length > 0) {
+          this.stateEffects[writeIdx++] = fx;
+        }
+      }
+      this.stateEffects.length = writeIdx;
+    }
 
     // ── Day/night cycle update ──
     this.dayPhase = (this.dayPhase + dt / GameEngine.DAY_CYCLE_SECONDS) % 1;
@@ -1675,23 +1692,47 @@ export class GameEngine {
     this.characters.delete(id);
     this.idleBehaviors.delete(id);
     this.seats.delete(id);
+    // Issue #165: orphaned state. A removed character's speech bubble
+    // would persist (re-apparent if the id is reused for a new
+    // `waiting_input` agent), and the bubble's timer would keep running
+    // against an invisible character. Same for sprite overrides —
+    // they hold an `HTMLCanvasElement` reference that keeps the bitmap
+    // alive. Drop both on removal.
+    this.speechBubbles.delete(id);
+    this.characterSpriteOverrides.delete(id);
   }
 
   updateCharacter(id: string, updates: Partial<CharacterData>) {
     const char = this.characters.get(id);
     if (!char) return;
 
+    // Issue #165: identity-bearing fields (id, isSubAgent) must not be
+    // overwritable — the engine's `characters` map is keyed by
+    // `char.id`, and a partial update that desyncs id breaks map lookups
+    // mid-frame. Pick the mutable fields explicitly. The check is
+    // unconditional (no `process.env.NODE_ENV` guard) so it works in
+    // both the browser and the Node test runtime.
+    {
+      const forbidden: ReadonlyArray<keyof CharacterData> = ['id', 'isSubAgent'];
+      for (const k of forbidden) {
+        if (Object.prototype.hasOwnProperty.call(updates, k)) {
+          console.warn(`[GameEngine] updateCharacter: refusing to overwrite identity field "${String(k)}"`);
+        }
+      }
+    }
+    const { id: _id, isSubAgent: _isSubAgent, ...mut } = updates;
+
     // Detect state change
     const oldState = char.state;
     const hadTarget = { x: char.targetX, y: char.targetY };
-    Object.assign(char, updates);
+    Object.assign(char, mut);
 
-    if (updates.state && updates.state !== oldState) {
+    if (mut.state && mut.state !== oldState) {
       char.stateJustChanged = true;
     }
 
     // When activity changes to a desk activity, route to seat
-    if (updates.state && ['typing', 'reading', 'running_command', 'thinking'].includes(updates.state)) {
+    if (mut.state && ['typing', 'reading', 'running_command', 'thinking'].includes(mut.state)) {
       const seat = this.seats.get(id);
       if (seat) {
         char.targetX = seat.x;
@@ -1705,10 +1746,15 @@ export class GameEngine {
       char.pathIndex = 0;
     }
 
-    // Update speech bubble for waiting state
-    if (updates.state === 'waiting_input' && updates.lastMessage) {
+    // Update speech bubble for waiting state. If the character leaves
+    // `waiting_input`, drop the bubble (issue #165: an invisible bubble
+    // whose character moved on would keep running its timer).
+    if (mut.state && oldState === 'waiting_input' && mut.state !== 'waiting_input') {
+      this.speechBubbles.delete(id);
+    }
+    if (mut.state === 'waiting_input' && mut.lastMessage) {
       this.speechBubbles.set(id, {
-        text: updates.lastMessage,
+        text: mut.lastMessage,
         timer: 30, // 30 seconds visible
         alpha: 1,
       });

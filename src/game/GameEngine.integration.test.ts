@@ -94,7 +94,14 @@ type TestGameEngine = {
   }): void;
   updateCharacter(id: string, updates: Partial<{
     state: string;
+    lastMessage?: string;
+    id?: string;
+    isSubAgent?: boolean;
+    name?: string;
   }>): void;
+  removeCharacter(id: string): void;
+  speechBubbles: Map<string, { text: string; timer: number; alpha: number }>;
+  characterSpriteOverrides: Map<string, unknown>;
   setEditorMode(enabled: boolean): void;
   setSelectedFurnitureType(type: string | null): void;
   setSelectedFurnitureId(id: string | null): void;
@@ -782,3 +789,66 @@ describe('GameEngine integration: render fault tolerance (issue #172)', () => {
     expect(pendingFrames).toHaveLength(1);
   });
 });
+
+// ── #165 hygiene: updateCharacter allowlist + removeCharacter cleanup ─────
+describe('GameEngine integration: #165 hygiene (allowlist + cleanup)', () => {
+  let engine: TestGameEngine;
+  let canvas: HTMLCanvasElement;
+  let recorded: RecordingContext;
+
+  beforeEach(() => {
+    const made = makeCanvasWithStubbedContext();
+    canvas = made.canvas;
+    recorded = made.recorded;
+    engine = new GameEngine(canvas, GRID) as unknown as TestGameEngine;
+  });
+
+  afterEach(() => {
+    engine.stop();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("updateCharacter strips identity-bearing fields (id, isSubAgent)", () => {
+    // Issue #165: `updateCharacter` used `Object.assign(char, updates)`
+    // with no allowlist. A partial update carrying `id` or `isSubAgent`
+    // would desync the engine's `characters` map key from `char.id` and
+    // break map lookups mid-frame. Pick the mutable fields explicitly.
+    engine.addCharacter({ id: 'agent-a', name: 'A', x: 2, y: 6, state: 'idle' });
+
+    // Pretend the partial update was crafted by a malicious or
+    // buggy caller carrying identity fields.
+    engine.updateCharacter('agent-a', {
+      id: 'agent-Z',
+      isSubAgent: true,
+      name: 'Renamed',
+    });
+
+    // Identity fields preserved; mutable field applied.
+    const char = engine.characters.get('agent-a');
+    expect(char).toBeDefined();
+    expect(char?.id).toBe('agent-a');
+    // isSubAgent is stripped (not set on the character by addCharacter,
+    // so the destructured ignored update leaves it undefined — i.e.
+    // not overwritten with the value the malicious caller sent).
+    expect(char?.isSubAgent).toBeUndefined();
+    expect(char?.name).toBe('Renamed');
+  });
+
+  it("removeCharacter clears speech bubble and sprite override (issue #165)", () => {
+    // The speech-bubble map and the sprite-override map are keyed by
+    // character id and hold live resources (a string and a canvas).
+    // Without explicit cleanup, an id reused later would re-show an
+    // orphan bubble, and a removed character's override would hold a
+    // canvas reference. The fix is to delete both on removeCharacter.
+    engine.addCharacter({ id: 'agent-a', name: 'A', x: 2, y: 6, state: 'idle' });
+    engine.updateCharacter('agent-a', { state: 'waiting_input', lastMessage: 'hello' });
+    expect(engine.speechBubbles.has('agent-a')).toBe(true);
+
+    engine.removeCharacter('agent-a');
+
+    expect(engine.speechBubbles.has('agent-a')).toBe(false);
+    expect(engine.characterSpriteOverrides.has('agent-a')).toBe(false);
+  });
+});
+

@@ -540,30 +540,6 @@ export function getSpriteFrame(
   return canvas;
 }
 
-/** Access cached characters. Returns a compile-time readonly view —
- * consumers must not mutate the returned array or any of its elements
- * (issue #132). This is a TypeScript-only contract: no runtime freeze
- * or defensive copy is performed. The cache is owned by SpriteLoader and
- * is the single source of truth for asset lookups. */
-export function getCachedCharacters(): readonly ReadonlyLoadedCharacter[] {
-  return cachedCharacters;
-}
-
-/** Access cached furniture. Returns a compile-time readonly view —
- * consumers must not mutate the returned Map or any of its values
- * (issue #132). This is a TypeScript-only contract: no runtime freeze
- * or defensive copy is performed. The cache is owned by SpriteLoader;
- * consumers that need to extend or filter should build their own
- * structure from the typed view. */
-export function getCachedFurniture(): ReadonlyMap<string, ReadonlyLoadedFurnitureItem> {
-  return cachedFurniture;
-}
-
-/** Access a composed character portrait by agent ID */
-export function getComposedPortrait(agentId: string): HTMLCanvasElement | null {
-  return cachedComposed.get(agentId)?.portrait ?? null;
-}
-
 /** Get the composed character for a specific agent */
 export function getComposedCharacter(agentId: string): ReadonlyComposedCharacter | null {
   return cachedComposed.get(agentId) ?? null;

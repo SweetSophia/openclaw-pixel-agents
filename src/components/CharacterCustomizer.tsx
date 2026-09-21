@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { CharacterRecipe } from '../../shared/types';
 import { useModalFocus } from '../hooks/useModalFocus';
+import { drawRecipePreview } from './recipePreview';
 import './CharacterCustomizer.css';
 
 interface Props {
@@ -59,81 +60,22 @@ export const CharacterCustomizer: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
-  // Live preview: render the composed character on a canvas
+  // Live preview: render the composed character on a canvas.
+  // The recipe → canvas logic is shared with AgentPortrait via
+  // `./recipePreview` (issue #165).
   useEffect(() => {
     const canvas = previewRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const previewCanvas = canvas;
-    const previewCtx = ctx;
-
-    previewCtx.imageSmoothingEnabled = false;
-
-    // Load source sheets and composite a preview
-    let cancelled = false;
-
-    async function renderPreview(c: HTMLCanvasElement, context: CanvasRenderingContext2D) {
-      if (cancelled) return;
-
-      const BASE = '/assets/source/MetroCity/';
-      const SRC = 32;
-      const DST = 48; // 1.5× scale for better visibility
-
-      try {
-        // Load the three layers for the down-facing idle frame (col 0 in source)
-        const [bodyImg, hairImg, outfitImg] = await Promise.all([
-          loadImage(`${BASE}CharacterModel/Character Model.png`),
-          loadImage(`${BASE}Hair/Hairs.png`),
-          loadImage(`${BASE}Outfits/Outfit${recipe.outfitIndex + 1}.png`),
-        ]);
-
-        if (cancelled) return;
-
-        // Clear
-        context.clearRect(0, 0, c.width, c.height);
-
-        // Draw checkerboard background for transparency
-        const CHECK = 6;
-        for (let y = 0; y < c.height; y += CHECK) {
-          for (let x = 0; x < c.width; x += CHECK) {
-            context.fillStyle = ((x / CHECK + y / CHECK) % 2 === 0) ? '#1a1a2e' : '#16213e';
-            context.fillRect(x, y, CHECK, CHECK);
-          }
-        }
-
-        // Source crop: south direction (col 0), row = bodyIndex/hairIndex/outfitIndex
-        const srcX = 0; // south idle frame
-        const cropX = 8; // center 16px of 32px source
-        const cropW = 16;
-        const cropH = 32;
-
-        // Layer: body
-        context.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
-        // Layer: outfit
-        context.drawImage(outfitImg, srcX + cropX, 0, cropW, cropH, 16, 8, DST, DST * 2);
-        // Layer: hair
-        context.drawImage(hairImg, srcX + cropX, recipe.hairIndex * SRC, cropW, cropH, 16, 8, DST, DST * 2);
-
-      } catch (err) {
-        // Skip drawing if effect was cancelled or unmounted — a newer render may be in flight
-        if (cancelled) return;
-
-        // Preview failed — draw fallback
-        context.clearRect(0, 0, c.width, c.height);
-        context.fillStyle = '#1a1a2e';
-        context.fillRect(0, 0, c.width, c.height);
-        context.fillStyle = '#4ecca3';
-        context.font = '12px monospace';
-        context.textAlign = 'center';
-        context.fillText('Preview', c.width / 2, c.height / 2);
-      }
-    }
-
-    renderPreview(previewCanvas, previewCtx);
-    return () => { cancelled = true; };
+    const cancelled = { value: false };
+    drawRecipePreview({
+      canvas,
+      recipe,
+      basePath: '/assets/source/MetroCity/',
+      background: 'checkerboard',
+      cancelled,
+    });
+    return () => { cancelled.value = true; };
   }, [recipe.bodyIndex, recipe.hairIndex, recipe.outfitIndex]);
 
   const handleSave = useCallback(async () => {
@@ -259,21 +201,3 @@ export const CharacterCustomizer: React.FC<Props> = ({
     document.body,
   );
 };
-
-/** Load an image from a URL and return an HTMLImageElement (cached, deduped) */
-const SHEET_CACHE = new Map<string, Promise<HTMLImageElement>>();
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  const cached = SHEET_CACHE.get(src);
-  if (cached) return cached;
-
-  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => { SHEET_CACHE.delete(src); reject(new Error(`Failed to load ${src}`)); };
-    img.src = src;
-  });
-  SHEET_CACHE.set(src, promise);
-  return promise;
-}
