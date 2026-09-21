@@ -6,8 +6,8 @@ A pixel art office dashboard for [OpenClaw](https://github.com/openclaw/openclaw
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![React 19](https://img.shields.io/badge/React-19-61dafb.svg)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)
-![Vite](https://img.shields.io/badge/Vite-6-646cff.svg)
+![TypeScript 7](https://img.shields.io/badge/TypeScript-7-3178c6.svg)
+![Vite 8](https://img.shields.io/badge/Vite-8-646cff.svg)
 [![CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/codeql.yml/badge.svg)](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/codeql.yml)
 
@@ -229,7 +229,7 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `LAYOUT_WRITE_RATE_LIMIT_MAX` | `90` | Layout PUT/POST/DELETE requests allowed per minute and client IP; includes headroom above the editor's 30/minute theoretical autosave ceiling |
 | `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
-| `DATA_DIR` | `./data` | Persistence directory for preferences and layouts |
+| `DATA_DIR` | `join(__dirname, "data")` | Persistence directory for preferences and layouts. Resolved relative to the compiled module location — dev writes under `server/data/`, standalone compiled startup writes under `dist/server/server/data/`. Set explicitly in production. Docker sets `DATA_DIR=/app/data`. |
 
 Agent preferences and layouts are written through a flushed same-directory temporary file, atomically renamed into place, and followed by a parent-directory sync on POSIX. A failure before replacement therefore leaves the previous JSON file intact instead of exposing a truncated target.
 
