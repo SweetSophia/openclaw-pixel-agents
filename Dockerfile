@@ -6,7 +6,7 @@
 
 # ---- Builder stage -----------------------------------------------------------
 # Full dev deps + source, produces the compiled output in /app/dist.
-FROM node:26.8.2-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS builder
+FROM node:26.9.0-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070 AS builder
 WORKDIR /app
 # .npmrc carries engine-strict=true; copy it before `npm ci` so the supported
 # Node engine range is enforced on this Node 26.8.1 image during the build.
@@ -17,7 +17,7 @@ RUN npm run build
 
 # ---- Runtime stage -----------------------------------------------------------
 # Production deps only + compiled dist. No source, no dev deps, no .git.
-FROM node:26.8.2-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868
+FROM node:26.9.0-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070
 WORKDIR /app
 ENV NODE_ENV=production
 
