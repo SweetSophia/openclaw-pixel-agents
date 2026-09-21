@@ -208,31 +208,6 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
   return result;
 }
 
-/**
- * Get a data URL for a composed portrait (for use in <img> tags).
- */
-export function portraitToDataUrl(portrait: HTMLCanvasElement): string {
-  return portrait.toDataURL('image/png');
-}
-
-/**
- * Compose characters for all agents based on their recipes.
- * Returns a Map of agentId → ComposedCharacter.
- */
-export function composeAll(
-  recipes: Map<string, CharacterRecipe>,
-): Map<string, ComposedCharacter> {
-  const result = new Map<string, ComposedCharacter>();
-  for (const [agentId, recipe] of recipes) {
-    try {
-      result.set(agentId, composeCharacter(recipe));
-    } catch (err) {
-      console.error(`[CharacterComposer] Failed to compose ${agentId}:`, err);
-    }
-  }
-  return result;
-}
-
 // ── Default recipes for the agent roster ───────────────────
 
 // `Readonly<Record<...>>` prevents reassignment of the table (no

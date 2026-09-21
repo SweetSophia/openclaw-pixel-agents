@@ -15,18 +15,6 @@
  * - ambience:  looping low hum (toggleable)
  */
 
-export type SoundName =
-  | 'typing'
-  | 'typing-batch'
-  | 'spawn'
-  | 'despawn'
-  | 'notify'
-  | 'click'
-  | 'place'
-  | 'pickup'
-  | 'error'
-  | 'footstep';
-
 class SoundFX {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
