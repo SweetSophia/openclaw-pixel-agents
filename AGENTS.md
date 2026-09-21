@@ -19,7 +19,7 @@ npm start                                # production build; build first
 ```
 
 - Vitest runs in jsdom, loads `src/test/setup.ts`, and excludes `dist/**` plus `.worktrees/**`. Coverage floors (repository-wide, all four evaluated together): branches 36, functions 37, lines 41, statements 39.
-- CI: `codeql.yml` scans JS/TS on every push/PR plus weekly on `main`; `ci.yml` runs typecheck → test → test:coverage → build → `npm audit --omit=dev --audit-level=high`; `dependency-review-action` runs on PRs only and fails on high/critical additions. **No Socket or Sourcery workflows exist** — treat any reference to them as stale. Browser-level geometry and hit-testing are not covered in CI; follow the manual browser-testing steps in `CONTRIBUTING.md` (run `npm run dev` and verify in the browser).
+- CI: `codeql.yml` scans JS/TS on every push/PR plus weekly on `main`; `ci.yml` runs typecheck → test → test:coverage → build → `npm audit --omit=dev --audit-level=high` (gate) + `npm audit --audit-level=moderate` (full-tree moderate-or-higher advisory blocker, issue #168); `dependency-review-action` runs on PRs only and fails on high/critical additions. Browser-level geometry and hit-testing are not covered in CI; follow the manual browser-testing steps in `CONTRIBUTING.md` (run `npm run dev` and verify in the browser).
 - `npm start` sets `NODE_ENV=production` and runs the non-obvious path `dist/server/server/index.js`.
 
 ## Real Boundaries
@@ -44,7 +44,7 @@ npm start                                # production build; build first
 ## Persistence and Layouts
 
 - `DATA_DIR` defaults to `join(__dirname, "data")`, so dev writes under `server/data/` and standalone compiled startup writes under `dist/server/server/data/`; do not assume repo-root `data/`. Docker sets `DATA_DIR=/app/data`.
-- Use `OPENCLAW_BIN` for the CLI path; the collector requires it to be absolute (`collector/README.md`). `OPENCLAW_CLI` is fully removed from the README.
+- Use `OPENCLAW_BIN` for the CLI path; the collector requires it to be absolute (`collector/README.md`).
 - Layout IDs must pass `/^[a-zA-Z0-9_-]+$/` and pass `isSafePersistedFilename` (so `${id}.json` is not a Windows reserved device basename like `con`/`nul`/`com1`/`aux`); max 64 chars; `default` cannot be deleted.
 - Layout writes use optimistic concurrency via `baseUpdatedAt`. The client refreshes revisions and retries `409`/server failures with bounded backoff; do not replace newer local edits with stale save responses.
 - **REST contract for layouts**: `PUT /api/layouts/:id` is **update-only** — returns `404` for unknown IDs to prevent a stale client from resurrecting a layout another client just deleted. `POST /api/layouts` is the agent-facing creation path (server-assigned `layout-${uuid}` id); the only server-internal creation paths are `GET /api/layouts` and `GET /api/layouts/default` which seed/repair the built-in `default` layout. Capacity enforcement (100 entries, `507 Layout limit reached`) applies at create time, on the `default` GET, and counts every directory entry (JSON layout files and stray non-JSON files alike). `loadLayout` returns `null` for malformed JSON files, so PUT cannot repair a corrupted layout via the API — operators must delete the file and recreate it.

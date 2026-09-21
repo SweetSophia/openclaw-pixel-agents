@@ -48,7 +48,18 @@ jobs:
         run: npm run build
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        # Issue #168: the previous audit only inspected the production
+        # tree, so advisories in dev-only security-sensitive tools (e.g.
+        # GHSA-4w7w-66w2-5vf9 against vite@6.4.1) never blocked a PR. The
+        # second step runs `npm audit` against the full tree at the
+        # `moderate` level — any moderate-or-higher dev-dep advisory
+        # fails the job. The high-level gate on the production tree is
+        # kept as the primary merge blocker; the full-tree moderate
+        # check is the secondary "we don't ship dev-dep CVEs either" guard.
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=moderate
+        continue-on-error: false
 
   dependency-review:
     name: Dependency review
