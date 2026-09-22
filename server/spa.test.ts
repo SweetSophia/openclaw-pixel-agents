@@ -270,13 +270,18 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
       expect(() => parseTrustProxy(raw)).toThrow(/Accepted forms/);
     });
 
-    it("mentions empty entries by name in the error for stray-comma inputs (issue #170)", () => {
-      // The fix splits first and rejects raw empty segments with a message
-      // that points at the actual problem, not the generic "Accepted forms"
-      // boilerplate.
-      expect(() => parseTrustProxy("10.0.0.0/8,,127.0.0.1")).toThrow(
-        /empty entries are not allowed/,
-      );
+    it.each([
+      ["10.0.0.0/8,,127.0.0.1"],
+      [",10.0.0.0/8"],
+      ["10.0.0.0/8,"],
+      ["10.0.0.0/8, ,127.0.0.1"],
+      [" , "],
+    ])("names the cause for stray-comma input %j (issue #170)", (raw) => {
+      // Every stray-comma input must take the empty-entries path and
+      // surface the cause by name, not the generic "Accepted forms"
+      // boilerplate. (Kilo review on PR #248: the prior single-case
+      // assertion only covered one of the five new entries.)
+      expect(() => parseTrustProxy(raw)).toThrow(/empty entries are not allowed/);
     });
   });
 });

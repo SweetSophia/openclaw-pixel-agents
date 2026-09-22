@@ -80,6 +80,19 @@ const corsConfig = createCorsConfig();
  */
 const TRUST_PROXY_PRESETS = new Set(["loopback", "linklocal", "uniquelocal"]);
 
+// Shared suffix for both TRUST_PROXY error throws. Kept in one place so
+// the accepted-forms / rationale text can't drift between the "empty
+// entries" path and the per-entry validation path. (Kilo review on
+// PR #248: two copies were an outage-waiting-to-happen.)
+const TRUST_PROXY_ERROR_TAIL =
+  `Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
+  `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
+  `IPs/CIDRs (prefix length 1-32 for IPv4, 1-128 for IPv6) or the presets loopback/linklocal/uniquelocal ` +
+  `(e.g. "10.0.0.0/8,127.0.0.1"). ` +
+  `Unrestricted "true" is deliberately rejected: without a controlled proxy that overwrites ` +
+  `X-Forwarded-For, clients could forge forwarding headers and defeat per-client rate limiting. ` +
+  `See README "Reverse-proxy deployments".`;
+
 /** One TRUST_PROXY list entry: a bare IP, an IP/prefix-length CIDR, or a
  * documented preset. Deliberately stricter than proxy-addr: no DNS
  * hostnames, no wildcard octets — operators state exact addresses. */
@@ -117,25 +130,13 @@ export function parseTrustProxy(raw: string | undefined): number | string[] | un
   if (segments.some((s) => !s.trim())) {
     throw new Error(
       `Invalid TRUST_PROXY value: "${raw}" — empty entries are not allowed in the comma-separated list. ` +
-      `Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
-      `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
-      `IPs/CIDRs (prefix length 1-32 for IPv4, 1-128 for IPv6) or the presets loopback/linklocal/uniquelocal ` +
-      `(e.g. "10.0.0.0/8,127.0.0.1"). ` +
-      `Unrestricted "true" is deliberately rejected: without a controlled proxy that overwrites ` +
-      `X-Forwarded-For, clients could forge forwarding headers and defeat per-client rate limiting. ` +
-      `See README "Reverse-proxy deployments".`,
+      TRUST_PROXY_ERROR_TAIL,
     );
   }
   const entries = segments.map((s) => s.trim());
   if (!entries.every(isTrustProxyEntry)) {
     throw new Error(
-      `Invalid TRUST_PROXY value: "${raw}". Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
-      `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
-      `IPs/CIDRs (prefix length 1-32 for IPv4, 1-128 for IPv6) or the presets loopback/linklocal/uniquelocal ` +
-      `(e.g. "10.0.0.0/8,127.0.0.1"). ` +
-      `Unrestricted "true" is deliberately rejected: without a controlled proxy that overwrites ` +
-      `X-Forwarded-For, clients could forge forwarding headers and defeat per-client rate limiting. ` +
-      `See README "Reverse-proxy deployments".`,
+      `Invalid TRUST_PROXY value: "${raw}". ` + TRUST_PROXY_ERROR_TAIL,
     );
   }
   return entries;
