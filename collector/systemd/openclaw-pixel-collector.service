@@ -29,15 +29,49 @@ PrivateDevices=true
 PrivateTmp=true
 ProtectClock=true
 ProtectControlGroups=true
+ProtectHostname=true
 ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 CapabilityBoundingSet=
+MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 UMask=0077
 StandardOutput=journal
 StandardError=journal
+
+# ---------------------------------------------------------------------
+# Layered sandboxing beyond this line is host-state-dependent and is
+# intentionally NOT enabled by default. The collector spawns the
+# OpenClaw CLI (OPENCLAW_BIN) which reads its own state from a path
+# the operator chooses at install time — typically $HOME or a path
+# under /var/lib. Enabling these directives can therefore break a
+# working setup. Review each option against your OpenClaw install
+# and uncomment only after verifying `systemctl start` succeeds and
+# the timer fires end-to-end.
+#
+#   ProtectSystem=strict    # makes the entire FS read-only except /dev,
+#                          # /proc, /sys; pair with ReadWritePaths for any
+#                          # location the CLI must write to. Read access
+#                          # still works, so this is the safest of the three.
+#   ReadWritePaths=         # example: /var/lib/openclaw — only needed if
+#                          # the CLI writes to its state directory.
+#   ProtectHome=true        # BLOCKS reads of /home, /root, /run/user.
+#                          # Breaks OpenClaw installs that store state
+#                          # under the user's home directory.
+#   PrivateUsers=true       # isolates the UID namespace; /etc/passwd and
+#                          # getpwuid() resolve to nothing. Breaks any
+#                          # binary that looks up user/group info.
+#                          # Verify the CLI survives before enabling.
+#
+# See collector/README.md and `systemd-analyze security` for the
+# score impact on the deployment host. (Issue #167.)
+# ---------------------------------------------------------------------
