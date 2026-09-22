@@ -107,8 +107,27 @@ export function parseTrustProxy(raw: string | undefined): number | string[] | un
   if (!value || value === "false" || value === "0") return undefined;
   const hops = Number(value);
   if (Number.isInteger(hops) && hops > 0 && String(hops) === value) return hops;
-  const entries = value.split(",").map(s => s.trim()).filter(Boolean);
-  if (entries.length === 0 || !entries.every(isTrustProxyEntry)) {
+  // Issue #170: split first and reject any *raw* segment that is empty or
+  // whitespace-only BEFORE trimming. The previous implementation called
+  // `.filter(Boolean)` after trimming, which silently dropped stray
+  // commas (e.g. "10.0.0.0/8,,127.0.0.1" became ["10.0.0.0/8","127.0.0.1"]).
+  // That silently narrowed the trust list at startup — exactly the
+  // shared-bucket failure mode the rest of the contract exists to prevent.
+  const segments = value.split(",");
+  if (segments.some((s) => !s.trim())) {
+    throw new Error(
+      `Invalid TRUST_PROXY value: "${raw}" — empty entries are not allowed in the comma-separated list. ` +
+      `Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
+      `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
+      `IPs/CIDRs (prefix length 1-32 for IPv4, 1-128 for IPv6) or the presets loopback/linklocal/uniquelocal ` +
+      `(e.g. "10.0.0.0/8,127.0.0.1"). ` +
+      `Unrestricted "true" is deliberately rejected: without a controlled proxy that overwrites ` +
+      `X-Forwarded-For, clients could forge forwarding headers and defeat per-client rate limiting. ` +
+      `See README "Reverse-proxy deployments".`,
+    );
+  }
+  const entries = segments.map((s) => s.trim());
+  if (!entries.every(isTrustProxyEntry)) {
     throw new Error(
       `Invalid TRUST_PROXY value: "${raw}". Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
       `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
