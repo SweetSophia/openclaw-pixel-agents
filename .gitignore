@@ -16,3 +16,10 @@ collector/.env.collector
 
 # graphify analysis artifacts (never commit)
 graphify-out/
+
+# Defensive: stray debug pages under public/ ship in non-Docker
+# production builds (Vite bundles anything in `public/` into `dist/client/`).
+# The CI guard in .github/workflows/ci.yml is the durable backstop;
+# this entry is just a courtesy to keep `git add .` from re-introducing
+# them. See issue #169.
+public/test-*.html
