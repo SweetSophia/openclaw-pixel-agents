@@ -42,7 +42,6 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 CapabilityBoundingSet=
-MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 UMask=0077
 StandardOutput=journal
@@ -71,6 +70,15 @@ StandardError=journal
 #                          # getpwuid() resolve to nothing. Breaks any
 #                          # binary that looks up user/group info.
 #                          # Verify the CLI survives before enabling.
+#   MemoryDenyWriteExecute=true
+#                         # SIGTRAPs any process that maps writable+executable
+#                         # memory, which BREAKS Node's V8 JIT (Sparkplug,
+#                         # Maglev, TurboFan). The collector's Node invocation
+#                         # and the spawned OpenClaw CLI both need W^X. If
+#                         # your CLI is not V8-based (e.g. native Go/Rust) and
+#                         # the collector's Node can be started with
+#                         # `--jitless` (which loses JIT perf but keeps W^X),
+#                         # this can be enabled.
 #
 # See collector/README.md and `systemd-analyze security` for the
 # score impact on the deployment host. (Issue #167.)

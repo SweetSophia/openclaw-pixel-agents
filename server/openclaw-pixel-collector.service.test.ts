@@ -40,7 +40,10 @@ function activeDirectives(text: string): Map<string, string> {
 const ACTIVE = activeDirectives(unit);
 
 describe("openclaw-pixel-collector.service hardening (issue #167)", () => {
-  // Baseline directives — host-independent, always-on layer.
+  // Baseline directives — host-independent, always-on layer. Each boolean
+  // directive is asserted with its exact "true" value rather than just
+  // `has(...)`, so a future edit flipping one to "false" (or a typo) fails
+  // the test rather than silently passing.
   it.each([
     "NoNewPrivileges",
     "PrivateDevices",
@@ -51,19 +54,13 @@ describe("openclaw-pixel-collector.service hardening (issue #167)", () => {
     "ProtectKernelLogs",
     "ProtectKernelModules",
     "ProtectKernelTunables",
-    "ProtectProc",
-    "ProcSubset",
-    "RemoveIPC",
-    "RestrictAddressFamilies",
     "RestrictNamespaces",
     "RestrictRealtime",
     "RestrictSUIDSGID",
     "LockPersonality",
-    "CapabilityBoundingSet",
-    "MemoryDenyWriteExecute",
-    "SystemCallArchitectures",
-  ])("enables %s", (directive) => {
-    expect(ACTIVE.has(directive)).toBe(true);
+    "RemoveIPC",
+  ])("enables %s=true", (directive) => {
+    expect(ACTIVE.get(directive)).toBe("true");
   });
 
   it('RestrictAddressFamilies is locked to "AF_UNIX AF_INET AF_INET6"', () => {
@@ -87,14 +84,22 @@ describe("openclaw-pixel-collector.service hardening (issue #167)", () => {
 
   // Host-dependent directives — must NOT be enabled by default but
   // must appear in the commented template so operators can opt in.
-  it.each(["ProtectSystem", "ProtectHome", "PrivateUsers"])(
-    "leaves %s as a documented opt-in (commented)",
-    (directive) => {
-      expect(ACTIVE.has(directive)).toBe(false);
-      // Must appear commented so operators can find the template.
-      expect(unit).toMatch(new RegExp(`^\\s*#.*\\b${directive}\\b`, "m"));
-    },
-  );
+  it.each([
+    "ProtectSystem",
+    "ProtectHome",
+    "PrivateUsers",
+    // MemoryDenyWriteExecute is host-dependent too: it SIGTRAPs Node's
+    // V8 JIT and any spawned V8-based binary (including possibly the
+    // OpenClaw CLI). Operators must pair it with `--jitless` in ExecStart
+    // for the collector and verify the OpenClaw CLI is not V8-based
+    // before enabling. (Sourcery + Kody + Kilo all flagged MDWE in the
+    // original PR #249 baseline.)
+    "MemoryDenyWriteExecute",
+  ])("leaves %s as a documented opt-in (commented)", (directive) => {
+    expect(ACTIVE.has(directive)).toBe(false);
+    // Must appear commented so operators can find the template.
+    expect(unit).toMatch(new RegExp(`^\\s*#.*\\b${directive}\\b`, "m"));
+  });
 
   it("ReadWritePaths appears in the opt-in template (commented)", () => {
     expect(ACTIVE.has("ReadWritePaths")).toBe(false);
@@ -106,7 +111,16 @@ describe("openclaw-pixel-collector.service hardening (issue #167)", () => {
     // access to its owning account's home directory. The opt-in block
     // must warn operators that ProtectHome/PrivateUsers break that
     // contract and require explicit verification.
-    expect(unit).toMatch(/OpenClaw CLI/i);
-    expect(unit).toMatch(/verify|verification/i);
+    //
+    // Scope the assertion to the opt-in block so unrelated comments
+    // elsewhere in the file (e.g. the ExecStart PATH comment) don't
+    // accidentally satisfy it.
+    const optInStart = unit.indexOf("Layered sandboxing beyond this line");
+    const optInEnd = unit.indexOf("systemd-analyze security", optInStart);
+    expect(optInStart).toBeGreaterThan(-1);
+    expect(optInEnd).toBeGreaterThan(optInStart);
+    const optInBlock = unit.slice(optInStart, optInEnd);
+    expect(optInBlock).toMatch(/OpenClaw CLI/i);
+    expect(optInBlock).toMatch(/verify|verification/i);
   });
 });
