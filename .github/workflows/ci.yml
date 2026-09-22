@@ -44,6 +44,28 @@ jobs:
       - name: Enforce coverage floor
         run: npm run test:coverage
 
+      - name: Check for stray debug pages and colon filenames
+        # Issue #169: the `public/` directory is the Vite static-asset
+        # root, so anything committed there ships to the browser.
+        # Guard against re-introduction of (a) OS-invalid colon-named
+        # files (Windows-incompatible, breaks `git checkout`) and
+        # (b) debug `public/test-*.html` pages that have no test-runner
+        # reference but get bundled into `dist/client/` outside Docker.
+        # Runs before `Build` so a bad commit fails fast without
+        # wasting CI time on a build that will probably fail anyway.
+        run: |
+          # POSIX-portable: `find -print -quit` exits 0 iff a match exists,
+          # then `grep .` succeeds iff any line is printed. We invert the
+          # success condition with `!` to fail the build on a match.
+          if find public -name '*:*' -print -quit | grep .; then
+            echo "::error::colon filename in public/ (Windows-incompatible)"
+            exit 1
+          fi
+          if find public -name 'test-*.html' -print -quit | grep .; then
+            echo "::error::debug test-*.html page in public/ (ships in production)"
+            exit 1
+          fi
+
       - name: Build
         run: npm run build
 
