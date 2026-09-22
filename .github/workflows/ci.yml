@@ -54,9 +54,13 @@ jobs:
         # Runs before `Build` so a bad commit fails fast without
         # wasting CI time on a build that will probably fail anyway.
         run: |
-          # POSIX-portable: `find -print -quit` exits 0 iff a match exists,
-          # then `grep .` succeeds iff any line is printed. We invert the
-          # success condition with `!` to fail the build on a match.
+          # `find -print -quit` is a GNU extension — fine on the
+          # ubuntu-latest runner we use today, but explicitly *not*
+          # POSIX. If the workflow is ever moved to a macOS/BSD runner,
+          # drop the `-quit`. (Sourcery + Kilo both flagged the earlier
+          # "POSIX-portable" claim as inaccurate; see PR #247 review
+          # thread.) `grep .` is the actual gate: it succeeds iff
+          # `find` printed at least one path.
           if find public -name '*:*' -print -quit | grep .; then
             echo "::error::colon filename in public/ (Windows-incompatible)"
             exit 1
