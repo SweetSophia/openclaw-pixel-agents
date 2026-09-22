@@ -256,9 +256,32 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
       ["example.com"],
       ["10.0.0.0/8,not-an-ip"],
       [",,"],
+      // Issue #170: stray commas must fail rather than be silently filtered.
+      // Before the fix, `.filter(Boolean)` dropped empty segments, so
+      // "10.0.0.0/8,,127.0.0.1" was accepted as a 2-entry list — silently
+      // narrower than the operator's intent.
+      ["10.0.0.0/8,,127.0.0.1"],
+      [",10.0.0.0/8"],
+      ["10.0.0.0/8,"],
+      ["10.0.0.0/8, ,127.0.0.1"],
+      [" , "],
     ])("rejects malformed value %j with a descriptive error", (raw) => {
       expect(() => parseTrustProxy(raw)).toThrow(/Invalid TRUST_PROXY value/);
       expect(() => parseTrustProxy(raw)).toThrow(/Accepted forms/);
+    });
+
+    it.each([
+      ["10.0.0.0/8,,127.0.0.1"],
+      [",10.0.0.0/8"],
+      ["10.0.0.0/8,"],
+      ["10.0.0.0/8, ,127.0.0.1"],
+      [" , "],
+    ])("names the cause for stray-comma input %j (issue #170)", (raw) => {
+      // Every stray-comma input must take the empty-entries path and
+      // surface the cause by name, not the generic "Accepted forms"
+      // boilerplate. The pre-parametrized assertion only covered one
+      // of the five entries; it.each keeps every input honest.
+      expect(() => parseTrustProxy(raw)).toThrow(/empty entries are not allowed/);
     });
   });
 });
