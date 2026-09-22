@@ -61,7 +61,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now openclaw-pixel-collector.timer
 ```
 
-The service includes conservative hardening that preserves the OpenClaw CLI's access to its owning account's home directory and allows only Unix, IPv4, and IPv6 sockets. Review additional restrictions with `systemd-analyze security openclaw-pixel-collector.service` on the deployment host before tightening filesystem access.
+The service includes layered hardening. The baseline (always on, host-independent) tightens the kernel and process isolation: `NoNewPrivileges`, `PrivateDevices`, `PrivateTmp`, `ProtectClock`, `ProtectControlGroups`, `ProtectHostname`, `ProtectKernelLogs`, `ProtectKernelModules`, `ProtectKernelTunables`, `ProtectProc=invisible`, `ProcSubset=pid`, `RemoveIPC`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, empty `CapabilityBoundingSet`, and `SystemCallArchitectures=native`. Together with the existing address-family restriction this leaves the process with no ambient capabilities and a kernel attack surface narrowed to native syscalls only.
+
+A second, host-dependent layer (`ProtectSystem=strict` + `ReadWritePaths=`, `ProtectHome=true`, `PrivateUsers=true`, `MemoryDenyWriteExecute=true`) is **intentionally left as a commented template** at the bottom of the unit. The collector spawns the OpenClaw CLI (`OPENCLAW_BIN`), which reads its own state from a path the operator chose at install time — typically `$HOME` or somewhere under `/var/lib`. Each of these directives can break a working install that relies on those paths (or, for `MemoryDenyWriteExecute`, on Node's V8 JIT), so they must be enabled one at a time with verification. See `systemd-analyze security openclaw-pixel-collector.service` on the deployment host for the per-directive score impact.
 
 ## Verify operation
 
