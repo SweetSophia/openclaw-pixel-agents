@@ -279,8 +279,8 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     ])("names the cause for stray-comma input %j (issue #170)", (raw) => {
       // Every stray-comma input must take the empty-entries path and
       // surface the cause by name, not the generic "Accepted forms"
-      // boilerplate. (Kilo review on PR #248: the prior single-case
-      // assertion only covered one of the five new entries.)
+      // boilerplate. The pre-parametrized assertion only covered one
+      // of the five entries; it.each keeps every input honest.
       expect(() => parseTrustProxy(raw)).toThrow(/empty entries are not allowed/);
     });
   });

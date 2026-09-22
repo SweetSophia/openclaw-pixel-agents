@@ -82,8 +82,9 @@ const TRUST_PROXY_PRESETS = new Set(["loopback", "linklocal", "uniquelocal"]);
 
 // Shared suffix for both TRUST_PROXY error throws. Kept in one place so
 // the accepted-forms / rationale text can't drift between the "empty
-// entries" path and the per-entry validation path. (Kilo review on
-// PR #248: two copies were an outage-waiting-to-happen.)
+// entries" path and the per-entry validation path: two copies of an
+// error string is two places to keep in sync, and an operator who
+// reads one and not the other gets a misleading picture.
 const TRUST_PROXY_ERROR_TAIL =
   `Accepted forms: unset/"false"/"0" (no proxy trust, default), ` +
   `a positive integer (trusted proxy hop count, e.g. "1"), or a comma-separated list of proxy ` +
