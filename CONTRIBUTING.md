@@ -50,6 +50,7 @@ The dev server runs on `http://localhost:3000` and proxies API requests to the b
    npm run test:coverage
    npm run build
    npm audit --omit=dev --audit-level=high
+   npm audit --audit-level=moderate   # mirrors the CI full-tree audit gate (issue #168); without this, locally-passing PRs can still land red CI
    ```
 5. **Open a PR** with a description of what changed and why
 
