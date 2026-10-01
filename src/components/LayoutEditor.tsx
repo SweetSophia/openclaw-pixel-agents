@@ -16,6 +16,8 @@ interface Props {
   selectedFurnitureType: string | null;
   selectedFurnitureId: string | null;
   deleteMode: boolean;
+  /** Label of the active room, surfaced in the placement hint (falls back to "room"). */
+  roomName?: string;
   onSelectFurnitureType: (type: string | null) => void;
   onSelectFurnitureId: (id: string | null) => void;
   onPlaceFurniture: (type: string, x: number, y: number) => void;
@@ -119,6 +121,7 @@ export const LayoutEditor: React.FC<Props> = ({
   selectedFurnitureType,
   selectedFurnitureId,
   deleteMode,
+  roomName,
   onSelectFurnitureType,
   onSelectFurnitureId,
   onRotateFurniture,
@@ -377,7 +380,7 @@ export const LayoutEditor: React.FC<Props> = ({
       {/* Placement hint when type selected but nothing placed */}
       {selectedFurnitureType && !selectedFurnitureId && (
         <div className="placement-hint">
-          Click on the office to place {FURNITURE_LABELS[selectedFurnitureType] || selectedFurnitureType}
+          Click on the {roomName ?? 'room'} to place {FURNITURE_LABELS[selectedFurnitureType] || selectedFurnitureType}
           <button className="action-btn" onClick={() => onSelectFurnitureType(null)}>✖ Cancel</button>
         </div>
       )}
