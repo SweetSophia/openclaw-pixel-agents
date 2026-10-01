@@ -15,7 +15,9 @@ const testState = vi.hoisted(() => ({
     layoutError: string | null;
     onClearLayoutError: () => void;
     onRotateFurniture: (id: string) => void;
+    roomName?: string;
   },
+  activeRoomId: 'default',
 }));
 
 vi.mock('./hooks/useAgentStore', () => ({
@@ -26,7 +28,7 @@ vi.mock('./hooks/useAgentStore', () => ({
     toggleAll: vi.fn(),
     updateTags: vi.fn(),
     updateRecipe: vi.fn(),
-    activeRoomId: 'default',
+    activeRoomId: testState.activeRoomId,
     setActiveRoomId: vi.fn(),
     roomAgents: [],
   }),
@@ -81,6 +83,7 @@ describe('App furniture rotation persistence', () => {
     testState.clearLayoutError.mockReset();
     testState.pixelOfficeProps = null;
     testState.layoutEditorProps = null;
+    testState.activeRoomId = 'default';
   });
 
   it('applies the exact engine rotation through the layout-store updater', () => {
@@ -139,5 +142,20 @@ describe('App furniture rotation persistence', () => {
     );
     testState.layoutEditorProps?.onClearLayoutError();
     expect(testState.clearLayoutError).toHaveBeenCalledOnce();
+  });
+
+  it('passes the active room display name to the editor hint', () => {
+    testState.activeRoomId = 'lab';
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
+
+    expect(testState.layoutEditorProps?.roomName).toBe('Research Lab');
+  });
+
+  it('passes undefined for unknown room ids so the hint falls back', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
+
+    expect(testState.layoutEditorProps?.roomName).toBeUndefined();
   });
 });
