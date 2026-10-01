@@ -39,7 +39,7 @@
     "@vitest/coverage-v8": "^5.0.1",
     "concurrently": "^10.0.5",
     "jsdom": "^30.0.1",
-    "postcss": "^8.5.26",
+    "postcss": "^8.5.28",
     "supertest": "^7.2.2",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
