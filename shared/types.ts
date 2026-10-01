@@ -188,6 +188,16 @@ export function resolveRoomByTags(agentTags: AgentTag[]): string {
   return 'office';
 }
 
+/**
+ * Look up a room's display name by id. Returns undefined for unknown ids so
+ * callers can choose their own fallback. Companion to resolveRoomByTags: all
+ * id→name lookups go through here so client and server share one accessor
+ * instead of re-implementing the find at each call site.
+ */
+export function getRoomName(roomId: string): string | undefined {
+  return DEFAULT_ROOMS.find((room) => room.id === roomId)?.name;
+}
+
 // ── Message Ticker ─────────────────────────────────────
 
 export interface TickerMessage {

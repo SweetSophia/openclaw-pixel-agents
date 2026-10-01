@@ -44,10 +44,14 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof LayoutEditor>>
 }
 
 /** The hint text is split across static and interpolated text nodes, so match
- *  on the .placement-hint container's textContent instead of a single node. */
+ *  on the .placement-hint container's textContent instead of a single node.
+ *  Excludes .placement-hint.danger (the delete-mode hint) so the selector
+ *  stays unique even when both hints could render. */
 function getPlacementHint(): HTMLElement {
   return screen.getByText(
-    (_content, element) => element?.classList.contains('placement-hint') ?? false,
+    (_content, element) =>
+      element?.classList.contains('placement-hint') === true &&
+      element?.classList.contains('danger') === false,
   );
 }
 
@@ -56,18 +60,41 @@ describe('LayoutEditor placement hint room label', () => {
 
   it('names the supplied room in the placement hint', () => {
     render(<LayoutEditor {...makeProps({ roomName: 'Research Lab' })} />);
-    expect(getPlacementHint().textContent).toContain('Click on the Research Lab to place Desk');
+    expect(getPlacementHint().textContent).toContain('Click the office floor to place Desk · Research Lab');
   });
 
   it('falls back to a generic label when no room name is provided', () => {
     render(<LayoutEditor {...makeProps({})} />);
-    expect(getPlacementHint().textContent).toContain('Click on the room to place Desk');
+    expect(getPlacementHint().textContent).toContain('Click the office floor to place Desk');
   });
 
   it('renders no hint when no furniture type is selected', () => {
     render(<LayoutEditor {...makeProps({ selectedFurnitureType: null })} />);
     expect(
-      screen.queryByText((_c, el) => el?.classList.contains('placement-hint') ?? false),
+      screen.queryByText(
+        (_c, el) =>
+          el?.classList.contains('placement-hint') === true &&
+          el?.classList.contains('danger') === false,
+      ),
+    ).toBeNull();
+  });
+
+  it('does not confuse the delete-mode hint with the placement hint', () => {
+    render(<LayoutEditor {...makeProps({ selectedFurnitureType: null, deleteMode: true })} />);
+    // The danger hint renders, but the placement hint (non-danger) does not.
+    expect(
+      screen.getByText(
+        (_c, el) =>
+          el?.classList.contains('placement-hint') === true &&
+          el?.classList.contains('danger') === true,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(
+        (_c, el) =>
+          el?.classList.contains('placement-hint') === true &&
+          el?.classList.contains('danger') === false,
+      ),
     ).toBeNull();
   });
 });

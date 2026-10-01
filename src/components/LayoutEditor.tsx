@@ -380,7 +380,8 @@ export const LayoutEditor: React.FC<Props> = ({
       {/* Placement hint when type selected but nothing placed */}
       {selectedFurnitureType && !selectedFurnitureId && (
         <div className="placement-hint">
-          Click on the {roomName ?? 'room'} to place {FURNITURE_LABELS[selectedFurnitureType] || selectedFurnitureType}
+          Click the office floor to place {FURNITURE_LABELS[selectedFurnitureType] || selectedFurnitureType}
+          {roomName && <> · {roomName}</>}
           <button className="action-btn" onClick={() => onSelectFurnitureType(null)}>✖ Cancel</button>
         </div>
       )}

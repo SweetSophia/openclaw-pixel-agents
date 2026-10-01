@@ -11,7 +11,7 @@ import { useLayoutStore } from './hooks/useLayoutStore';
 import { useLiveSync } from './hooks/useLiveSync';
 import { sfx } from './audio/SoundFX';
 import { newEntityId } from './util/id';
-import { DEFAULT_ROOMS, type PlacedFurniture } from '../shared/types';
+import { getRoomName, type PlacedFurniture } from '../shared/types';
 import './App.css';
 
 export const App: React.FC = () => {
@@ -220,7 +220,7 @@ export const App: React.FC = () => {
               selectedFurnitureType={selectedFurnitureType}
               selectedFurnitureId={selectedFurnitureId}
               deleteMode={deleteMode}
-              roomName={DEFAULT_ROOMS.find((room) => room.id === activeRoomId)?.name}
+              roomName={getRoomName(activeRoomId)}
               onSelectFurnitureType={(type) => {
                 setDeleteMode(false);
                 setSelectedFurnitureType(type);
