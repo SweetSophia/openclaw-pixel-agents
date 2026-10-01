@@ -190,9 +190,15 @@ export function resolveRoomByTags(agentTags: AgentTag[]): string {
 
 /**
  * Look up a room's display name by id. Returns undefined for unknown ids so
- * callers can choose their own fallback. Companion to resolveRoomByTags: all
- * id→name lookups go through here so client and server share one accessor
- * instead of re-implementing the find at each call site.
+ * callers can choose their own fallback. Companion to resolveRoomByTags: the
+ * placement-hint wiring routes id→name lookups through here so client and
+ * server share one accessor instead of re-implementing the find.
+ *
+ * RoomSwitcher intentionally does NOT use this: it renders room names
+ * straight from the /api/rooms response. That is the seam where dynamic
+ * server-side rooms will land — when rooms become server-authoritative,
+ * the switcher is already on server data and only this accessor's source
+ * needs to change.
  */
 export function getRoomName(roomId: string): string | undefined {
   return DEFAULT_ROOMS.find((room) => room.id === roomId)?.name;
