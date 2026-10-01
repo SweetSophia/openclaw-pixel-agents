@@ -16,7 +16,7 @@ interface Props {
   selectedFurnitureType: string | null;
   selectedFurnitureId: string | null;
   deleteMode: boolean;
-  /** Label of the active room, surfaced in the placement hint (falls back to "room"). */
+  /** Label of the active room, appended to the placement hint as trailing context; omitted when undefined. */
   roomName?: string;
   onSelectFurnitureType: (type: string | null) => void;
   onSelectFurnitureId: (id: string | null) => void;
