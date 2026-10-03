@@ -68,9 +68,14 @@ describe('LayoutEditor searchable furniture palette', () => {
     const user = userEvent.setup();
     render(<LayoutEditor {...makeProps()} />);
     const input = openPalette();
-    await user.type(input, 'no such furniture');
     const palette = within(input.closest('.furniture-palette')! as HTMLElement);
-    expect(palette.getByRole('status')).toHaveTextContent('No furniture matches');
+    // AT must be able to register the empty region before its text changes.
+    const status = palette.getByRole('status');
+    expect(status).toBeEmptyDOMElement();
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    await user.type(input, 'no such furniture');
+    expect(palette.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('No furniture matches');
     expect(palette.getByRole('status')).toHaveTextContent('Clear the search');
     expect(paletteItems(input)).toHaveLength(0);
     expect(screen.queryByText('Plants')).not.toBeInTheDocument();
@@ -80,15 +85,19 @@ describe('LayoutEditor searchable furniture palette', () => {
     expect(input).toHaveValue('');
     expect(input).toHaveFocus();
     expect(paletteItems(input)).toHaveLength(6);
-    expect(palette.queryByRole('status')).not.toBeInTheDocument();
+    expect(palette.getByRole('status')).toBe(status);
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('distinguishes an empty catalog from a query with no matches', () => {
     render(<LayoutEditor {...makeProps({ catalog: [] })} />);
     const input = openPalette();
-    expect(within(input.closest('.furniture-palette')! as HTMLElement).getByRole('status'))
-      .toHaveTextContent('No furniture available');
+    const status = within(input.closest('.furniture-palette')! as HTMLElement).getByRole('status');
+    expect(status).toHaveTextContent('Furniture catalog is not loaded or is unavailable.');
     expect(screen.getByRole('button', { name: 'Clear furniture search' })).toBeDisabled();
+    fireEvent.change(input, { target: { value: 'plant' } });
+    expect(status).toHaveTextContent('Furniture catalog is not loaded or is unavailable.');
+    expect(status).not.toHaveTextContent('No furniture matches');
   });
 
   it('focuses on explicit open, preserves query across panel toggles, and never steals focus on rerender', () => {
@@ -227,6 +236,83 @@ describe('LayoutEditor searchable furniture palette', () => {
     } finally {
       window.removeEventListener('keydown', windowEscape);
     }
+  });
+
+  it('keeps ordinary result keydown/keyup events bubbling but contains both Escape phases', () => {
+    render(<LayoutEditor {...makeProps()} />);
+    const input = openPalette();
+    const result = screen.getByTitle('Desk');
+    const documentKey = vi.fn();
+    const windowKey = vi.fn();
+    document.addEventListener('keydown', documentKey);
+    document.addEventListener('keyup', documentKey);
+    window.addEventListener('keydown', windowKey);
+    window.addEventListener('keyup', windowKey);
+    try {
+      result.focus();
+      fireEvent.keyDown(result, { key: 'r' });
+      fireEvent.keyUp(result, { key: 'r' });
+      expect(documentKey.mock.calls.map(([event]) => [event.type, event.key]))
+        .toEqual([['keydown', 'r'], ['keyup', 'r']]);
+      expect(windowKey).toHaveBeenCalledTimes(2);
+      fireEvent.keyDown(result, { key: 'Escape' });
+      fireEvent.keyUp(result, { key: 'Escape' });
+      expect(documentKey).toHaveBeenCalledTimes(2);
+      expect(windowKey).toHaveBeenCalledTimes(2);
+      expect(input).toHaveFocus();
+    } finally {
+      document.removeEventListener('keydown', documentKey);
+      document.removeEventListener('keyup', documentKey);
+      window.removeEventListener('keydown', windowKey);
+      window.removeEventListener('keyup', windowKey);
+    }
+  });
+
+  it('gives each editor unique disclosure relationships only while the panels are mounted', () => {
+    const { container } = render(<><LayoutEditor {...makeProps()} /><LayoutEditor {...makeProps()} /></>);
+    const ids = new Set<string>();
+    for (const editor of Array.from(container.querySelectorAll<HTMLElement>('.layout-editor'))) {
+      const controls = within(editor);
+      const furniture = controls.getByTitle('Furniture palette');
+      const layouts = controls.getByTitle('Layout manager');
+      for (const toggle of [furniture, layouts]) {
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        expect(toggle).not.toHaveAttribute('aria-controls');
+      }
+      fireEvent.click(furniture);
+      const palette = controls.getByRole('searchbox').closest('.furniture-palette')!;
+      expect(furniture).toHaveAttribute('aria-expanded', 'true');
+      expect(furniture).toHaveAttribute('aria-controls', palette.id);
+      ids.add(palette.id);
+      fireEvent.click(layouts);
+      expect(furniture).toHaveAttribute('aria-expanded', 'false');
+      expect(furniture).not.toHaveAttribute('aria-controls');
+      expect(palette).not.toBeInTheDocument();
+      const manager = controls.getByLabelText('New layout name').closest('.layout-manager')!;
+      expect(layouts).toHaveAttribute('aria-expanded', 'true');
+      expect(layouts).toHaveAttribute('aria-controls', manager.id);
+      ids.add(manager.id);
+      fireEvent.click(layouts);
+      expect(layouts).toHaveAttribute('aria-expanded', 'false');
+      expect(layouts).not.toHaveAttribute('aria-controls');
+      expect(manager).not.toBeInTheDocument();
+    }
+    expect(ids.size).toBe(4);
+    expect(ids.has('')).toBe(false);
+  });
+
+  it('advertises click actions without nonexistent shortcut labels and still invokes them', () => {
+    const props = makeProps({
+      activeLayout: { ...layout, furniture: [{ id: 'desk-1', type: 'DESK', x: 3, y: 4, rotation: 0 }] },
+      selectedFurnitureId: 'desk-1',
+    });
+    render(<LayoutEditor {...props} />);
+    expect(screen.queryByTitle('Rotate (R)')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Delete (Del)')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Rotate'));
+    fireEvent.click(screen.getByTitle('Delete'));
+    expect(props.onRotateFurniture).toHaveBeenCalledWith('desk-1');
+    expect(props.onDeleteFurniture).toHaveBeenCalledWith('desk-1');
   });
 
   it('does not clear a query on an IME composition Escape', () => {

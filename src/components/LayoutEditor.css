@@ -191,6 +191,9 @@
   color: var(--text-main);
 }
 .palette-search input::placeholder { color: var(--text-muted); }
+/* Clear is the sole visible cancel control and restores search focus. */
+.palette-search input::-webkit-search-cancel-button,
+.palette-search input::-webkit-search-decoration { -webkit-appearance: none; }
 .palette-search .action-btn:disabled { opacity: 0.5; cursor: default; }
 .palette-search input:focus-visible,
 .palette-search button:focus-visible,

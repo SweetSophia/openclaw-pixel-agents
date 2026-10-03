@@ -76,10 +76,14 @@ Click **✏️ Edit** in the header to enter editor mode:
 | Select furniture | Click on placed furniture (green dashed border) |
 | Move furniture | Click and drag |
 | Rotate furniture | Right-click, or use 🔄 button in the info bar |
-| Delete furniture | Use 🗑️ button in the info bar, or press Delete |
+| Delete furniture | Use 🗑️ button in the info bar, or enable Delete mode and click a placed item |
 | Save layout | Click 💾 Save |
 
-Furniture search ignores case and leading/trailing spaces. Only available items and non-empty categories are shown. **Clear** or **Escape** anywhere in the palette resets the query without cancelling placement; filtering never changes your selected furniture. The query is retained when switching panels, and opening Furniture focuses search. Tab reaches Clear and the matching items; search keystrokes do not trigger editor shortcuts.
+Furniture search matches a single substring, ignoring case and leading/trailing spaces. Only catalog items and non-empty categories are shown. A persistent polite status region reports no matches; a catalog that has not loaded or is unavailable is reported separately, even with a query entered.
+
+**Clear** (the sole visible clear control) or **Escape** anywhere in the palette resets the query without cancelling placement; filtering never changes your selected furniture. The query is retained when switching panels within an editor session, and opening Furniture focuses search. Exiting the editor unmounts its panels and discards the query; reopening Furniture in a new session starts with an empty search.
+
+Tab reaches enabled Clear and the matching items. The search input and Clear isolate all keydown/keyup events from document/window bubble listeners while preserving native typing and navigation; result buttons isolate **Escape** only, and other keys propagate normally. Rotate and Delete are click controls, not keyboard shortcuts.
 
 Layouts auto-save 2 seconds after the last furniture change; the explicit Save button remains available.
 

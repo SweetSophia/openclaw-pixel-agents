@@ -139,6 +139,7 @@ export const LayoutEditor: React.FC<Props> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchInputId = useId();
   const palettePanelId = useId();
+  const layoutsPanelId = useId();
 
   // Only an explicit palette-open transition focuses search; catalog/save/
   // selection updates must not steal focus from the user's current control.
@@ -378,6 +379,8 @@ export const LayoutEditor: React.FC<Props> = ({
           className={`toolbar-btn ${showLayouts ? 'active' : ''}`}
           onClick={() => { setShowLayouts(!showLayouts); setShowPalette(false); }}
           title="Layout manager"
+          aria-expanded={showLayouts}
+          aria-controls={showLayouts ? layoutsPanelId : undefined}
         >
           📐 Layouts
         </button>
@@ -406,8 +409,8 @@ export const LayoutEditor: React.FC<Props> = ({
           <span className="selected-pos">
             ({selectedFurniture.x}, {selectedFurniture.y}) r{selectedFurniture.rotation}°
           </span>
-          <button className="action-btn" onClick={() => onRotateFurniture(selectedFurniture.id)} title="Rotate (R)">🔄</button>
-          <button className="action-btn danger" onClick={() => onDeleteFurniture(selectedFurniture.id)} title="Delete (Del)">🗑️</button>
+          <button className="action-btn" onClick={() => onRotateFurniture(selectedFurniture.id)} title="Rotate">🔄</button>
+          <button className="action-btn danger" onClick={() => onDeleteFurniture(selectedFurniture.id)} title="Delete">🗑️</button>
           <button className="action-btn" onClick={() => onSelectFurnitureId(null)} title="Deselect">✖</button>
         </div>
       )}
@@ -437,6 +440,8 @@ export const LayoutEditor: React.FC<Props> = ({
           onKeyDown={event => {
             // Result buttons are keyboard destinations too: Escape belongs to
             // the palette, not the drawer or a pending canvas placement.
+            // Other result keydowns/keyups bubble normally; only the search
+            // input/Clear subtree isolates all keys (without blocking defaults).
             if (event.key === 'Escape') handleSearchKeyDown(event);
           }}
           onKeyUp={event => {
@@ -468,13 +473,18 @@ export const LayoutEditor: React.FC<Props> = ({
               >Clear</button>
             </div>
           </div>
-          {filteredCategories.length === 0 && (
-            <p className="palette-empty" role="status">
-              {query
-                ? 'No furniture matches. Clear the search or try another name or type.'
-                : 'No furniture available.'}
-            </p>
-          )}
+          {/* Keep the live region registered for the palette's entire lifetime;
+              update its text rather than mounting it with a new message. */}
+          <p className="palette-empty" role="status" aria-live="polite">
+            {catalog.length === 0
+              // The store exposes no loading/error distinction for the catalog.
+              ? 'Furniture catalog is not loaded or is unavailable.'
+              : filteredCategories.length === 0
+                ? (query
+                  ? 'No furniture matches. Clear the search or try another name or type.'
+                  : 'No furniture available.')
+                : ''}
+          </p>
           {filteredCategories.map(cat => (
             <div key={cat.name} className="palette-category">
               <h4>{cat.name}</h4>
@@ -499,7 +509,7 @@ export const LayoutEditor: React.FC<Props> = ({
 
       {/* Layout manager */}
       {showLayouts && (
-        <div className="layout-manager">
+        <div className="layout-manager" id={layoutsPanelId}>
           <h3>📐 Layouts</h3>
           {layoutError && (
             <div className="layout-alert" role="alert">
