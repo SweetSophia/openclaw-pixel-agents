@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import type { PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc, SaveStatus } from '../hooks/useLayoutStore';
@@ -135,6 +135,29 @@ export const LayoutEditor: React.FC<Props> = ({
   onToggleEditor,
 }) => {
   const [showPalette, setShowPalette] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchInputId = useId();
+
+  // Only an explicit palette-open transition focuses search; catalog/save/
+  // selection updates must not steal focus from the user's current control.
+  useLayoutEffect(() => {
+    if (showPalette) searchInputRef.current?.focus();
+  }, [showPalette]);
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    searchInputRef.current?.focus();
+  };
+  const handleSearchKeyDown = (event: React.KeyboardEvent) => {
+    // Keep native typing and Tab, but don't send search keystrokes to the
+    // document/window editor shortcuts (including the agents drawer Escape).
+    event.stopPropagation();
+    if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      clearSearch();
+    }
+  };
   const [showLayouts, setShowLayouts] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -298,6 +321,15 @@ export const LayoutEditor: React.FC<Props> = ({
   if (!editorMode) return null;
 
   const selectedFurniture = activeLayout?.furniture.find(f => f.id === selectedFurnitureId);
+  const query = searchQuery.trim().toLowerCase();
+  const filteredCategories = CATEGORIES.map(category => ({
+    ...category,
+    types: category.types.filter(type => catalog.includes(type) && (
+      (FURNITURE_LABELS[type] || type).toLowerCase().includes(query)
+      || type.toLowerCase().includes(query)
+      || type.replace(/_/g, ' ').toLowerCase().includes(query)
+    )),
+  })).filter(category => category.types.length > 0);
 
   // Save button doubles as the save-status indicator (aria-live region).
   const saveLabel =
@@ -327,6 +359,7 @@ export const LayoutEditor: React.FC<Props> = ({
           className={`toolbar-btn ${showPalette ? 'active' : ''}`}
           onClick={() => { setShowPalette(!showPalette); setShowLayouts(false); }}
           title="Furniture palette"
+          aria-expanded={showPalette}
         >
           📦 Furniture
         </button>
@@ -398,16 +431,48 @@ export const LayoutEditor: React.FC<Props> = ({
       {showPalette && (
         <div className="furniture-palette">
           <h3>📦 Furniture</h3>
-          {CATEGORIES.map(cat => (
+          <div
+            className="palette-search"
+            onKeyDown={handleSearchKeyDown}
+            onKeyUp={event => event.stopPropagation()}
+          >
+            <label htmlFor={searchInputId}>Search furniture</label>
+            <div className="palette-search-controls">
+              <input
+                id={searchInputId}
+                ref={searchInputRef}
+                type="search"
+                placeholder="Name or type…"
+                value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)}
+              />
+              <button
+                type="button"
+                className="action-btn"
+                aria-label="Clear furniture search"
+                onClick={clearSearch}
+                disabled={!searchQuery}
+              >Clear</button>
+            </div>
+          </div>
+          {filteredCategories.length === 0 && (
+            <p className="palette-empty" role="status">
+              {query
+                ? 'No furniture matches. Clear the search or try another name or type.'
+                : 'No furniture available.'}
+            </p>
+          )}
+          {filteredCategories.map(cat => (
             <div key={cat.name} className="palette-category">
               <h4>{cat.name}</h4>
               <div className="palette-items">
-                {cat.types.filter(t => catalog.includes(t)).map(type => (
+                {cat.types.map(type => (
                   <button
                     key={type}
                     className={`palette-item ${selectedFurnitureType === type ? 'selected' : ''}`}
                     onClick={() => onSelectFurnitureType(selectedFurnitureType === type ? null : type)}
                     title={FURNITURE_LABELS[type] || type}
+                    aria-pressed={selectedFurnitureType === type}
                   >
                     <span className="palette-icon">{FURNITURE_ICONS[type] || '📦'}</span>
                     <span className="palette-label">{FURNITURE_LABELS[type] || type}</span>
