@@ -862,7 +862,7 @@ describe('GameEngine informational furniture preview', () => {
   let canvas: HTMLCanvasElement;
   let recorded: RecordingContext;
   let cb: EditorCallbacks;
-  type PreviewEngine = { furniture: Map<string, unknown>; assetsLoaded: boolean; renderEditorOverlay(size: number): void; renderFurniture(size: number, zoom: number): void; editor: { previewIntent: { x: number; y: number } | null } };
+  type PreviewEngine = { furniture: Map<string, unknown>; assetsLoaded: boolean; renderEditorOverlay(size: number): void; renderFurniture(size: number, zoom: number): void; editor: { previewIntent: { x: number; y: number } | null; refreshPreview(): void } };
   const internal = () => engine as unknown as PreviewEngine;
   const previewClientCenter = (x: number, y: number) => ({ clientX: (x + 0.5) * 16, clientY: (y + 0.5) * 16 });
   const mouse = (name: string, x: number, y: number) => canvas.dispatchEvent(new MouseEvent(name, { button: 0, ...previewClientCenter(x, y) }));
@@ -948,6 +948,92 @@ describe('GameEngine informational furniture preview', () => {
     expect(message).toHaveBeenCalledTimes(count);
     mouse('mousedown', 23, 15); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 21, 14);
   });
+  it.each(['mouse', 'touch', 'touch offset'] as const)('aligns the stationary %s drag sprite, outline, status and drop when the real manifest resolves', async (pointer) => {
+    internal().furniture = new Map(); internal().assetsLoaded = false;
+    let release!: (value: Response) => void;
+    const manifest = new Promise<Response>(resolve => { release = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: string) => input === '/assets/furniture/DESK/manifest.json'
+      ? manifest : Promise.resolve(new Response('', { status: input === '/assets/furniture/DESK/DESK.png' ? 200 : 404 }))));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 48, height: 32 })));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recorded.ctx);
+    const message = vi.fn((status: string) => {
+      if (status === 'Touches the office border.') {
+        // A synchronous subscriber must see the already-realigned sprite/intent.
+        expect(engine.getPlacedFurniture()[0]).toMatchObject({ x: 21, y: 14 });
+        expect(internal().editor.previewIntent).toMatchObject({ x: 21, y: 14 });
+        expect(cb.onMoveFurniture).not.toHaveBeenCalled();
+      }
+    });
+    engine.setFurniturePreviewCallback(message);
+    const loading = engine.init();
+    const targetX = pointer === 'touch offset' ? 22 : 23;
+    if (pointer === 'mouse') {
+      mouse('mousedown', 6, 5); mouse('mousemove', targetX, 15);
+    } else {
+      touch('touchstart', [previewClientCenter(6, 5)]);
+      touch('touchmove', [previewClientCenter(targetX, 15)]);
+    }
+    const fallbackX = pointer === 'mouse' ? 23 : targetX - 1;
+    expect(engine.getPlacedFurniture()[0]).toMatchObject({ x: fallbackX, y: 15 });
+    expect(internal().editor.previewIntent).toMatchObject({ x: fallbackX, y: 15 });
+    expect(message.mock.calls[message.mock.calls.length - 1][0]).toContain('2×1 placeholder');
+    release(Response.json({ file: 'DESK.png', width: 48, height: 32, footprintW: 3, footprintH: 2 }));
+    await loading;
+    // No frame or pointer dispatch between releasing assets and these assertions.
+    expect(engine.getPlacedFurniture()[0]).toMatchObject({ x: 21, y: 14 });
+    expect(internal().editor.previewIntent).toMatchObject({ x: 21, y: 14 });
+    expect(message).toHaveBeenLastCalledWith('Touches the office border.');
+    expect(cb.onMoveFurniture).not.toHaveBeenCalled();
+    expect(cb.onPlaceFurniture).not.toHaveBeenCalled();
+    const count = message.mock.calls.length;
+    internal().editor.refreshPreview();
+    internal().renderFurniture(16, 1);
+    internal().renderEditorOverlay(16); internal().renderEditorOverlay(16);
+    expect(message).toHaveBeenCalledTimes(count);
+    expect(recorded.strokes).toContainEqual({ style: '#4ecca3', x: 21 * 16 - 2, y: 14 * 16 - 2, w: 52, h: 36 });
+    expect(recorded.fills).toContainEqual({ style: 'rgba(245, 185, 66, 0.25)', x: 21 * 16, y: 14 * 16, w: 48, h: 32 });
+    if (pointer === 'mouse') mouse('mouseup', targetX, 15);
+    else touch('touchend');
+    expect(cb.onMoveFurniture).toHaveBeenCalledExactlyOnceWith('desk', 21, 14);
+    expect(engine.getPlacedFurniture()[0]).toMatchObject({ x: 21, y: 14 });
+    expect(internal().editor.previewIntent).toBeNull();
+  });
+  it.each(['no intent', 'place', 'cancel', 'pinch', 'leave', 'drop', 'stop', 'deleted target'] as const)(
+    'does not move furniture on delayed asset completion after %s', async (state) => {
+      internal().furniture = new Map(); internal().assetsLoaded = false;
+      let release!: (value: Response) => void;
+      const manifest = new Promise<Response>(resolve => { release = resolve; });
+      vi.stubGlobal('fetch', vi.fn((input: string) => input === '/assets/furniture/DESK/manifest.json'
+        ? manifest : Promise.resolve(new Response('', { status: input === '/assets/furniture/DESK/DESK.png' ? 200 : 404 }))));
+      vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 48, height: 32 })));
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recorded.ctx);
+      const loading = engine.init();
+      if (state === 'place') {
+        engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 23, 15);
+      } else if (state !== 'no intent') {
+        if (state === 'cancel' || state === 'pinch') {
+          touch('touchstart', [previewClientCenter(6, 5)]); touch('touchmove', [previewClientCenter(23, 15)]);
+          if (state === 'cancel') touch('touchcancel');
+          else touch('touchstart', [previewClientCenter(23, 15), previewClientCenter(20, 15)]);
+        } else {
+          mouse('mousedown', 5, 5); mouse('mousemove', 23, 15);
+          if (state === 'leave') canvas.dispatchEvent(new MouseEvent('mouseleave'));
+          if (state === 'drop') mouse('mouseup', 23, 15);
+          if (state === 'stop') engine.stop();
+          if (state === 'deleted target') engine.setLayout([]);
+        }
+      }
+      const before = engine.getPlacedFurniture().map(item => ({ ...item }));
+      vi.mocked(cb.onMoveFurniture).mockClear();
+      release(Response.json({ file: 'DESK.png', width: 48, height: 32, footprintW: 3, footprintH: 2 }));
+      await loading;
+      expect(engine.getPlacedFurniture()).toEqual(before);
+      expect(cb.onMoveFurniture).not.toHaveBeenCalled();
+      expect(cb.onPlaceFurniture).not.toHaveBeenCalled();
+      if (state === 'place') expect(internal().editor.previewIntent).toMatchObject({ x: 21, y: 14 });
+      else expect(internal().editor.previewIntent).toBeNull();
+    },
+  );
   it('retains exact-edge touch callback coordinates even beyond the rendered grid', () => {
     const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
     touch('touchstart', [{ clientX: 384, clientY: 256 }]);

@@ -102,11 +102,17 @@ export class EditorController {
     this.clearPreview();
   }
   // Asset loading may change the legacy clamp dimensions while the pointer is
-  // stationary. Reassess the same source coordinates without mutating furniture.
+  // stationary. Keep an active drag sprite aligned before publishing feedback.
   refreshPreview(): void {
     if (!this._previewIntent) return;
     const candidate = this.previewCandidate;
-    this.setPreview(candidate ? candidate() : this._previewIntent, candidate);
+    const intent = candidate ? candidate() : this._previewIntent;
+    if (intent.kind === 'move'
+      && (this.dragging?.id === intent.id || (this.touchDragging?.id === intent.id && this.touchMoved))
+      && this.host.getFootprintForId(intent.id)) {
+      this.host.previewFurnitureMove(intent.id, intent.x, intent.y);
+    }
+    this.setPreview(intent, candidate);
   }
   private setPreview(intent: FurniturePreviewIntent | null, candidate: (() => FurniturePreviewIntent) | null = null): void {
     this._previewIntent = this._editorMode && !this.deleteMode && intent ? Object.freeze(intent) : null;
