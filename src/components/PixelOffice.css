@@ -63,3 +63,11 @@
   pointer-events: none;
 }
 .furniture-preview-status:empty { padding: 0; background: transparent; }
+
+@media (min-width: 1025px) {
+  /* The sidebar owns the right-hand HUD lane, including the warning's height. */
+  .furniture-preview-status {
+    left: calc((100% - var(--desktop-agent-sidebar-reserved-width)) / 2);
+    max-width: min(600px, calc(100vw - var(--desktop-agent-sidebar-reserved-width) - 32px));
+  }
+}
