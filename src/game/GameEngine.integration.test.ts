@@ -907,11 +907,42 @@ describe('GameEngine informational furniture preview', () => {
     engine.setDeleteMode(false); engine.setEditorMode(false); engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 5, 5);
     expect(internal().editor.previewIntent).toBeNull(); expect(message).toHaveBeenLastCalledWith('');
   });
+  it('distinguishes outside footprint from outside anchor and limits permission language to overlap', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    engine.setLayout([{ id: 'edge', type: 'DESK', x: 23, y: 15, rotation: 0 }]);
+    touch('touchstart', [previewClientCenter(23, 15)]);
+    expect(message).toHaveBeenLastCalledWith('Overlaps furniture — overlap itself is allowed. Footprint extends beyond the office canvas.');
+    expect(message.mock.calls[message.mock.calls.length - 1][0]).not.toContain('Anchor is outside');
+    touch('touchend'); touch('touchstart', [{ clientX: 384, clientY: 256 }]);
+    expect(message).toHaveBeenLastCalledWith('Anchor is outside the office canvas; saving may be rejected. Overlaps furniture — overlap itself is allowed. Footprint extends beyond the office canvas.');
+    touch('touchend'); expect(cb.onPlaceFurniture).toHaveBeenLastCalledWith('DESK', 24, 16);
+  });
+  it('refreshes fallback status and the real mouse candidate as assets finish loading without a pointer event/frame', async () => {
+    internal().furniture = new Map(); internal().assetsLoaded = false;
+    let release!: (value: Response) => void;
+    const manifest = new Promise<Response>(resolve => { release = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: string) => input === '/assets/furniture/DESK/manifest.json'
+      ? manifest : Promise.resolve(new Response('', { status: input === '/assets/furniture/DESK/DESK.png' ? 200 : 404 }))));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 48, height: 32 })));
+    // Asset slicing uses actual SpriteLoader/CharacterComposer; only canvas/REST/bitmap boundaries replaced.
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recorded.ctx);
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    const loading = engine.init(); mouse('mousemove', 23, 15);
+    expect(internal().editor.previewIntent).toMatchObject({ x: 23, y: 15 });
+    expect(message.mock.calls[message.mock.calls.length - 1][0]).toContain('2×1 placeholder');
+    release(Response.json({ file: 'DESK.png', width: 48, height: 32, footprintW: 3, footprintH: 2 }));
+    await loading;
+    expect(internal().editor.previewIntent).toMatchObject({ x: 21, y: 14 });
+    expect(message).toHaveBeenLastCalledWith('Touches the office border.');
+    const count = message.mock.calls.length; internal().renderEditorOverlay(16); internal().renderEditorOverlay(16);
+    expect(message).toHaveBeenCalledTimes(count);
+    mouse('mousedown', 23, 15); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 21, 14);
+  });
   it('retains exact-edge touch callback coordinates even beyond the rendered grid', () => {
     const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
     touch('touchstart', [{ clientX: 384, clientY: 256 }]);
     expect(internal().editor.previewIntent).toMatchObject({ x: 24, y: 16 });
-    expect(message).toHaveBeenLastCalledWith('Extends beyond the office canvas.');
+    expect(message).toHaveBeenLastCalledWith('Anchor is outside the office canvas; saving may be rejected. Footprint extends beyond the office canvas.');
     touch('touchend'); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 24, 16);
   });
   it('clears mouse/touch previews in real object-fit bars and cancels without inventing a rollback', () => {

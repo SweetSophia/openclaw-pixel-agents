@@ -331,6 +331,9 @@ export class GameEngine {
         console.warn('[GameEngine] Fell back to characters-only; furniture sprites unavailable');
       } catch { }
     }
+    // Refresh both fallback geometry/status and any asset-dependent callback
+    // target before the first frame, without requiring another pointer event.
+    this.editor.refreshPreview();
   }
 
   start() {
@@ -1386,8 +1389,12 @@ export class GameEngine {
       this.placedFurniture.map(item => ({ id: item.id, ...this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0) })),
       this.config.gridWidth, this.config.gridHeight, moved?.id);
     const parts: string[] = [];
-    if (assessment.overlap) parts.push('Overlaps furniture — placement is allowed.');
-    if (assessment.outside) parts.push('Extends beyond the office canvas.');
+    const anchorOutside = intent.x < 0 || intent.y < 0
+      || intent.x >= this.config.gridWidth || intent.y >= this.config.gridHeight;
+    if (anchorOutside) parts.push('Anchor is outside the office canvas; saving may be rejected.');
+    if (assessment.overlap) parts.push(assessment.outside || anchorOutside
+      ? 'Overlaps furniture — overlap itself is allowed.' : 'Overlaps furniture — placement is allowed.');
+    if (assessment.outside) parts.push('Footprint extends beyond the office canvas.');
     else if (assessment.border) parts.push('Touches the office border.');
     if (!parts.length) parts.push('Furniture footprint preview.');
     if (rectangle.fallback) parts.push('Using the 2×1 placeholder footprint.');

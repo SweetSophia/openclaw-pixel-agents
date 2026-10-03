@@ -91,12 +91,21 @@ export class EditorController {
   private attached = false;
   private _previewIntent: FurniturePreviewIntent | null = null;
   private previewCallback: (() => void) | null = null;
+  private previewCandidate: (() => FurniturePreviewIntent) | null = null;
 
   get previewIntent(): FurniturePreviewIntent | null { return this._previewIntent; }
   setPreviewCallback(callback: (() => void) | null): void { this.previewCallback = callback; }
   clearPreview(): void { this.setPreview(null); }
-  private setPreview(intent: FurniturePreviewIntent | null): void {
+  // Asset loading may change the legacy clamp dimensions while the pointer is
+  // stationary. Reassess the same source coordinates without mutating furniture.
+  refreshPreview(): void {
+    if (!this._previewIntent) return;
+    const candidate = this.previewCandidate;
+    this.setPreview(candidate ? candidate() : this._previewIntent, candidate);
+  }
+  private setPreview(intent: FurniturePreviewIntent | null, candidate: (() => FurniturePreviewIntent) | null = null): void {
     this._previewIntent = this._editorMode && !this.deleteMode && intent ? Object.freeze(intent) : null;
+    this.previewCandidate = this._previewIntent ? candidate : null;
     this.previewCallback?.();
   }
 
@@ -205,9 +214,9 @@ export class EditorController {
     if (this.dragging) {
       const candidate = this.moveCandidate(this.dragging.id, gridX, gridY);
       this.host.previewFurnitureMove(candidate.id, candidate.x, candidate.y);
-      this.setPreview(candidate);
+      this.setPreview(candidate, () => this.moveCandidate(candidate.id, gridX, gridY));
     } else if (this._selectedFurnitureType) {
-      this.setPreview(this.placeCandidate(gridX, gridY));
+      this.setPreview(this.placeCandidate(gridX, gridY), () => this.placeCandidate(gridX, gridY));
     } else {
       this.clearPreview();
     }
@@ -237,7 +246,7 @@ export class EditorController {
     if (event.button !== 0) return;
     if (this._selectedFurnitureType) {
       const candidate = this.placeCandidate(gridX, gridY);
-      this.setPreview(candidate);
+      this.setPreview(candidate, () => this.placeCandidate(gridX, gridY));
       this.callbacks?.onPlaceFurniture(candidate.type, candidate.x, candidate.y);
       this.sounds.place();
       return;
@@ -265,7 +274,7 @@ export class EditorController {
     const result = this.host.screenToGrid(event.clientX, event.clientY);
     if (!result) { this.clearPreview(); return; }
     const candidate = this.moveCandidate(this.dragging.id, result.gridX, result.gridY);
-    this.setPreview(candidate);
+    this.setPreview(candidate, () => this.moveCandidate(candidate.id, result.gridX, result.gridY));
     this.callbacks?.onMoveFurniture(candidate.id, candidate.x, candidate.y);
     this.clearPreview();
     this.sounds.place();
@@ -313,7 +322,8 @@ export class EditorController {
     if (!result) { this.clearPreview(); return; }
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
-    if (this._selectedFurnitureType) this.setPreview(this.placeCandidate(result.gridX, result.gridY, true));
+    if (this._selectedFurnitureType) this.setPreview(this.placeCandidate(result.gridX, result.gridY, true),
+      () => this.placeCandidate(result.gridX, result.gridY, true));
 
     if (this._editorMode && event.touches.length === 1 && !this._selectedFurnitureType) {
       const hit = this.host.findFurnitureAt(result.gridX, result.gridY);
@@ -367,13 +377,14 @@ export class EditorController {
     // A furniture hit becomes a drag only after the touch crosses the
     // tap threshold. This keeps ordinary finger jitter eligible for a tap.
     if (this._editorMode && this.touchDragging && this.touchMoved) {
-      const candidate = this.moveCandidate(this.touchDragging.id, result.gridX, result.gridY,
-        this.touchDragging.offsetX, this.touchDragging.offsetY);
+      const dragging = this.touchDragging;
+      const candidate = this.moveCandidate(dragging.id, result.gridX, result.gridY, dragging.offsetX, dragging.offsetY);
       this.host.previewFurnitureMove(candidate.id, candidate.x, candidate.y);
-      this.setPreview(candidate);
+      this.setPreview(candidate, () => this.moveCandidate(dragging.id, result.gridX, result.gridY, dragging.offsetX, dragging.offsetY));
     } else if (this._selectedFurnitureType && !this.touchMoved) {
       const start = this.host.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
-      if (start) this.setPreview(this.placeCandidate(start.gridX, start.gridY, true));
+      if (start) this.setPreview(this.placeCandidate(start.gridX, start.gridY, true),
+        () => this.placeCandidate(start.gridX, start.gridY, true));
       else this.clearPreview();
     } else {
       this.clearPreview();
