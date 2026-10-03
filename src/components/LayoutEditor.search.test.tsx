@@ -145,7 +145,12 @@ describe('LayoutEditor searchable furniture palette', () => {
 
   it('preserves a filtered-out placement selection and keeps item toggle behavior', () => {
     const props = makeProps({ selectedFurnitureType: 'DESK' });
-    render(<LayoutEditor {...props} />);
+    function ControlledEditor() {
+      const [selected, setSelected] = React.useState<string | null>('DESK');
+      return <LayoutEditor {...props} selectedFurnitureType={selected}
+        onSelectFurnitureType={type => { props.onSelectFurnitureType(type); setSelected(type); }} />;
+    }
+    render(<ControlledEditor />);
     const input = openPalette();
     fireEvent.change(input, { target: { value: 'plant' } });
     expect(screen.getByText(/Click the office floor to place Desk/)).toBeInTheDocument();
@@ -153,8 +158,12 @@ describe('LayoutEditor searchable furniture palette', () => {
     fireEvent.click(screen.getByTitle('Plant'));
     expect(props.onSelectFurnitureType).toHaveBeenLastCalledWith('PLANT');
     fireEvent.click(screen.getByRole('button', { name: 'Clear furniture search' }));
-    expect(screen.getByTitle('Desk')).toHaveClass('selected');
-    fireEvent.click(screen.getByTitle('Desk'));
+    expect(screen.getByTitle('Plant')).toHaveClass('selected');
+    fireEvent.click(screen.getByTitle('Layout manager'));
+    openPalette();
+    expect(screen.getByTitle('Plant')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText(/Click the office floor to place Plant/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Plant'));
     expect(props.onSelectFurnitureType).toHaveBeenLastCalledWith(null);
     expect(props.onDeleteFurniture).not.toHaveBeenCalled();
     expect(props.onToggleEditor).not.toHaveBeenCalled();
@@ -192,6 +201,27 @@ describe('LayoutEditor searchable furniture palette', () => {
       document.removeEventListener('keydown', documentKey);
       window.removeEventListener('keydown', windowKey);
       window.removeEventListener('keyup', windowKey);
+    }
+  });
+
+  it('clears search from a keyboard-focused result without bubbling Escape or cancelling selection', async () => {
+    const user = userEvent.setup();
+    render(<LayoutEditor {...makeProps({ selectedFurnitureType: 'DESK' })} />);
+    const input = openPalette();
+    const windowEscape = vi.fn();
+    window.addEventListener('keydown', windowEscape);
+    try {
+      await user.type(input, 'plant');
+      await user.tab();
+      await user.tab();
+      expect(screen.getByTitle('Large Plant')).toHaveFocus();
+      await user.keyboard('{Escape}');
+      expect(input).toHaveValue('');
+      expect(input).toHaveFocus();
+      expect(screen.getByText(/Click the office floor to place Desk/)).toBeInTheDocument();
+      expect(windowEscape).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', windowEscape);
     }
   });
 

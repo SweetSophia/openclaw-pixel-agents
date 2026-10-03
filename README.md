@@ -79,7 +79,7 @@ Click **✏️ Edit** in the header to enter editor mode:
 | Delete furniture | Use 🗑️ button in the info bar, or press Delete |
 | Save layout | Click 💾 Save |
 
-Furniture search ignores case and leading/trailing spaces. Only available items and non-empty categories are shown. **Clear** or **Escape** in the search controls resets the query without cancelling placement; filtering never changes your selected furniture. The query is retained when switching panels, and opening Furniture focuses search. Tab reaches Clear and the matching items; search keystrokes do not trigger editor shortcuts.
+Furniture search ignores case and leading/trailing spaces. Only available items and non-empty categories are shown. **Clear** or **Escape** anywhere in the palette resets the query without cancelling placement; filtering never changes your selected furniture. The query is retained when switching panels, and opening Furniture focuses search. Tab reaches Clear and the matching items; search keystrokes do not trigger editor shortcuts.
 
 Layouts auto-save 2 seconds after the last furniture change; the explicit Save button remains available.
 

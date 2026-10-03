@@ -429,7 +429,17 @@ export const LayoutEditor: React.FC<Props> = ({
 
       {/* Furniture palette */}
       {showPalette && (
-        <div className="furniture-palette">
+        <div
+          className="furniture-palette"
+          onKeyDown={event => {
+            // Result buttons are keyboard destinations too: Escape belongs to
+            // the palette, not the drawer or a pending canvas placement.
+            if (event.key === 'Escape') handleSearchKeyDown(event);
+          }}
+          onKeyUp={event => {
+            if (event.key === 'Escape') event.stopPropagation();
+          }}
+        >
           <h3>📦 Furniture</h3>
           <div
             className="palette-search"
