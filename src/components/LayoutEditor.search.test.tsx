@@ -114,6 +114,13 @@ describe('LayoutEditor searchable furniture palette', () => {
     fireEvent.change(input, { target: { value: 'plant' } });
     expect(status).toHaveTextContent('Furniture catalog is not loaded or is unavailable.');
     expect(status).not.toHaveTextContent('No furniture matches');
+    fireEvent.click(screen.getByTitle('Layout manager'));
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toBe(status);
+    expect(status).toBeEmptyDOMElement();
+    const reopened = openPalette();
+    expect(reopened).toHaveValue('plant');
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toBe(status);
+    expect(status).toHaveTextContent('Furniture catalog is not loaded or is unavailable.');
   });
 
   it('focuses on explicit open, preserves query across panel toggles, and never steals focus on rerender', () => {

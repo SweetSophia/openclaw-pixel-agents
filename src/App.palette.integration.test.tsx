@@ -42,6 +42,7 @@ describe('App furniture palette session lifecycle', () => {
       ? screen.getByTitle('Exit editor')
       : screen.getByRole('button', { name: '✏️ Editor ON' }));
     expect(oldInput).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Furniture search feedback' })).not.toBeInTheDocument();
     expect(screen.queryByTitle('Furniture palette')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
