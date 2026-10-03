@@ -895,6 +895,16 @@ describe('GameEngine informational furniture preview', () => {
       });
     }
   }
+  it('retains the neutral editor hover cell but clears it in object-fit bars', () => {
+    mouse('mousemove', 2, 3);
+    internal().renderEditorOverlay(16);
+    expect(recorded.fills).toContainEqual({ style: 'rgba(255,255,255,0.08)', x: 32, y: 48, w: 16, h: 16 });
+    recorded.fills.length = 0;
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 500, height: 256 } as DOMRect);
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 20, clientY: 80 }));
+    internal().renderEditorOverlay(16);
+    expect(recorded.fills).toEqual([]);
+  });
   it('draws the selected outline at its rotated origin, without changing hit testing', () => {
     engine.setLayout([{ id: 'desk', type: 'DESK', x: 5, y: 5, rotation: 180 }]); engine.setSelectedFurnitureId('desk');
     internal().renderFurniture(16, 1);

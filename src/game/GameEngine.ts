@@ -1359,7 +1359,14 @@ export class GameEngine {
     }
     const preview = this.getFurniturePreview();
     this.publishFurniturePreview(preview);
-    if (!preview) return;
+    if (!preview) {
+      // Retain the existing neutral cell when selecting/rotating, not placing.
+      if (!this.editor.selectedFurnitureType && this.editor.mouseGridX >= 0 && this.editor.mouseGridY >= 0) {
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(this.editor.mouseGridX * tileSize, this.editor.mouseGridY * tileSize, tileSize, tileSize);
+      }
+      return;
+    }
     const { rectangle, intent, caution } = preview;
     const px = rectangle.x * tileSize, py = rectangle.y * tileSize;
     ctx.fillStyle = caution ? 'rgba(245, 185, 66, 0.25)' : 'rgba(78, 204, 163, 0.25)';

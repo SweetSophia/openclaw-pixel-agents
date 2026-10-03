@@ -96,6 +96,11 @@ export class EditorController {
   get previewIntent(): FurniturePreviewIntent | null { return this._previewIntent; }
   setPreviewCallback(callback: (() => void) | null): void { this.previewCallback = callback; }
   clearPreview(): void { this.setPreview(null); }
+  private clearPointerPreview(): void {
+    this._mouseGridX = -1;
+    this._mouseGridY = -1;
+    this.clearPreview();
+  }
   // Asset loading may change the legacy clamp dimensions while the pointer is
   // stationary. Reassess the same source coordinates without mutating furniture.
   refreshPreview(): void {
@@ -206,7 +211,7 @@ export class EditorController {
 
   private handleMouseMove = (event: MouseEvent): void => {
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) { this.clearPreview(); return; }
+    if (!result) { this.clearPointerPreview(); return; }
     const { gridX, gridY } = result;
     this._mouseGridX = gridX;
     this._mouseGridY = gridY;
@@ -240,7 +245,7 @@ export class EditorController {
   private handleMouseDown = (event: MouseEvent): void => {
     if (!this._editorMode) return;
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) { this.clearPreview(); return; }
+    if (!result) { this.clearPointerPreview(); return; }
     const { gridX, gridY } = result;
 
     if (event.button !== 0) return;
@@ -272,7 +277,7 @@ export class EditorController {
     if (!this._editorMode || !this.dragging) return;
     if (event.button !== 0) return;
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) { this.clearPreview(); return; }
+    if (!result) { this.clearPointerPreview(); return; }
     const candidate = this.moveCandidate(this.dragging.id, result.gridX, result.gridY);
     this.setPreview(candidate, () => this.moveCandidate(candidate.id, result.gridX, result.gridY));
     this.callbacks?.onMoveFurniture(candidate.id, candidate.x, candidate.y);
@@ -293,7 +298,7 @@ export class EditorController {
     if (!this._editorMode) return;
     event.preventDefault();
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) { this.clearPreview(); return; }
+    if (!result) { this.clearPointerPreview(); return; }
     const rotated = this.host.rotateFurnitureAt(result.gridX, result.gridY);
     if (rotated) this.callbacks?.onRotateFurniture(rotated.id, rotated.rotation);
   };
@@ -319,7 +324,7 @@ export class EditorController {
     this.touchMoved = false;
 
     const result = this.host.screenToGrid(touch.clientX, touch.clientY);
-    if (!result) { this.clearPreview(); return; }
+    if (!result) { this.clearPointerPreview(); return; }
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
     if (this._selectedFurnitureType) this.setPreview(this.placeCandidate(result.gridX, result.gridY, true),
@@ -370,7 +375,7 @@ export class EditorController {
     this.touchCurrentPos = { x: touch.clientX, y: touch.clientY };
 
     const result = this.host.screenToGrid(touch.clientX, touch.clientY);
-    if (!result) { this.clearPreview(); return; }
+    if (!result) { this.clearPointerPreview(); return; }
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
 
