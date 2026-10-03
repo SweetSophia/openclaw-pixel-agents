@@ -7,6 +7,12 @@ export interface EditorCallbacks {
   onRotateFurniture: (id: string, rotation: number) => void;
 }
 
+/** Ephemeral proposed callback target; not a persisted/network field. */
+export type FurniturePreviewIntent = Readonly<
+  { kind: 'place'; type: string; x: number; y: number }
+  | { kind: 'move'; id: string; x: number; y: number }
+>;
+
 export interface FurnitureHit {
   id: string;
   x: number;
@@ -28,10 +34,9 @@ export interface EditorControllerHost {
   handleTouchGridTap: (gridX: number, gridY: number) => void;
   /**
    * Return the rotated footprint dimensions (anchor-relative) of a
-   * furniture type. Used to make the drag clamp footprint-aware: a
-   * DESK is 3×2, so an anchor at `gridWidth - 2` would extend into
-   * the 1-tile wall. `null` is returned for unknown types (clamps fall
-   * back to the safe default of `[1, gridW-2]`).
+   * furniture type. Used by the existing dimension-only drag clamp. `null` is
+   * returned for unknown types (clamps retain their 1x1 fallback).
+   * These bounds do not guarantee an interior-only rotated footprint.
    */
   getFootprint: (type: string, rotation: number) => { width: number; height: number } | null;
   /**
@@ -84,6 +89,33 @@ export class EditorController {
   private touchDragging: TouchDragState | null = null;
   private touchMoved = false;
   private attached = false;
+  private _previewIntent: FurniturePreviewIntent | null = null;
+  private previewCallback: (() => void) | null = null;
+
+  get previewIntent(): FurniturePreviewIntent | null { return this._previewIntent; }
+  setPreviewCallback(callback: (() => void) | null): void { this.previewCallback = callback; }
+  clearPreview(): void { this.setPreview(null); }
+  private setPreview(intent: FurniturePreviewIntent | null): void {
+    this._previewIntent = this._editorMode && !this.deleteMode && intent ? Object.freeze(intent) : null;
+    this.previewCallback?.();
+  }
+
+  // These are the existing callback targets, shared by feedback and operation.
+  // Mouse has no pickup offset; touch taps intentionally bypass the clamp.
+  private placeCandidate(gridX: number, gridY: number, touch = false) {
+    const type = this._selectedFurnitureType!;
+    if (touch) return { kind: 'place' as const, type, x: gridX, y: gridY };
+    const fp = this.host.getFootprint(type, this._selectedFurnitureRotation);
+    return { kind: 'place' as const, type,
+      x: this.clampX(gridX, fp?.width ?? 1),
+      y: this.clampY(gridY, fp?.height ?? 1) };
+  }
+  private moveCandidate(id: string, gridX: number, gridY: number, offsetX = 0, offsetY = 0) {
+    const fp = this.host.getFootprintForId(id);
+    return { kind: 'move' as const, id,
+      x: this.clampX(gridX - offsetX, fp?.width ?? 1),
+      y: this.clampY(gridY - offsetY, fp?.height ?? 1) };
+  }
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -114,6 +146,7 @@ export class EditorController {
   }
 
   detach(): void {
+    this.clearPreview();
     if (!this.attached) return;
     this.attached = false;
     this.canvas.removeEventListener('mousemove', this.handleMouseMove);
@@ -129,6 +162,7 @@ export class EditorController {
 
   setEditorMode(enabled: boolean): void {
     this._editorMode = enabled;
+    this.clearPreview();
     this._selectedFurnitureType = null;
     this._selectedFurnitureId = null;
     this.lastTapTime = 0;
@@ -137,30 +171,22 @@ export class EditorController {
   }
 
   setEditorCallbacks(callbacks: EditorCallbacks): void { this.callbacks = callbacks; }
-  setDeleteMode(enabled: boolean): void { this.deleteMode = enabled; }
+  setDeleteMode(enabled: boolean): void { this.deleteMode = enabled; this.clearPreview(); }
 
   setSelectedFurnitureType(type: string | null): void {
     this._selectedFurnitureType = type;
+    this.clearPreview();
     this._selectedFurnitureId = null;
   }
 
   setSelectedFurnitureId(id: string | null): void {
     this._selectedFurnitureId = id;
+    this.clearPreview();
     this._selectedFurnitureType = null;
   }
 
-  // Issue #164 follow-up: clamp the anchor so the placed footprint stays
-  // inside the obstacle map. The obstacle map blocks the outermost tile
-  // (1-tile border for walls), so the anchor must satisfy
-  // `anchor + footprint - 1 ≤ gridW - 1` (and similarly for height).
-  // - 1×1 chair → `footprintW = 1` → bound `[1, gridW - 2]`.
-  // - 3×2 DESK  → `footprintW = 3` → bound `[1, gridW - 4]` so the
-  //   anchor's rightmost tile doesn't enter the wall.
-  // - 2×3 LARGE_PLANT rotated 90° → `footprintW = 3` → same as DESK.
-  // The previous `gridWidth - 3` clamp was correct only for the
-  // worst-case 3-tile footprint, which left 1×1 furniture two tiles
-  // short of the wall. The new clamp threads the footprint through
-  // for accuracy.
+  // Preserve legacy bounds (including border/off-origin extent on rotation).
+  // Unknown assets still use a 1x1 clamp, independently of preview fallback.
   private clampX(gridX: number, footprintW = 1): number {
     return Math.max(1, Math.min(this.config.gridWidth - footprintW, gridX));
   }
@@ -171,19 +197,19 @@ export class EditorController {
 
   private handleMouseMove = (event: MouseEvent): void => {
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) return;
+    if (!result) { this.clearPreview(); return; }
     const { gridX, gridY } = result;
     this._mouseGridX = gridX;
     this._mouseGridY = gridY;
 
     if (this.dragging) {
-      // Footprint-aware clamp: for a DESK (3×2) an anchor at `gridW - 2`
-      // would extend into the wall — only clamp up to `gridW - 3`. For a
-      // 1×1 chair, the anchor can reach `gridW - 2`.
-      const fp = this.host.getFootprintForId(this.dragging.id);
-      const fw = fp?.width ?? 1;
-      const fh = fp?.height ?? 1;
-      this.host.previewFurnitureMove(this.dragging.id, this.clampX(gridX, fw), this.clampY(gridY, fh));
+      const candidate = this.moveCandidate(this.dragging.id, gridX, gridY);
+      this.host.previewFurnitureMove(candidate.id, candidate.x, candidate.y);
+      this.setPreview(candidate);
+    } else if (this._selectedFurnitureType) {
+      this.setPreview(this.placeCandidate(gridX, gridY));
+    } else {
+      this.clearPreview();
     }
 
     if (this._editorMode) {
@@ -205,21 +231,14 @@ export class EditorController {
   private handleMouseDown = (event: MouseEvent): void => {
     if (!this._editorMode) return;
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) return;
+    if (!result) { this.clearPreview(); return; }
     const { gridX, gridY } = result;
 
     if (event.button !== 0) return;
     if (this._selectedFurnitureType) {
-      // Footprint-aware placement: clamp to the anchor range that keeps
-      // the selected furniture's footprint inside the obstacle map.
-      const fp = this.host.getFootprint(this._selectedFurnitureType, this._selectedFurnitureRotation);
-      const fw = fp?.width ?? 1;
-      const fh = fp?.height ?? 1;
-      this.callbacks?.onPlaceFurniture(
-        this._selectedFurnitureType,
-        this.clampX(gridX, fw),
-        this.clampY(gridY, fh),
-      );
+      const candidate = this.placeCandidate(gridX, gridY);
+      this.setPreview(candidate);
+      this.callbacks?.onPlaceFurniture(candidate.type, candidate.x, candidate.y);
       this.sounds.place();
       return;
     }
@@ -244,21 +263,17 @@ export class EditorController {
     if (!this._editorMode || !this.dragging) return;
     if (event.button !== 0) return;
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) return;
-    // Footprint-aware drop: clamp using the dragged furniture's footprint.
-    const fp = this.host.getFootprintForId(this.dragging.id);
-    const fw = fp?.width ?? 1;
-    const fh = fp?.height ?? 1;
-    this.callbacks?.onMoveFurniture(
-      this.dragging.id,
-      this.clampX(result.gridX, fw),
-      this.clampY(result.gridY, fh),
-    );
+    if (!result) { this.clearPreview(); return; }
+    const candidate = this.moveCandidate(this.dragging.id, result.gridX, result.gridY);
+    this.setPreview(candidate);
+    this.callbacks?.onMoveFurniture(candidate.id, candidate.x, candidate.y);
+    this.clearPreview();
     this.sounds.place();
     this.dragging = null;
   };
 
   private handleMouseLeave = (): void => {
+    this.clearPreview();
     this._mouseGridX = -1;
     this._mouseGridY = -1;
     this.dragging = null;
@@ -269,13 +284,14 @@ export class EditorController {
     if (!this._editorMode) return;
     event.preventDefault();
     const result = this.host.screenToGrid(event.clientX, event.clientY);
-    if (!result) return;
+    if (!result) { this.clearPreview(); return; }
     const rotated = this.host.rotateFurnitureAt(result.gridX, result.gridY);
     if (rotated) this.callbacks?.onRotateFurniture(rotated.id, rotated.rotation);
   };
 
   private handleTouchStart = (event: TouchEvent): void => {
     event.preventDefault();
+    this.clearPreview();
     if (event.touches.length === 2) {
       this.touchDragging = null;
       this.touchStartPos = null;
@@ -294,9 +310,10 @@ export class EditorController {
     this.touchMoved = false;
 
     const result = this.host.screenToGrid(touch.clientX, touch.clientY);
-    if (!result) return;
+    if (!result) { this.clearPreview(); return; }
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
+    if (this._selectedFurnitureType) this.setPreview(this.placeCandidate(result.gridX, result.gridY, true));
 
     if (this._editorMode && event.touches.length === 1 && !this._selectedFurnitureType) {
       const hit = this.host.findFurnitureAt(result.gridX, result.gridY);
@@ -319,6 +336,7 @@ export class EditorController {
   private handleTouchMove = (event: TouchEvent): void => {
     event.preventDefault();
     if (event.touches.length === 2) {
+      this.clearPreview();
       const distance = touchDistance(event.touches[0], event.touches[1]);
       if (!this.pinchStartDist || this.pinchStartDist <= 0) {
         if (distance <= 0) return;
@@ -332,7 +350,7 @@ export class EditorController {
       return;
     }
 
-    if (!this.touchStartPos) return;
+    if (!this.touchStartPos) { this.clearPreview(); return; }
     const touch = event.touches[0];
     const dx = touch.clientX - this.touchStartPos.x;
     const dy = touch.clientY - this.touchStartPos.y;
@@ -342,27 +360,29 @@ export class EditorController {
     this.touchCurrentPos = { x: touch.clientX, y: touch.clientY };
 
     const result = this.host.screenToGrid(touch.clientX, touch.clientY);
-    if (!result) return;
+    if (!result) { this.clearPreview(); return; }
     this._mouseGridX = result.gridX;
     this._mouseGridY = result.gridY;
 
     // A furniture hit becomes a drag only after the touch crosses the
     // tap threshold. This keeps ordinary finger jitter eligible for a tap.
     if (this._editorMode && this.touchDragging && this.touchMoved) {
-      // Footprint-aware touch drag clamp.
-      const fp = this.host.getFootprintForId(this.touchDragging.id);
-      const fw = fp?.width ?? 1;
-      const fh = fp?.height ?? 1;
-      this.host.previewFurnitureMove(
-        this.touchDragging.id,
-        this.clampX(result.gridX - this.touchDragging.offsetX, fw),
-        this.clampY(result.gridY - this.touchDragging.offsetY, fh),
-      );
+      const candidate = this.moveCandidate(this.touchDragging.id, result.gridX, result.gridY,
+        this.touchDragging.offsetX, this.touchDragging.offsetY);
+      this.host.previewFurnitureMove(candidate.id, candidate.x, candidate.y);
+      this.setPreview(candidate);
+    } else if (this._selectedFurnitureType && !this.touchMoved) {
+      const start = this.host.screenToGrid(this.touchStartPos.x, this.touchStartPos.y);
+      if (start) this.setPreview(this.placeCandidate(start.gridX, start.gridY, true));
+      else this.clearPreview();
+    } else {
+      this.clearPreview();
     }
   };
 
   private handleTouchEnd = (event: TouchEvent): void => {
     event.preventDefault();
+    this.clearPreview();
     if (event.touches.length > 0) return;
 
     if (this._editorMode) {
@@ -374,15 +394,8 @@ export class EditorController {
         if (this.touchCurrentPos) {
           const result = this.host.screenToGrid(this.touchCurrentPos.x, this.touchCurrentPos.y);
           if (result) {
-            // Footprint-aware touch drop clamp.
-            const fp = this.host.getFootprintForId(dragging.id);
-            const fw = fp?.width ?? 1;
-            const fh = fp?.height ?? 1;
-            this.callbacks?.onMoveFurniture(
-              dragging.id,
-              this.clampX(result.gridX - dragging.offsetX, fw),
-              this.clampY(result.gridY - dragging.offsetY, fh),
-            );
+            const candidate = this.moveCandidate(dragging.id, result.gridX, result.gridY, dragging.offsetX, dragging.offsetY);
+            this.callbacks?.onMoveFurniture(candidate.id, candidate.x, candidate.y);
             this.sounds.place();
           }
         }
@@ -415,7 +428,8 @@ export class EditorController {
         this.lastTapFurnitureId = dragging?.id ?? null;
 
         if (this._selectedFurnitureType) {
-          this.callbacks?.onPlaceFurniture(this._selectedFurnitureType, result.gridX, result.gridY);
+          const candidate = this.placeCandidate(result.gridX, result.gridY, true);
+          this.callbacks?.onPlaceFurniture(candidate.type, candidate.x, candidate.y);
           this.sounds.place();
         }
       }
@@ -437,6 +451,7 @@ export class EditorController {
   };
 
   private handleTouchCancel = (): void => {
+    this.clearPreview();
     this.touchStartPos = null;
     this.touchCurrentPos = null;
     this.touchDragging = null;

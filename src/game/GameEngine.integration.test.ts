@@ -54,6 +54,7 @@ vi.mock('../audio/SoundFX', () => ({
 type RecordingContext = {
   fills: Array<{ style: string; x: number; y: number; w: number; h: number }>;
   texts: Array<{ text: string; x: number; y: number }>;
+  strokes: Array<{ style: string; x: number; y: number; w: number; h: number }>;
   ctx: CanvasRenderingContext2D;
 };
 
@@ -123,6 +124,7 @@ type TestGameEngine = {
 function makeRecordingContext(onDrawImage: (...args: unknown[]) => void = () => {}): RecordingContext {
   const fills: RecordingContext['fills'] = [];
   const texts: RecordingContext['texts'] = [];
+  const strokes: RecordingContext['strokes'] = [];
   const stub = {
     fillRect(x: number, y: number, w: number, h: number) {
       fills.push({ style: stub.fillStyle, x, y, w, h });
@@ -146,7 +148,7 @@ function makeRecordingContext(onDrawImage: (...args: unknown[]) => void = () => 
     setLineDash() {},
     stroke() {},
     fill() {},
-    strokeRect() {},
+    strokeRect(x: number, y: number, w: number, h: number) { strokes.push({ style: stub.strokeStyle, x, y, w, h }); },
     measureText(text: string) {
       return { width: text.length * 6 };
     },
@@ -170,6 +172,7 @@ function makeRecordingContext(onDrawImage: (...args: unknown[]) => void = () => 
   return {
     fills,
     texts,
+    strokes,
     ctx: stub as unknown as CanvasRenderingContext2D,
   };
 }
@@ -852,3 +855,141 @@ describe('GameEngine integration: #165 hygiene (allowlist + cleanup)', () => {
   });
 });
 
+
+// Real engine/controller paths; only browser drawing/audio/RAF boundaries stubbed.
+describe('GameEngine informational furniture preview', () => {
+  let engine: GameEngine;
+  let canvas: HTMLCanvasElement;
+  let recorded: RecordingContext;
+  let cb: EditorCallbacks;
+  type PreviewEngine = { furniture: Map<string, unknown>; assetsLoaded: boolean; renderEditorOverlay(size: number): void; renderFurniture(size: number, zoom: number): void; editor: { previewIntent: { x: number; y: number } | null } };
+  const internal = () => engine as unknown as PreviewEngine;
+  const previewClientCenter = (x: number, y: number) => ({ clientX: (x + 0.5) * 16, clientY: (y + 0.5) * 16 });
+  const mouse = (name: string, x: number, y: number) => canvas.dispatchEvent(new MouseEvent(name, { button: 0, ...previewClientCenter(x, y) }));
+  const touch = (name: string, points: Array<{ clientX: number; clientY: number }> = []) => {
+    const e = new Event(name, { cancelable: true }); Object.defineProperty(e, 'touches', { value: points }); canvas.dispatchEvent(e);
+  };
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)); vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    ({ canvas, recorded } = makeCanvasWithStubbedContext()); engine = new GameEngine(canvas, GRID);
+    internal().furniture = new Map([['DESK', { canvas: { width: 48, height: 32 }, width: 48, height: 32, footprintW: 3, footprintH: 2 }]]);
+    internal().assetsLoaded = true;
+    cb = { onPlaceFurniture: vi.fn(), onSelectFurniture: vi.fn(), onMoveFurniture: vi.fn(), onRotateFurniture: vi.fn() };
+    engine.setLayout([{ id: 'desk', type: 'DESK', x: 5, y: 5, rotation: 0 }]); engine.setEditorMode(true); engine.setEditorCallbacks(cb);
+  });
+  afterEach(() => { engine.stop(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  for (const rotation of [0, 90, 180, 270]) {
+    for (const [gx, gy] of [[0, 0], [23, 0], [0, 15], [23, 15]]) {
+      it(`mouse drag ${rotation} at edge ${gx},${gy} draws the unchanged clamped callback target`, () => {
+        engine.setLayout([{ id: 'desk', type: 'DESK', x: 5, y: 5, rotation }]);
+        mouse('mousedown', 5, 5); mouse('mousemove', gx, gy);
+        const swapped = rotation === 90 || rotation === 270;
+        const w = swapped ? 2 : 3, h = swapped ? 3 : 2;
+        const x = Math.max(1, Math.min(24 - w, gx)), y = Math.max(1, Math.min(16 - h, gy));
+        const offsets = ([[0, 0], [-1, 0], [-2, -1], [0, -2]])[rotation / 90];
+        expect(internal().editor.previewIntent).toMatchObject({ x, y });
+        internal().renderEditorOverlay(16);
+        expect(recorded.fills.some(r => r.x === (x + offsets[0]) * 16 && r.y === (y + offsets[1]) * 16 && r.w === w * 16 && r.h === h * 16)).toBe(true);
+        mouse('mouseup', gx, gy); expect(cb.onMoveFurniture).toHaveBeenCalledWith('desk', x, y);
+        expect(internal().editor.previewIntent).toBeNull();
+      });
+    }
+  }
+  it('draws the selected outline at its rotated origin, without changing hit testing', () => {
+    engine.setLayout([{ id: 'desk', type: 'DESK', x: 5, y: 5, rotation: 180 }]); engine.setSelectedFurnitureId('desk');
+    internal().renderFurniture(16, 1);
+    expect(recorded.strokes).toContainEqual({ style: '#4ecca3', x: 46, y: 62, w: 52, h: 36 });
+  });
+  it('does not warn on adjacent rectangles or in normal/delete modes', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    mouse('mousemove', 8, 5); expect(message).toHaveBeenLastCalledWith('Furniture footprint preview.');
+    engine.setDeleteMode(true); mouse('mousemove', 5, 5); internal().renderEditorOverlay(16); expect(message).toHaveBeenLastCalledWith('');
+    engine.setDeleteMode(false); engine.setEditorMode(false); engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 5, 5);
+    expect(internal().editor.previewIntent).toBeNull(); expect(message).toHaveBeenLastCalledWith('');
+  });
+  it('retains exact-edge touch callback coordinates even beyond the rendered grid', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    touch('touchstart', [{ clientX: 384, clientY: 256 }]);
+    expect(internal().editor.previewIntent).toMatchObject({ x: 24, y: 16 });
+    expect(message).toHaveBeenLastCalledWith('Extends beyond the office canvas.');
+    touch('touchend'); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 24, 16);
+  });
+  it('clears mouse/touch previews in real object-fit bars and cancels without inventing a rollback', () => {
+    vi.mocked(canvas.getBoundingClientRect).mockReturnValue({ left: 0, top: 0, width: 384, height: 400 } as DOMRect);
+    engine.setSelectedFurnitureType('DESK');
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 88, clientY: 160 })); expect(internal().editor.previewIntent).not.toBeNull();
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 88, clientY: 20 })); expect(internal().editor.previewIntent).toBeNull();
+    touch('touchstart', [{ clientX: 88, clientY: 160 }]); touch('touchmove', [{ clientX: 88, clientY: 20 }]); expect(internal().editor.previewIntent).toBeNull(); touch('touchend');
+    expect(cb.onPlaceFurniture).not.toHaveBeenCalled();
+    engine.setSelectedFurnitureType(null); mouse('mousedown', 5, 9); // maps to the desk through the vertical offset
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 136, clientY: 220 }));
+    const beforeLeave = engine.getPlacedFurniture(); canvas.dispatchEvent(new MouseEvent('mouseleave'));
+    expect(engine.getPlacedFurniture()).toEqual(beforeLeave); expect(cb.onMoveFurniture).not.toHaveBeenCalled();
+    expect(internal().editor.previewIntent).toBeNull();
+  });
+  it('draws clamped mouse target, not raw pointer, and commits that target', () => {
+    engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 23, 15); internal().renderEditorOverlay(16);
+    expect(recorded.fills).toContainEqual({ style: 'rgba(245, 185, 66, 0.25)', x: 21 * 16, y: 14 * 16, w: 48, h: 32 });
+    expect(internal().editor.previewIntent).toMatchObject({ x: 21, y: 14 }); mouse('mousedown', 23, 15);
+    expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 21, 14);
+  });
+  it('clears active touch drag on cancel/removal without changing rollback or drop semantics', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message);
+    touch('touchstart', [previewClientCenter(7, 6)]); touch('touchmove', [previewClientCenter(10, 10)]);
+    expect(internal().editor.previewIntent).toMatchObject({ x: 8, y: 9 });
+    touch('touchcancel'); expect(internal().editor.previewIntent).toBeNull(); expect(message).toHaveBeenLastCalledWith('');
+    expect(engine.getPlacedFurniture()[0]).toMatchObject({ x: 8, y: 9 });
+    touch('touchend'); expect(cb.onMoveFurniture).not.toHaveBeenCalled();
+    touch('touchstart', [previewClientCenter(8, 9)]); touch('touchmove', [previewClientCenter(10, 10)]);
+    engine.setLayout([]); expect(internal().editor.previewIntent).toBeNull(); expect(message).toHaveBeenLastCalledWith('');
+  });
+  it('does not update a removed status subscriber or after detached listeners', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    mouse('mousemove', 5, 5); const beforeRemoval = message.mock.calls.length; engine.setFurniturePreviewCallback(null);
+    mouse('mousemove', 23, 15); internal().renderEditorOverlay(16); expect(message).toHaveBeenCalledTimes(beforeRemoval);
+    engine.stop(); mouse('mousemove', 5, 5); expect(internal().editor.previewIntent).toBeNull();
+    expect(message).toHaveBeenCalledTimes(beforeRemoval);
+  });
+  it('keeps touch start target across subthreshold tile jitter and preserves raw wall placement', () => {
+    engine.setSelectedFurnitureType('DESK'); touch('touchstart', [{ clientX: 15, clientY: 15 }]);
+    touch('touchmove', [{ clientX: 18, clientY: 18 }]); expect(internal().editor.previewIntent).toMatchObject({ x: 0, y: 0 });
+    touch('touchend'); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 0, 0); expect(internal().editor.previewIntent).toBeNull();
+  });
+  it('hides unsupported touch placement above threshold and pinch/cancel', () => {
+    engine.setSelectedFurnitureType('DESK'); touch('touchstart', [previewClientCenter(4, 4)]); touch('touchmove', [previewClientCenter(6, 4)]);
+    expect(internal().editor.previewIntent).toBeNull(); touch('touchend'); expect(cb.onPlaceFurniture).not.toHaveBeenCalled();
+    touch('touchstart', [previewClientCenter(4, 4)]); touch('touchstart', [previewClientCenter(4, 4), previewClientCenter(8, 8)]); expect(internal().editor.previewIntent).toBeNull();
+    touch('touchcancel'); expect(internal().editor.previewIntent).toBeNull();
+  });
+  it('shares touch pickup-offset target with drop and excludes dragged self', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message);
+    touch('touchstart', [previewClientCenter(7, 6)]); touch('touchmove', [previewClientCenter(10, 10)]);
+    expect(internal().editor.previewIntent).toMatchObject({ x: 8, y: 9 }); expect(message).toHaveBeenLastCalledWith('Furniture footprint preview.');
+    touch('touchend'); expect(cb.onMoveFurniture).toHaveBeenCalledWith('desk', 8, 9);
+  });
+  it('does not republish the same semantic message on touch jitter', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    touch('touchstart', [{ clientX: 159, clientY: 159 }]);
+    const count = message.mock.calls.length;
+    touch('touchmove', [{ clientX: 162, clientY: 162 }]);
+    touch('touchmove', [{ clientX: 163, clientY: 163 }]);
+    expect(message).toHaveBeenCalledTimes(count);
+  });
+  it('preserves missing sprite 1x1 clamp but displays actual 2x1 fallback', () => {
+    engine.setSelectedFurnitureType('MISSING'); mouse('mousemove', 23, 15); internal().renderEditorOverlay(16);
+    expect(recorded.fills).toContainEqual({ style: 'rgba(245, 185, 66, 0.25)', x: 368, y: 240, w: 32, h: 16 });
+    mouse('mousedown', 23, 15); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('MISSING', 23, 15);
+  });
+  it('deduplicates semantic overlap status, allows overlap, and clears on transitions and null mapping', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    mouse('mousemove', 5, 5); mouse('mousemove', 6, 5); internal().renderEditorOverlay(16);
+    expect(message.mock.calls.filter(([s]) => s === 'Overlaps furniture — placement is allowed.')).toHaveLength(1);
+    mouse('mousedown', 5, 5); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('DESK', 5, 5);
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: -10, clientY: 1 })); expect(message).toHaveBeenLastCalledWith('');
+    mouse('mousemove', 5, 5); engine.setDeleteMode(true); expect(message).toHaveBeenLastCalledWith('');
+    engine.setDeleteMode(false); mouse('mousemove', 5, 5); engine.setSelectedFurnitureType('MISSING'); expect(message).toHaveBeenLastCalledWith('');
+    mouse('mousemove', 5, 5); engine.setLayout([]); expect(message).toHaveBeenLastCalledWith('');
+    mouse('mousemove', 5, 5); engine.setEditorMode(false); expect(message).toHaveBeenLastCalledWith('');
+    engine.setFurniturePreviewCallback(null); mouse('mousemove', 5, 5); expect(message).toHaveBeenLastCalledWith('');
+  });
+});

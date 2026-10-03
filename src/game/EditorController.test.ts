@@ -377,4 +377,26 @@ describe('EditorController', () => {
     canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
     expect(host.previewFurnitureMove).toHaveBeenLastCalledWith('desk-1', 21, 14);
   });
+  it('exposes immutable preview intent using the callback candidate and clears it on detach', () => {
+    controller.attach(); controller.setEditorMode(true); controller.setSelectedFurnitureType('DESK');
+    vi.mocked(host.getFootprint).mockReturnValue({ width: 3, height: 2 });
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
+    expect(controller.previewIntent).toEqual({ kind: 'place', type: 'DESK', x: 21, y: 14 });
+    expect(Object.isFrozen(controller.previewIntent)).toBe(true);
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 99, clientY: 99 }));
+    expect(callbacks.onPlaceFurniture).toHaveBeenLastCalledWith('DESK', 21, 14);
+    controller.detach(); expect(controller.previewIntent).toBeNull();
+  });
+
+  it('preserves the inclusive twelve-pixel touch threshold, then clears unsupported placement', () => {
+    controller.attach(); controller.setEditorMode(true); controller.setSelectedFurnitureType('DESK');
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 3, clientY: 4 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 15, clientY: 16 }]));
+    expect(controller.previewIntent).toEqual({ kind: 'place', type: 'DESK', x: 3, y: 4 });
+    canvas.dispatchEvent(touchEvent('touchend', [])); expect(callbacks.onPlaceFurniture).toHaveBeenCalledWith('DESK', 3, 4);
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 3, clientY: 4 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 16, clientY: 16 }])); expect(controller.previewIntent).toBeNull();
+    canvas.dispatchEvent(touchEvent('touchend', [])); expect(callbacks.onPlaceFurniture).toHaveBeenCalledTimes(1);
+  });
+
 });

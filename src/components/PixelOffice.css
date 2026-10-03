@@ -43,3 +43,23 @@
     padding: 6px 12px;
   }
 }
+
+/* Separate from save/search feedback; empty node remains registered. */
+.furniture-preview-status {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  max-width: min(600px, calc(100vw - 32px));
+  width: max-content;
+  box-sizing: border-box;
+  color: #f5d38b;
+  background: rgba(18, 22, 32, 0.94);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+}
+.furniture-preview-status:empty { padding: 0; background: transparent; }
