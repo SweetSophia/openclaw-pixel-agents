@@ -64,19 +64,34 @@ describe('LayoutEditor searchable furniture palette', () => {
     expect(screen.queryByTitle('Plant')).not.toBeInTheDocument();
   });
 
+  it('registers its empty live region before opening and preserves it across filtered panel reopening', () => {
+    render(<LayoutEditor {...makeProps()} />);
+    const status = screen.getByRole('status', { name: 'Furniture search feedback' });
+    expect(status).toBeEmptyDOMElement();
+    let input = openPalette();
+    fireEvent.change(input, { target: { value: 'does not exist' } });
+    expect(status).toHaveTextContent('No furniture matches');
+    fireEvent.click(screen.getByTitle('Layout manager'));
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toBe(status);
+    expect(status).toBeEmptyDOMElement();
+    input = openPalette();
+    expect(input).toHaveValue('does not exist');
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toBe(status);
+    expect(status).toHaveTextContent('No furniture matches');
+  });
+
   it('shows a useful no-results message and clear restores the catalog and search focus', async () => {
     const user = userEvent.setup();
     render(<LayoutEditor {...makeProps()} />);
     const input = openPalette();
-    const palette = within(input.closest('.furniture-palette')! as HTMLElement);
     // AT must be able to register the empty region before its text changes.
-    const status = palette.getByRole('status');
+    const status = screen.getByRole('status', { name: 'Furniture search feedback' });
     expect(status).toBeEmptyDOMElement();
     expect(status).toHaveAttribute('aria-live', 'polite');
     await user.type(input, 'no such furniture');
-    expect(palette.getByRole('status')).toBe(status);
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toBe(status);
     expect(status).toHaveTextContent('No furniture matches');
-    expect(palette.getByRole('status')).toHaveTextContent('Clear the search');
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toHaveTextContent('Clear the search');
     expect(paletteItems(input)).toHaveLength(0);
     expect(screen.queryByText('Plants')).not.toBeInTheDocument();
     await user.tab();
@@ -85,14 +100,15 @@ describe('LayoutEditor searchable furniture palette', () => {
     expect(input).toHaveValue('');
     expect(input).toHaveFocus();
     expect(paletteItems(input)).toHaveLength(6);
-    expect(palette.getByRole('status')).toBe(status);
+    expect(screen.getByRole('status', { name: 'Furniture search feedback' })).toBe(status);
     expect(status).toBeEmptyDOMElement();
   });
 
   it('distinguishes an empty catalog from a query with no matches', () => {
     render(<LayoutEditor {...makeProps({ catalog: [] })} />);
+    const status = screen.getByRole('status', { name: 'Furniture search feedback' });
+    expect(status).toBeEmptyDOMElement();
     const input = openPalette();
-    const status = within(input.closest('.furniture-palette')! as HTMLElement).getByRole('status');
     expect(status).toHaveTextContent('Furniture catalog is not loaded or is unavailable.');
     expect(screen.getByRole('button', { name: 'Clear furniture search' })).toBeDisabled();
     fireEvent.change(input, { target: { value: 'plant' } });

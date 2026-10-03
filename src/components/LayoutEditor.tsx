@@ -333,6 +333,15 @@ export const LayoutEditor: React.FC<Props> = ({
     )),
   })).filter(category => category.types.length > 0);
 
+  const paletteFeedback = catalog.length === 0
+    // The store exposes no loading/error distinction for the catalog.
+    ? 'Furniture catalog is not loaded or is unavailable.'
+    : filteredCategories.length === 0
+      ? (query
+        ? 'No furniture matches. Clear the search or try another name or type.'
+        : 'No furniture available.')
+      : '';
+
   // Save button doubles as the save-status indicator (aria-live region).
   const saveLabel =
     saveStatus === 'saving' ? '💾 Saving…'
@@ -355,6 +364,10 @@ export const LayoutEditor: React.FC<Props> = ({
 
   return (
     <div className="layout-editor">
+      {/* Register before opening, including when a preserved filter is reopened.
+          Visible feedback is separate so this node never unmounts with panels. */}
+      <p className="palette-live-feedback" role="status" aria-live="polite"
+        aria-label="Furniture search feedback">{showPalette ? paletteFeedback : ''}</p>
       {/* Toolbar */}
       <div className="editor-toolbar">
         <button
@@ -473,18 +486,7 @@ export const LayoutEditor: React.FC<Props> = ({
               >Clear</button>
             </div>
           </div>
-          {/* Keep the live region registered for the palette's entire lifetime;
-              update its text rather than mounting it with a new message. */}
-          <p className="palette-empty" role="status" aria-live="polite">
-            {catalog.length === 0
-              // The store exposes no loading/error distinction for the catalog.
-              ? 'Furniture catalog is not loaded or is unavailable.'
-              : filteredCategories.length === 0
-                ? (query
-                  ? 'No furniture matches. Clear the search or try another name or type.'
-                  : 'No furniture available.')
-                : ''}
-          </p>
+          {paletteFeedback && <p className="palette-empty">{paletteFeedback}</p>}
           {filteredCategories.map(cat => (
             <div key={cat.name} className="palette-category">
               <h4>{cat.name}</h4>
