@@ -1,3 +1,5 @@
+import { furnitureRectangle } from './furnitureGeometry';
+
 /**
  * BFS Pathfinder for grid-based movement
  *
@@ -34,27 +36,8 @@ export function buildObstacleMap(
 
   // Block furniture tiles
   for (const item of furniture) {
-    const rawRotation = item.rotation ?? 0;
-    if (rawRotation % 90 !== 0) {
-      throw new RangeError('Furniture rotation must be a quarter turn');
-    }
-    const rotation = ((rawRotation % 360) + 360) % 360;
-    const swapsAxes = rotation === 90 || rotation === 270;
-    const footprintW = swapsAxes ? item.h : item.w;
-    const footprintH = swapsAxes ? item.w : item.h;
-    let originX = item.x;
-    let originY = item.y;
-
-    // Furniture is rendered around the centre of its anchor tile, so the
-    // obstacle origin must move around that same pivot on quarter turns.
-    if (rotation === 90) {
-      originX += 1 - item.h;
-    } else if (rotation === 180) {
-      originX += 1 - item.w;
-      originY += 1 - item.h;
-    } else if (rotation === 270) {
-      originY += 1 - item.w;
-    }
+    const { x: originX, y: originY, width: footprintW, height: footprintH } =
+      furnitureRectangle(item.x, item.y, item.w, item.h, item.rotation ?? 0);
 
     for (let dy = 0; dy < footprintH; dy++) {
       for (let dx = 0; dx < footprintW; dx++) {

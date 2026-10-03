@@ -377,4 +377,112 @@ describe('EditorController', () => {
     canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 99, clientY: 99 }));
     expect(host.previewFurnitureMove).toHaveBeenLastCalledWith('desk-1', 21, 14);
   });
+  it('exposes immutable preview intent using the callback candidate and clears it on detach', () => {
+    controller.attach(); controller.setEditorMode(true); controller.setSelectedFurnitureType('DESK');
+    vi.mocked(host.getFootprint).mockReturnValue({ width: 3, height: 2 });
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 99, clientY: 99 }));
+    expect(controller.previewIntent).toEqual({ kind: 'place', type: 'DESK', x: 21, y: 14 });
+    expect(Object.isFrozen(controller.previewIntent)).toBe(true);
+    canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 99, clientY: 99 }));
+    expect(callbacks.onPlaceFurniture).toHaveBeenLastCalledWith('DESK', 21, 14);
+    controller.detach(); expect(controller.previewIntent).toBeNull();
+  });
+
+  it('preserves the inclusive twelve-pixel touch threshold, then clears unsupported placement', () => {
+    controller.attach(); controller.setEditorMode(true); controller.setSelectedFurnitureType('DESK');
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 3, clientY: 4 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 15, clientY: 16 }]));
+    expect(controller.previewIntent).toEqual({ kind: 'place', type: 'DESK', x: 3, y: 4 });
+    canvas.dispatchEvent(touchEvent('touchend', [])); expect(callbacks.onPlaceFurniture).toHaveBeenCalledWith('DESK', 3, 4);
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 3, clientY: 4 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 16, clientY: 16 }])); expect(controller.previewIntent).toBeNull();
+    canvas.dispatchEvent(touchEvent('touchend', [])); expect(callbacks.onPlaceFurniture).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['mouse', 'touch'] as const)('realigns a stationary %s drag before publishing refreshed asset geometry', (pointer) => {
+    furniture = { id: 'desk-1', x: 5, y: 5 };
+    vi.mocked(host.getFootprintForId).mockReturnValue(null);
+    vi.mocked(host.previewFurnitureMove).mockImplementation((id, x, y) => {
+      if (furniture?.id === id) { furniture.x = x; furniture.y = y; }
+    });
+    controller.attach(); controller.setEditorMode(true);
+    if (pointer === 'mouse') {
+      canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 6, clientY: 5 }));
+      canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 23, clientY: 15 }));
+    } else {
+      canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 6, clientY: 5 }]));
+      canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 23, clientY: 15 }]));
+    }
+    expect(furniture).toMatchObject({ x: pointer === 'mouse' ? 23 : 22, y: 15 });
+    const published = vi.fn(() => {
+      expect(furniture).toMatchObject({ x: 21, y: 14 });
+      expect(controller.previewIntent).toEqual({ kind: 'move', id: 'desk-1', x: 21, y: 14 });
+      expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    });
+    controller.setPreviewCallback(published);
+    vi.mocked(host.getFootprintForId).mockReturnValue({ width: 3, height: 2 });
+    controller.refreshPreview();
+    expect(host.previewFurnitureMove).toHaveBeenLastCalledWith('desk-1', 21, 14);
+    expect(published).toHaveBeenCalledTimes(1);
+    controller.setPreviewCallback(null);
+    if (pointer === 'mouse') canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 23, clientY: 15 }));
+    else canvas.dispatchEvent(touchEvent('touchend', []));
+    expect(callbacks.onMoveFurniture).toHaveBeenCalledExactlyOnceWith('desk-1', 21, 14);
+  });
+
+  it('retains the original touch pickup offset when refreshing after the host moved the anchor', () => {
+    furniture = { id: 'desk-1', x: 5, y: 5 };
+    vi.mocked(host.getFootprintForId).mockReturnValue(null);
+    vi.mocked(host.previewFurnitureMove).mockImplementation((_id, x, y) => {
+      furniture!.x = x; furniture!.y = y;
+    });
+    controller.attach(); controller.setEditorMode(true);
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 6, clientY: 5 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 22, clientY: 15 }]));
+    expect(furniture).toMatchObject({ x: 21, y: 15 });
+    vi.mocked(host.getFootprintForId).mockReturnValue({ width: 3, height: 2 });
+    controller.refreshPreview();
+    expect(furniture).toMatchObject({ x: 21, y: 14 });
+    expect(controller.previewIntent).toMatchObject({ x: 21, y: 14 });
+    expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+    canvas.dispatchEvent(touchEvent('touchend', []));
+    expect(callbacks.onMoveFurniture).toHaveBeenCalledExactlyOnceWith('desk-1', 21, 14);
+  });
+
+  it.each(['no intent', 'place', 'clear', 'leave', 'cancel', 'pinch', 'drop', 'detach', 'normal mode', 'delete mode', 'missing id'] as const)(
+    'does not apply a refreshed drag for %s', (state) => {
+      furniture = { id: 'desk-1', x: 5, y: 5 };
+      controller.attach(); controller.setEditorMode(true);
+      if (state === 'place') {
+        controller.setSelectedFurnitureType('DESK');
+        canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 23, clientY: 15 }));
+      } else if (state !== 'no intent') {
+        if (state === 'cancel' || state === 'pinch') {
+          canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 6, clientY: 5 }]));
+          canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 23, clientY: 15 }]));
+          if (state === 'cancel') canvas.dispatchEvent(touchEvent('touchcancel', []));
+          else canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 23, clientY: 15 }, { clientX: 30, clientY: 15 }]));
+        } else {
+          canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 5, clientY: 5 }));
+          canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 23, clientY: 15 }));
+          if (state === 'clear') controller.clearPreview();
+          if (state === 'leave') canvas.dispatchEvent(new MouseEvent('mouseleave'));
+          if (state === 'drop') canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: 23, clientY: 15 }));
+          if (state === 'detach') controller.detach();
+          if (state === 'normal mode') controller.setEditorMode(false);
+          if (state === 'delete mode') controller.setDeleteMode(true);
+          if (state === 'missing id') furniture = null;
+        }
+      }
+      vi.mocked(host.previewFurnitureMove).mockClear();
+      vi.mocked(callbacks.onMoveFurniture).mockClear();
+      vi.mocked(host.getFootprintForId).mockReturnValue(state === 'missing id' ? null : { width: 3, height: 2 });
+      vi.mocked(host.getFootprint).mockReturnValue({ width: 3, height: 2 });
+      controller.refreshPreview();
+      expect(host.previewFurnitureMove).not.toHaveBeenCalled();
+      expect(callbacks.onMoveFurniture).not.toHaveBeenCalled();
+      expect(callbacks.onPlaceFurniture).not.toHaveBeenCalled();
+    },
+  );
+
 });
