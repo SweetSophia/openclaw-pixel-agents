@@ -96,6 +96,10 @@ describe('LayoutEditor searchable furniture palette', () => {
     const { rerender } = render(<LayoutEditor {...props} />);
     let input = openPalette();
     expect(input).toHaveFocus();
+    const toggle = screen.getByTitle('Furniture palette');
+    const panel = input.closest('.furniture-palette')!;
+    expect(panel.id).not.toBe('');
+    expect(toggle).toHaveAttribute('aria-controls', panel.id);
     fireEvent.change(input, { target: { value: 'plant' } });
     const plant = screen.getByTitle('Plant');
     plant.focus();

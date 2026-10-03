@@ -138,6 +138,7 @@ export const LayoutEditor: React.FC<Props> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchInputId = useId();
+  const palettePanelId = useId();
 
   // Only an explicit palette-open transition focuses search; catalog/save/
   // selection updates must not steal focus from the user's current control.
@@ -360,6 +361,7 @@ export const LayoutEditor: React.FC<Props> = ({
           onClick={() => { setShowPalette(!showPalette); setShowLayouts(false); }}
           title="Furniture palette"
           aria-expanded={showPalette}
+          aria-controls={showPalette ? palettePanelId : undefined}
         >
           📦 Furniture
         </button>
@@ -431,6 +433,7 @@ export const LayoutEditor: React.FC<Props> = ({
       {showPalette && (
         <div
           className="furniture-palette"
+          id={palettePanelId}
           onKeyDown={event => {
             // Result buttons are keyboard destinations too: Escape belongs to
             // the palette, not the drawer or a pending canvas placement.
