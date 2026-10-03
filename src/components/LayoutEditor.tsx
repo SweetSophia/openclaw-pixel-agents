@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import type { PlacedFurniture } from '../../shared/types';
 import type { LayoutDoc, SaveStatus } from '../hooks/useLayoutStore';
@@ -135,6 +135,31 @@ export const LayoutEditor: React.FC<Props> = ({
   onToggleEditor,
 }) => {
   const [showPalette, setShowPalette] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchInputId = useId();
+  const palettePanelId = useId();
+  const layoutsPanelId = useId();
+
+  // Only an explicit palette-open transition focuses search; catalog/save/
+  // selection updates must not steal focus from the user's current control.
+  useLayoutEffect(() => {
+    if (showPalette) searchInputRef.current?.focus();
+  }, [showPalette]);
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    searchInputRef.current?.focus();
+  };
+  const handleSearchKeyDown = (event: React.KeyboardEvent) => {
+    // Keep native typing and Tab, but don't send search keystrokes to the
+    // document/window editor shortcuts (including the agents drawer Escape).
+    event.stopPropagation();
+    if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      clearSearch();
+    }
+  };
   const [showLayouts, setShowLayouts] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -298,6 +323,24 @@ export const LayoutEditor: React.FC<Props> = ({
   if (!editorMode) return null;
 
   const selectedFurniture = activeLayout?.furniture.find(f => f.id === selectedFurnitureId);
+  const query = searchQuery.trim().toLowerCase();
+  const filteredCategories = CATEGORIES.map(category => ({
+    ...category,
+    types: category.types.filter(type => catalog.includes(type) && (
+      (FURNITURE_LABELS[type] || type).toLowerCase().includes(query)
+      || type.toLowerCase().includes(query)
+      || type.replace(/_/g, ' ').toLowerCase().includes(query)
+    )),
+  })).filter(category => category.types.length > 0);
+
+  const paletteFeedback = catalog.length === 0
+    // The store exposes no loading/error distinction for the catalog.
+    ? 'Furniture catalog is not loaded or is unavailable.'
+    : filteredCategories.length === 0
+      ? (query
+        ? 'No furniture matches. Clear the search or try another name or type.'
+        : 'No furniture available.')
+      : '';
 
   // Save button doubles as the save-status indicator (aria-live region).
   const saveLabel =
@@ -321,12 +364,18 @@ export const LayoutEditor: React.FC<Props> = ({
 
   return (
     <div className="layout-editor">
+      {/* Register before opening, including when a preserved filter is reopened.
+          Visible feedback is separate so this node never unmounts with panels. */}
+      <p className="palette-live-feedback" role="status" aria-live="polite"
+        aria-label="Furniture search feedback">{showPalette ? paletteFeedback : ''}</p>
       {/* Toolbar */}
       <div className="editor-toolbar">
         <button
           className={`toolbar-btn ${showPalette ? 'active' : ''}`}
           onClick={() => { setShowPalette(!showPalette); setShowLayouts(false); }}
           title="Furniture palette"
+          aria-expanded={showPalette}
+          aria-controls={showPalette ? palettePanelId : undefined}
         >
           📦 Furniture
         </button>
@@ -343,6 +392,8 @@ export const LayoutEditor: React.FC<Props> = ({
           className={`toolbar-btn ${showLayouts ? 'active' : ''}`}
           onClick={() => { setShowLayouts(!showLayouts); setShowPalette(false); }}
           title="Layout manager"
+          aria-expanded={showLayouts}
+          aria-controls={showLayouts ? layoutsPanelId : undefined}
         >
           📐 Layouts
         </button>
@@ -371,8 +422,8 @@ export const LayoutEditor: React.FC<Props> = ({
           <span className="selected-pos">
             ({selectedFurniture.x}, {selectedFurniture.y}) r{selectedFurniture.rotation}°
           </span>
-          <button className="action-btn" onClick={() => onRotateFurniture(selectedFurniture.id)} title="Rotate (R)">🔄</button>
-          <button className="action-btn danger" onClick={() => onDeleteFurniture(selectedFurniture.id)} title="Delete (Del)">🗑️</button>
+          <button className="action-btn" onClick={() => onRotateFurniture(selectedFurniture.id)} title="Rotate">🔄</button>
+          <button className="action-btn danger" onClick={() => onDeleteFurniture(selectedFurniture.id)} title="Delete">🗑️</button>
           <button className="action-btn" onClick={() => onSelectFurnitureId(null)} title="Deselect">✖</button>
         </div>
       )}
@@ -396,18 +447,57 @@ export const LayoutEditor: React.FC<Props> = ({
 
       {/* Furniture palette */}
       {showPalette && (
-        <div className="furniture-palette">
+        <div
+          className="furniture-palette"
+          id={palettePanelId}
+          onKeyDown={event => {
+            // Result buttons are keyboard destinations too: Escape belongs to
+            // the palette, not the drawer or a pending canvas placement.
+            // Other result keydowns/keyups bubble normally; only the search
+            // input/Clear subtree isolates all keys (without blocking defaults).
+            if (event.key === 'Escape') handleSearchKeyDown(event);
+          }}
+          onKeyUp={event => {
+            if (event.key === 'Escape') event.stopPropagation();
+          }}
+        >
           <h3>📦 Furniture</h3>
-          {CATEGORIES.map(cat => (
+          <div
+            className="palette-search"
+            onKeyDown={handleSearchKeyDown}
+            onKeyUp={event => event.stopPropagation()}
+          >
+            <label htmlFor={searchInputId}>Search furniture</label>
+            <div className="palette-search-controls">
+              <input
+                id={searchInputId}
+                ref={searchInputRef}
+                type="search"
+                placeholder="Name or type…"
+                value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)}
+              />
+              <button
+                type="button"
+                className="action-btn"
+                aria-label="Clear furniture search"
+                onClick={clearSearch}
+                disabled={!searchQuery}
+              >Clear</button>
+            </div>
+          </div>
+          {paletteFeedback && <p className="palette-empty">{paletteFeedback}</p>}
+          {filteredCategories.map(cat => (
             <div key={cat.name} className="palette-category">
               <h4>{cat.name}</h4>
               <div className="palette-items">
-                {cat.types.filter(t => catalog.includes(t)).map(type => (
+                {cat.types.map(type => (
                   <button
                     key={type}
                     className={`palette-item ${selectedFurnitureType === type ? 'selected' : ''}`}
                     onClick={() => onSelectFurnitureType(selectedFurnitureType === type ? null : type)}
                     title={FURNITURE_LABELS[type] || type}
+                    aria-pressed={selectedFurnitureType === type}
                   >
                     <span className="palette-icon">{FURNITURE_ICONS[type] || '📦'}</span>
                     <span className="palette-label">{FURNITURE_LABELS[type] || type}</span>
@@ -421,7 +511,7 @@ export const LayoutEditor: React.FC<Props> = ({
 
       {/* Layout manager */}
       {showLayouts && (
-        <div className="layout-manager">
+        <div className="layout-manager" id={layoutsPanelId}>
           <h3>📐 Layouts</h3>
           {layoutError && (
             <div className="layout-alert" role="alert">
