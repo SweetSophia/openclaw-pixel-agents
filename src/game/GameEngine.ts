@@ -1,3 +1,4 @@
+import { furnitureRectangle, assessFurniturePreview } from './furnitureGeometry';
 /**
  * PixelOffice Game Engine
  *
@@ -203,6 +204,8 @@ export class GameEngine {
 
   // Input/editor controller
   private editor: EditorController;
+  private furniturePreviewCallback: ((message: string) => void) | null = null;
+  private furniturePreviewMessage = '';
   private gameCallbacks: GameCallbacks | null = null;
 
   // Speech bubbles
@@ -272,6 +275,7 @@ export class GameEngine {
       },
       sfx,
     );
+    this.editor.setPreviewCallback(() => this.publishFurniturePreview());
     this.editor.attach();
 
     // Character click (non-editor mode)
@@ -327,6 +331,9 @@ export class GameEngine {
         console.warn('[GameEngine] Fell back to characters-only; furniture sprites unavailable');
       } catch { }
     }
+    // Refresh both fallback geometry/status and any asset-dependent callback
+    // target before the first frame, without requiring another pointer event.
+    this.editor.refreshPreview();
   }
 
   start() {
@@ -337,6 +344,8 @@ export class GameEngine {
   }
 
   stop() {
+    this.editor.clearPreview();
+    this.furniturePreviewCallback = null;
     this.running = false;
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
@@ -1007,7 +1016,9 @@ export class GameEngine {
           ctx.strokeStyle = '#4ecca3';
           ctx.lineWidth = 2;
           ctx.setLineDash([4, 4]);
-          ctx.strokeRect(px - 2, py - 2, tileSize * 2 + 4, tileSize * 1.5 + 4);
+          const footprint = this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0);
+          ctx.strokeRect(footprint.x * tileSize - 2, footprint.y * tileSize - 2,
+            footprint.width * tileSize + 4, footprint.height * tileSize + 4);
           ctx.setLineDash([]);
         }
       }
@@ -1346,18 +1357,69 @@ export class GameEngine {
     for (let y = 0; y <= this.config.gridHeight; y++) {
       ctx.beginPath(); ctx.moveTo(0, y * tileSize); ctx.lineTo(this.canvas.width, y * tileSize); ctx.stroke();
     }
-    if (this.editor.mouseGridX >= 0 && this.editor.mouseGridY >= 0) {
-      const px = this.editor.mouseGridX * tileSize, py = this.editor.mouseGridY * tileSize;
-      if (this.editor.selectedFurnitureType) {
-        ctx.fillStyle = 'rgba(78, 204, 163, 0.25)';
-        ctx.fillRect(px, py, tileSize * 2, tileSize);
-        ctx.strokeStyle = '#4ecca3'; ctx.lineWidth = 2;
-        ctx.strokeRect(px, py, tileSize * 2, tileSize);
-      } else {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-        ctx.fillRect(px, py, tileSize, tileSize);
+    const preview = this.getFurniturePreview();
+    this.publishFurniturePreview(preview);
+    if (!preview) {
+      // Retain the existing neutral cell when selecting/rotating, not placing.
+      if (!this.editor.selectedFurnitureType && this.editor.mouseGridX >= 0 && this.editor.mouseGridY >= 0) {
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(this.editor.mouseGridX * tileSize, this.editor.mouseGridY * tileSize, tileSize, tileSize);
       }
+      return;
     }
+    const { rectangle, intent, caution } = preview;
+    const px = rectangle.x * tileSize, py = rectangle.y * tileSize;
+    ctx.fillStyle = caution ? 'rgba(245, 185, 66, 0.25)' : 'rgba(78, 204, 163, 0.25)';
+    ctx.fillRect(px, py, rectangle.width * tileSize, rectangle.height * tileSize);
+    ctx.strokeStyle = caution ? '#f5b942' : '#4ecca3'; ctx.lineWidth = 2;
+    ctx.strokeRect(px, py, rectangle.width * tileSize, rectangle.height * tileSize);
+    // The stored anchor/pivot is distinct from the rotated rectangle origin.
+    const ax = (intent.x + 0.5) * tileSize, ay = (intent.y + 0.5) * tileSize;
+    ctx.beginPath(); ctx.moveTo(ax - 4, ay); ctx.lineTo(ax + 4, ay);
+    ctx.moveTo(ax, ay - 4); ctx.lineTo(ax, ay + 4); ctx.stroke();
+  }
+
+  private renderedFootprint(type: string, x: number, y: number, rotation: number) {
+    const sprite = this.furniture.get(type);
+    const loaded = this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0;
+    return { ...furnitureRectangle(x, y, loaded ? sprite.footprintW : 2, loaded ? sprite.footprintH : 1, rotation), fallback: !loaded };
+  }
+
+  private getFurniturePreview() {
+    const intent = this.editor.previewIntent;
+    if (!intent) return null;
+    const moved = intent.kind === 'move' ? this.placedFurniture.find(item => item.id === intent.id) : null;
+    if (intent.kind === 'move' && !moved) return null;
+    const type = intent.kind === 'place' ? intent.type : moved!.type;
+    const rectangle = this.renderedFootprint(type, intent.x, intent.y, moved?.rotation || 0);
+    const assessment = assessFurniturePreview(rectangle,
+      this.placedFurniture.map(item => ({ id: item.id, ...this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0) })),
+      this.config.gridWidth, this.config.gridHeight, moved?.id);
+    const parts: string[] = [];
+    const anchorOutside = intent.x < 0 || intent.y < 0
+      || intent.x >= this.config.gridWidth || intent.y >= this.config.gridHeight;
+    if (anchorOutside) parts.push('Anchor is outside the office canvas; saving may be rejected.');
+    if (assessment.overlap) parts.push(assessment.outside || anchorOutside
+      ? 'Overlaps furniture — overlap itself is allowed.' : 'Overlaps furniture — placement is allowed.');
+    if (assessment.outside) parts.push('Footprint extends beyond the office canvas.');
+    else if (assessment.border) parts.push('Touches the office border.');
+    if (!parts.length) parts.push('Furniture footprint preview.');
+    if (rectangle.fallback) parts.push('Using the 2×1 placeholder footprint.');
+    return { rectangle, intent, caution: assessment.overlap || assessment.border || assessment.outside, message: parts.join(' ') };
+  }
+
+  private publishFurniturePreview(preview = this.getFurniturePreview()) {
+    const message = preview?.message ?? '';
+    if (message === this.furniturePreviewMessage) return;
+    this.furniturePreviewMessage = message;
+    this.furniturePreviewCallback?.(message);
+  }
+
+  clearFurniturePreview(): void { this.editor.clearPreview(); }
+
+  setFurniturePreviewCallback(callback: ((message: string) => void) | null): void {
+    this.furniturePreviewCallback = callback;
+    if (callback) callback(this.furniturePreviewMessage);
   }
 
   // ── Mouse handlers ───────────────────────────────────
@@ -1892,6 +1954,7 @@ export class GameEngine {
   setSelectedFurnitureId(id: string | null) { this.editor.setSelectedFurnitureId(id); }
 
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
+    this.editor.clearPreview();
     this.placedFurniture = furniture.map(item => ({ ...item }));
     this.obstacleDirty = true;
     // Schedule deferred rebuild to avoid blocking during rapid updates

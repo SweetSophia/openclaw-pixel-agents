@@ -28,6 +28,7 @@ export const PixelOffice: React.FC<Props> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [furniturePreview, setFurniturePreview] = useState('');
   const prevRecipesRef = useRef<Record<string, string>>({});
 
   // Initialize engine
@@ -38,6 +39,7 @@ export const PixelOffice: React.FC<Props> = ({
       tileSize: 32, gridWidth: 24, gridHeight: 16,
     });
     engineRef.current = engine;
+    engine.setFurniturePreviewCallback(setFurniturePreview);
 
     engine.init(ac.signal, import.meta.env.DEV).then(() => {
       if (ac.signal.aborted) return;
@@ -45,7 +47,7 @@ export const PixelOffice: React.FC<Props> = ({
       setLoaded(true);
     });
 
-    return () => { ac.abort(); engine.stop(); engineRef.current = null; };
+    return () => { ac.abort(); engine.setFurniturePreviewCallback(null); engine.stop(); engineRef.current = null; };
   }, []);
 
   // Wire editor callbacks (stable ref)
@@ -92,7 +94,8 @@ export const PixelOffice: React.FC<Props> = ({
     ? JSON.stringify(activeLayout.seats)
     : '';
   useEffect(() => {
-    if (!engineRef.current || !activeLayout) return;
+    if (!engineRef.current) return;
+    if (!activeLayout) { engineRef.current.clearFurniturePreview(); return; }
     engineRef.current.setLayout(activeLayout.furniture, activeLayout.seats);
   }, [activeLayout?.id, furnitureKey, seatsKey]);
 
@@ -191,6 +194,10 @@ export const PixelOffice: React.FC<Props> = ({
   return (
     <div className="pixel-office" style={{ position: 'relative' }}>
       <canvas ref={canvasRef} className="office-canvas" />
+      {/* Registered while empty, before the first semantic preview update. */}
+      <div className="furniture-preview-status" role="status" aria-live="polite" aria-atomic="true" aria-label="Furniture placement preview">
+        {furniturePreview}
+      </div>
     </div>
   );
 };

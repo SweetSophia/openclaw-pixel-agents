@@ -85,6 +85,12 @@ Furniture search matches a single substring, ignoring case and leading/trailing 
 
 Tab reaches enabled Clear and the matching items. The search input and Clear isolate all keydown/keyup events from document/window bubble listeners while preserving native typing and navigation; result buttons isolate **Escape** only, and other keys propagate normally. Rotate and Delete are click controls, not keyboard shortcuts.
 
+**Furniture footprint previews are informational, not a placement validator.** The outline shows the loaded sprite's grid footprint, rotated around the centre of its stored anchor tile (marked with a small cross). Amber means overlap, contact with the office border, or extent outside the canvas. “Overlaps furniture — placement is allowed.” includes intentional table/decor layering: placing, moving, draw order and saving are unchanged. Missing sprites show the actual 2×1 placeholder footprint; the existing unknown-type mouse/drag clamp still uses 1×1.
+
+Mouse placement commits on primary mouse-down; its preview uses the existing dimension-only clamp. Mouse dragging snaps the anchor to the pointer with no pickup offset. Touch placement commits on release at the **touch-start** cell, without that clamp; jitter up to 12 CSS pixels per axis keeps the start target even across a tile boundary. Movement beyond that threshold with a type selected does not place an item, so its preview disappears. Touch dragging retains the pickup offset and shares its existing clamped drop target with the preview. Pinch, cancellation, leaving rendered canvas content, mode/type changes and layout updates clear the preview.
+
+The visible polite status reports semantic changes, not every coordinate or frame. It is separate from placement instructions, furniture-search feedback and save errors. Previews describe the currently fixed **24×16 rendered canvas**, not server legality, editable floor rules or arbitrary saved layout dimensions. Footprint extent and an outside anchor are reported separately; existing raw touch edge anchors can still be rejected on save. Overlap permission applies only to overlap, not to an outside anchor or guaranteed saving. Geometry and fallback status refresh when assets finish loading, even without another pointer event. Rotated hit-testing, legacy clamps (including border/off-canvas extent), drag rollback on cancellation and dynamic canvas sizing are unchanged and remain separate follow-ups.
+
 Layouts auto-save 2 seconds after the last furniture change; the explicit Save button remains available.
 
 ### Layout Manager
