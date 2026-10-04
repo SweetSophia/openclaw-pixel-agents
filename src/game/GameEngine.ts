@@ -1416,6 +1416,7 @@ export class GameEngine {
     return { ...furnitureRectangle(x, y, width, height, rotation), fallback: !loaded };
   }
 
+  /** Not a neutral read: validating live sprite/canvas state may invalidate the cached preview geometry. */
   private getFurniturePreview(): FurniturePreview | null {
     const intent = this.editor.previewIntent;
     if (!intent) { this.invalidateFurniturePreviewGeometry(); return null; }
@@ -2015,5 +2016,6 @@ export class GameEngine {
     }
   }
 
+  /** Read-only snapshot. The items are the engine's own references — mutate via setLayout. */
   getPlacedFurniture(): PlacedFurniture[] { return [...this.placedFurniture]; }
 }

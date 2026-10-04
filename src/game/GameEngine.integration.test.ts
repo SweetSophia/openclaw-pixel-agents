@@ -910,11 +910,6 @@ describe('GameEngine informational furniture preview', () => {
     mouse('mousemove', 5, 5);
     const initial = internal().getFurniturePreview();
     for (let frame = 0; frame < 200; frame++) internal().renderEditorOverlay(16);
-    console.info('preview allocation experiment', {
-      items: 200, frames: 200, footprintCalls: geometry.mock.calls.length,
-      geometryListBuilds: new Set(assessment.mock.calls.map(call => call[1])).size,
-      assessmentCalls: assessment.mock.calls.length,
-    });
     expect(geometry).toHaveBeenCalledTimes(201);
     expect(assessment).toHaveBeenCalledTimes(1);
     expect(internal().getFurniturePreview()).toBe(initial);
