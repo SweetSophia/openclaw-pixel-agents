@@ -1,4 +1,4 @@
-import { furnitureRectangle, assessFurniturePreview } from './furnitureGeometry';
+import { furnitureRectangle, assessFurniturePreview, type FurnitureRectangle } from './furnitureGeometry';
 /**
  * PixelOffice Game Engine
  *
@@ -22,11 +22,18 @@ import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
 import { EditorController } from './EditorController';
-import type { EditorCallbacks } from './EditorController';
+import type { EditorCallbacks, FurniturePreviewIntent } from './EditorController';
 import { screenToGrid as mapScreenToGrid } from './inputGeometry';
 import { getDayPhase, type InterpolatedDayPhase } from './Schedule';
 
 export type { EditorCallbacks } from './EditorController';
+
+interface FurniturePreview {
+  rectangle: FurnitureRectangle & { fallback: boolean };
+  intent: FurniturePreviewIntent;
+  caution: boolean;
+  message: string;
+}
 
 export interface GameConfig {
   tileSize: number;
@@ -206,6 +213,11 @@ export class GameEngine {
   private editor: EditorController;
   private furniturePreviewCallback: ((message: string) => void) | null = null;
   private furniturePreviewMessage = '';
+  private furniturePreview: FurniturePreview | null = null;
+  private previewFurnitureRectangles: Array<FurnitureRectangle & { id: string }> | null = null;
+  // Sprite canvases are shared live capabilities. Check geometry-relevant state
+  // per distinct type, not per placed item, even on otherwise unchanged frames.
+  private previewFootprints = new Map<string, { type: string; width: number; height: number; fallback: boolean }>();
   private gameCallbacks: GameCallbacks | null = null;
 
   // Speech bubbles
@@ -249,12 +261,16 @@ export class GameEngine {
         findFurnitureAt: (gridX, gridY) => this.findFurnitureAt(gridX, gridY),
         previewFurnitureMove: (id, gridX, gridY) => {
           const item = this.placedFurniture.find(furniture => furniture.id === id);
-          if (item) { item.x = gridX; item.y = gridY; }
+          if (item && (item.x !== gridX || item.y !== gridY)) {
+            item.x = gridX; item.y = gridY;
+            this.invalidateFurniturePreviewGeometry();
+          }
         },
         rotateFurnitureAt: (gridX, gridY) => {
           const item = this.findFurnitureAt(gridX, gridY);
           if (!item) return null;
           item.rotation = ((item.rotation || 0) + 90) % 360;
+          this.invalidateFurniturePreviewGeometry();
           return { id: item.id, rotation: item.rotation };
         },
         findCharacterAt: (gridX, gridY) => this.findCharacterAt(gridX, gridY),
@@ -331,6 +347,9 @@ export class GameEngine {
         console.warn('[GameEngine] Fell back to characters-only; furniture sprites unavailable');
       } catch { }
     }
+    // Invalidate before refreshPreview: it may move the host furniture and
+    // publish synchronously, before init's obstacle rebuild or any render frame.
+    this.invalidateFurniturePreviewGeometry();
     // Refresh both fallback geometry/status and any asset-dependent callback
     // target before the first frame, without requiring another pointer event.
     this.editor.refreshPreview();
@@ -1379,21 +1398,51 @@ export class GameEngine {
     ctx.moveTo(ax, ay - 4); ctx.lineTo(ax, ay + 4); ctx.stroke();
   }
 
+  private invalidateFurniturePreviewGeometry() {
+    // Deliberately independent of obstacleDirty: live drags don't dirty the
+    // obstacle grid, and its deferred rebuild must not clear preview changes.
+    this.previewFurnitureRectangles = null;
+    this.previewFootprints.clear();
+    this.furniturePreview = null;
+  }
+
   private renderedFootprint(type: string, x: number, y: number, rotation: number) {
     const sprite = this.furniture.get(type);
     const loaded = this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0;
-    return { ...furnitureRectangle(x, y, loaded ? sprite.footprintW : 2, loaded ? sprite.footprintH : 1, rotation), fallback: !loaded };
+    const width = loaded ? sprite.footprintW : 2, height = loaded ? sprite.footprintH : 1;
+    // Also used by the selected-item outline before the preview overlay. Always
+    // read live geometry; don't overwrite a snapshot before checking validity.
+    if (!this.previewFootprints.has(type)) this.previewFootprints.set(type, { type, width, height, fallback: !loaded });
+    return { ...furnitureRectangle(x, y, width, height, rotation), fallback: !loaded };
   }
 
-  private getFurniturePreview() {
+  /** Not a neutral read: validating live sprite/canvas state may invalidate the cached preview geometry. */
+  private getFurniturePreview(): FurniturePreview | null {
     const intent = this.editor.previewIntent;
-    if (!intent) return null;
+    if (!intent) { this.invalidateFurniturePreviewGeometry(); return null; }
+    for (const footprint of this.previewFootprints.values()) {
+      const sprite = this.furniture.get(footprint.type);
+      const loaded = this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0;
+      if (footprint.fallback !== !loaded
+        || footprint.width !== (loaded ? sprite.footprintW : 2)
+        || footprint.height !== (loaded ? sprite.footprintH : 1)) {
+        this.invalidateFurniturePreviewGeometry();
+        break;
+      }
+    }
+    const cached = this.furniturePreview;
+    // Controller events create new intents even at the same coordinates.
+    if (cached && cached.intent.x === intent.x && cached.intent.y === intent.y
+      && (cached.intent.kind === 'place' && intent.kind === 'place' && cached.intent.type === intent.type
+        || cached.intent.kind === 'move' && intent.kind === 'move' && cached.intent.id === intent.id)) return cached;
     const moved = intent.kind === 'move' ? this.placedFurniture.find(item => item.id === intent.id) : null;
     if (intent.kind === 'move' && !moved) return null;
     const type = intent.kind === 'place' ? intent.type : moved!.type;
     const rectangle = this.renderedFootprint(type, intent.x, intent.y, moved?.rotation || 0);
-    const assessment = assessFurniturePreview(rectangle,
-      this.placedFurniture.map(item => ({ id: item.id, ...this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0) })),
+    this.previewFurnitureRectangles ??= this.placedFurniture.map(item => ({
+      id: item.id, ...this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0),
+    }));
+    const assessment = assessFurniturePreview(rectangle, this.previewFurnitureRectangles,
       this.config.gridWidth, this.config.gridHeight, moved?.id);
     const parts: string[] = [];
     const anchorOutside = intent.x < 0 || intent.y < 0
@@ -1405,7 +1454,8 @@ export class GameEngine {
     else if (assessment.border) parts.push('Touches the office border.');
     if (!parts.length) parts.push('Furniture footprint preview.');
     if (rectangle.fallback) parts.push('Using the 2×1 placeholder footprint.');
-    return { rectangle, intent, caution: assessment.overlap || assessment.border || assessment.outside, message: parts.join(' ') };
+    this.furniturePreview = { rectangle, intent, caution: assessment.overlap || assessment.border || assessment.outside, message: parts.join(' ') };
+    return this.furniturePreview;
   }
 
   private publishFurniturePreview(preview = this.getFurniturePreview()) {
@@ -1956,6 +2006,7 @@ export class GameEngine {
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
     this.editor.clearPreview();
     this.placedFurniture = furniture.map(item => ({ ...item }));
+    this.invalidateFurniturePreviewGeometry();
     this.obstacleDirty = true;
     // Schedule deferred rebuild to avoid blocking during rapid updates
     this.scheduleObstacleRebuild();
@@ -1965,5 +2016,6 @@ export class GameEngine {
     }
   }
 
+  /** Read-only snapshot. The items are the engine's own references — mutate via setLayout. */
   getPlacedFurniture(): PlacedFurniture[] { return [...this.placedFurniture]; }
 }
