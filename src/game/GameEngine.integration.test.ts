@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GameEngine } from './GameEngine';
+import * as furnitureGeometry from './furnitureGeometry';
 import type { GameCallbacks } from './GameEngine';
 import type { EditorCallbacks } from './EditorController';
 import type { PlacedFurniture } from '../../shared/types';
@@ -862,7 +863,13 @@ describe('GameEngine informational furniture preview', () => {
   let canvas: HTMLCanvasElement;
   let recorded: RecordingContext;
   let cb: EditorCallbacks;
-  type PreviewEngine = { furniture: Map<string, unknown>; assetsLoaded: boolean; renderEditorOverlay(size: number): void; renderFurniture(size: number, zoom: number): void; editor: { previewIntent: { x: number; y: number } | null; refreshPreview(): void } };
+  type PreviewEngine = {
+    furniture: Map<string, unknown>; assetsLoaded: boolean;
+    renderEditorOverlay(size: number): void; renderFurniture(size: number, zoom: number): void;
+    renderedFootprint(type: string, x: number, y: number, rotation: number): furnitureGeometry.FurnitureRectangle & { fallback: boolean };
+    getFurniturePreview(): unknown; rebuildObstacles(): void; obstacleDirty: boolean;
+    editor: { previewIntent: { x: number; y: number } | null; refreshPreview(): void };
+  };
   const internal = () => engine as unknown as PreviewEngine;
   const previewClientCenter = (x: number, y: number) => ({ clientX: (x + 0.5) * 16, clientY: (y + 0.5) * 16 });
   const mouse = (name: string, x: number, y: number) => canvas.dispatchEvent(new MouseEvent(name, { button: 0, ...previewClientCenter(x, y) }));
@@ -895,6 +902,193 @@ describe('GameEngine informational furniture preview', () => {
       });
     }
   }
+  it('bounds actual preview geometry allocations and assessment scans across 200 frames with 200 items', () => {
+    engine.setLayout(Array.from({ length: 200 }, (_, i) => ({ id: `desk-${i}`, type: 'DESK', x: 5, y: 5, rotation: 0 })));
+    engine.setSelectedFurnitureType('DESK');
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    const assessment = vi.spyOn(furnitureGeometry, 'assessFurniturePreview');
+    mouse('mousemove', 5, 5);
+    const initial = internal().getFurniturePreview();
+    for (let frame = 0; frame < 200; frame++) internal().renderEditorOverlay(16);
+    console.info('preview allocation experiment', {
+      items: 200, frames: 200, footprintCalls: geometry.mock.calls.length,
+      geometryListBuilds: new Set(assessment.mock.calls.map(call => call[1])).size,
+      assessmentCalls: assessment.mock.calls.length,
+    });
+    expect(geometry).toHaveBeenCalledTimes(201);
+    expect(assessment).toHaveBeenCalledTimes(1);
+    expect(internal().getFurniturePreview()).toBe(initial);
+    // Controller allocates new immutable intents for identical pointer events.
+    // Those events must not rebuild the list or rescan the assessment either.
+    mouse('mousemove', 5, 5);
+    expect(geometry).toHaveBeenCalledTimes(201);
+    expect(assessment).toHaveBeenCalledTimes(1);
+    mouse('mousemove', 8, 5);
+    expect(geometry).toHaveBeenCalledTimes(202);
+    expect(assessment).toHaveBeenCalledTimes(2);
+    expect(assessment.mock.calls[1][1]).toBe(assessment.mock.calls[0][1]);
+  });
+  it.each(['mouse', 'touch'] as const)('invalidates the %s in-place drag before synchronous feedback independently of obstacle rebuilds', (pointer) => {
+    engine.setLayout([{ id: 'desk', type: 'DESK', x: 5, y: 5, rotation: 0 }, { id: 'other', type: 'DESK', x: 10, y: 9, rotation: 0 }]);
+    internal().rebuildObstacles();
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    const assessment = vi.spyOn(furnitureGeometry, 'assessFurniturePreview');
+    const message = vi.fn((status: string) => {
+      if (status.includes('Overlaps')) {
+        expect(engine.getPlacedFurniture()[0]).toMatchObject({ x: 10, y: 9 });
+        // Reentrant readers must see the already-refreshed result.
+        internal().renderEditorOverlay(16);
+        expect(recorded.fills[recorded.fills.length - 1]).toEqual({ style: 'rgba(245, 185, 66, 0.25)', x: 160, y: 144, w: 48, h: 32 });
+      }
+    });
+    engine.setFurniturePreviewCallback(message);
+    if (pointer === 'mouse') {
+      mouse('mousedown', 5, 5); mouse('mousemove', 6, 7);
+    } else {
+      touch('touchstart', [previewClientCenter(7, 6)]); touch('touchmove', [previewClientCenter(8, 8)]);
+    }
+    const afterFirst = geometry.mock.calls.length;
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(geometry).toHaveBeenCalledTimes(afterFirst);
+    // Live preview historically does not dirty pathfinding; don't depend on it.
+    expect(internal().obstacleDirty).toBe(false);
+    if (pointer === 'mouse') mouse('mousemove', 10, 9);
+    else touch('touchmove', [previewClientCenter(12, 10)]);
+    expect(message).toHaveBeenLastCalledWith('Overlaps furniture — placement is allowed.');
+    expect(cb.onMoveFurniture).not.toHaveBeenCalled();
+    const afterMove = geometry.mock.calls.length;
+    expect(afterMove - afterFirst).toBe(3); // one candidate + two placed rectangles
+    expect(assessment.mock.calls[assessment.mock.calls.length - 1]?.[1]).not.toBe(assessment.mock.calls[0][1]);
+    const scans = assessment.mock.calls.length;
+    internal().rebuildObstacles();
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(geometry).toHaveBeenCalledTimes(afterMove);
+    expect(assessment).toHaveBeenCalledTimes(scans);
+  });
+  it.each([0, 90, 180, 270])('retains exact cached fill/stroke/status at rotation %i and allowed overlap', rotation => {
+    engine.setLayout([{ id: 'other', type: 'DESK', x: 4, y: 4, rotation: 0 }, { id: 'desk', type: 'DESK', x: 5, y: 5, rotation }]);
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message);
+    mouse('mousedown', 5, 5); mouse('mousemove', 5, 5);
+    const [dx, dy, w, h] = [[0, 0, 3, 2], [-1, 0, 2, 3], [-2, -1, 3, 2], [0, -2, 2, 3]][rotation / 90];
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(recorded.fills).toHaveLength(120);
+    expect(recorded.fills.every(r => JSON.stringify(r) === JSON.stringify({ style: 'rgba(245, 185, 66, 0.25)', x: (5 + dx) * 16, y: (5 + dy) * 16, w: w * 16, h: h * 16 }))).toBe(true);
+    expect(recorded.strokes).toHaveLength(120);
+    expect(recorded.strokes.every(r => r.style === '#f5b942' && r.x === (5 + dx) * 16 && r.y === (5 + dy) * 16 && r.w === w * 16 && r.h === h * 16)).toBe(true);
+    expect(message).toHaveBeenLastCalledWith('Overlaps furniture — placement is allowed.');
+    mouse('mouseup', 5, 5); expect(cb.onMoveFurniture).toHaveBeenCalledWith('desk', 5, 5);
+  });
+  it('invalidates same-anchor host rotations even before a frame or parent layout echo', () => {
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message);
+    mouse('mousedown', 5, 5); mouse('mousemove', 5, 5);
+    const old = internal().getFurniturePreview();
+    canvas.dispatchEvent(new MouseEvent('contextmenu', previewClientCenter(5, 5)));
+    expect(cb.onRotateFurniture).toHaveBeenCalledWith('desk', 90);
+    expect(internal().getFurniturePreview()).not.toBe(old);
+    internal().renderEditorOverlay(16);
+    expect(recorded.fills[recorded.fills.length - 1]).toEqual({ style: 'rgba(78, 204, 163, 0.25)', x: 64, y: 80, w: 32, h: 48 });
+    const scans = vi.spyOn(furnitureGeometry, 'assessFurniturePreview');
+    internal().renderEditorOverlay(16); expect(scans).not.toHaveBeenCalled();
+  });
+  it.each(['type', 'id', 'order', 'position', 'rotation', 'remove'] as const)('refreshes geometry after layout %s changes with deferred obstacles still pending', change => {
+    const initial = [{ id: 'desk', type: 'DESK', x: 5, y: 5, rotation: 0 }, { id: 'other', type: 'MISSING', x: 10, y: 10, rotation: 0 }];
+    engine.setLayout(initial); engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 5, 5);
+    let next = initial.map(item => ({ ...item }));
+    if (change === 'type') next[0].type = 'MISSING';
+    if (change === 'id') next[0].id = 'replacement';
+    if (change === 'order') next.reverse();
+    if (change === 'position') { next[0].x = 14; next[0].y = 12; }
+    if (change === 'rotation') next[0].rotation = 180;
+    if (change === 'remove') next = [];
+    engine.setLayout(next); expect(internal().editor.previewIntent).toBeNull();
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    mouse('mousemove', 5, 5);
+    expect(geometry).toHaveBeenCalledTimes(next.length + 1);
+    expect(geometry.mock.calls.slice(1)).toEqual(next.map(item => [item.type, item.x, item.y, item.rotation]));
+    const count = geometry.mock.calls.length;
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(geometry).toHaveBeenCalledTimes(count);
+    expect(internal().obstacleDirty).toBe(true);
+  });
+  it('observes live sprite canvas validity without rebuilding unchanged type geometry', () => {
+    mouse('mousedown', 5, 5); mouse('mousemove', 5, 5);
+    const sprite = internal().furniture.get('DESK') as { canvas: { width: number; height: number } };
+    sprite.canvas.width = 0;
+    // Selected rendering precedes overlay rendering in the real frame. It must
+    // neither use stale dimensions nor overwrite the preview's old dependency.
+    internal().renderFurniture(16, 1);
+    expect(recorded.strokes[recorded.strokes.length - 1]).toEqual({ style: '#4ecca3', x: 78, y: 78, w: 36, h: 20 });
+    internal().renderEditorOverlay(16);
+    expect(recorded.fills[recorded.fills.length - 1]).toMatchObject({ w: 32, h: 16 });
+    sprite.canvas.width = 48;
+    internal().renderEditorOverlay(16);
+    expect(recorded.fills[recorded.fills.length - 1]).toMatchObject({ w: 48, h: 32 });
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    internal().renderEditorOverlay(16); expect(geometry).not.toHaveBeenCalled();
+  });
+  it('refreshes overlap geometry when a different placed type gains a valid sprite canvas', () => {
+    const sprite = { canvas: { width: 0, height: 32 }, footprintW: 3, footprintH: 2 };
+    internal().furniture.set('OTHER', sprite);
+    engine.setLayout([{ id: 'other', type: 'OTHER', x: 5, y: 5, rotation: 0 }]);
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message);
+    engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 5, 6);
+    expect(message).toHaveBeenLastCalledWith('Furniture footprint preview.');
+    sprite.canvas.width = 48;
+    internal().renderEditorOverlay(16);
+    expect(message).toHaveBeenLastCalledWith('Overlaps furniture — placement is allowed.');
+    expect(recorded.fills[recorded.fills.length - 1]?.style).toBe('rgba(245, 185, 66, 0.25)');
+  });
+  it.each(['footprintW', 'footprintH'] as const)('live %s change cannot be masked by selected-outline rendering', dimension => {
+    mouse('mousedown', 5, 5); mouse('mousemove', 5, 5);
+    const old = internal().getFurniturePreview();
+    const assessment = vi.spyOn(furnitureGeometry, 'assessFurniturePreview');
+    const sprite = internal().furniture.get('DESK') as { footprintW: number; footprintH: number };
+    sprite[dimension] = 4;
+    internal().renderFurniture(16, 1);
+    const fresh = internal().getFurniturePreview() as {rectangle: {width: number; height: number}};
+    expect(fresh).not.toBe(old);
+    expect(fresh.rectangle).toMatchObject({width: dimension === 'footprintW' ? 4 : 3, height: dimension === 'footprintH' ? 4 : 2});
+    expect(assessment).toHaveBeenCalledTimes(1);
+    internal().getFurniturePreview(); expect(assessment).toHaveBeenCalledTimes(1);
+  });
+  it('a different placed type changes footprint while its canvas stays valid', () => {
+    const sprite = {canvas: {width: 48, height: 32}, footprintW: 2, footprintH: 1};
+    internal().furniture.set('OTHER', sprite);
+    engine.setLayout([{id: 'other', type: 'OTHER', x: 5, y: 5, rotation: 0}]);
+    engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 5, 7);
+    const old = internal().getFurniturePreview() as {caution: boolean}; expect(old.caution).toBe(false);
+    sprite.footprintH = 3;
+    const fresh = internal().getFurniturePreview() as {caution: boolean; message: string};
+    expect(fresh).not.toBe(old); expect(fresh.message).toContain('Overlaps furniture');
+  });
+  it.each(['width', 'height'] as const)('keeps legacy loaded-map clamp/hit-test when sprite canvas %s is zero', dimension => {
+    const sprite = internal().furniture.get('DESK') as { canvas: { width: number; height: number } };
+    sprite.canvas[dimension] = 0;
+    engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 23, 15);
+    expect(internal().editor.previewIntent).toMatchObject({ x: 21, y: 14 });
+    internal().renderEditorOverlay(16);
+    expect(recorded.fills[recorded.fills.length - 1]).toMatchObject({ x: 336, y: 224, w: 32, h: 16 });
+    engine.setSelectedFurnitureType(null); mouse('mousedown', 6, 6);
+    expect(cb.onSelectFurniture).toHaveBeenLastCalledWith('desk');
+  });
+  it.each(['clear', 'delete mode', 'editor mode', 'type', 'selection', 'stop'] as const)('releases the cached preview on %s without drawing a stale footprint', transition => {
+    engine.setSelectedFurnitureType('DESK'); mouse('mousemove', 5, 5);
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message);
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    if (transition === 'clear') engine.clearFurniturePreview();
+    if (transition === 'delete mode') engine.setDeleteMode(true);
+    if (transition === 'editor mode') engine.setEditorMode(false);
+    if (transition === 'type') engine.setSelectedFurnitureType('MISSING');
+    if (transition === 'selection') engine.setSelectedFurnitureId('desk');
+    if (transition === 'stop') engine.stop();
+    expect(internal().getFurniturePreview()).toBeNull();
+    expect(message).toHaveBeenLastCalledWith('');
+    recorded.fills.length = 0; recorded.strokes.length = 0;
+    internal().renderEditorOverlay(16);
+    expect(recorded.strokes).toEqual([]);
+    expect(recorded.fills.every(r => r.style === 'rgba(255,255,255,0.08)')).toBe(true);
+    expect(geometry).not.toHaveBeenCalled();
+  });
   it('retains the neutral editor hover cell but clears it in object-fit bars', () => {
     mouse('mousemove', 2, 3);
     internal().renderEditorOverlay(16);
@@ -986,9 +1180,12 @@ describe('GameEngine informational furniture preview', () => {
     expect(cb.onMoveFurniture).not.toHaveBeenCalled();
     expect(cb.onPlaceFurniture).not.toHaveBeenCalled();
     const count = message.mock.calls.length;
+    internal().renderFurniture(16, 1); // selected-item outline still reads live geometry
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    const assessment = vi.spyOn(furnitureGeometry, 'assessFurniturePreview');
     internal().editor.refreshPreview();
-    internal().renderFurniture(16, 1);
-    internal().renderEditorOverlay(16); internal().renderEditorOverlay(16);
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(geometry).not.toHaveBeenCalled(); expect(assessment).not.toHaveBeenCalled();
     expect(message).toHaveBeenCalledTimes(count);
     expect(recorded.strokes).toContainEqual({ style: '#4ecca3', x: 21 * 16 - 2, y: 14 * 16 - 2, w: 52, h: 36 });
     expect(recorded.fills).toContainEqual({ style: 'rgba(245, 185, 66, 0.25)', x: 21 * 16, y: 14 * 16, w: 48, h: 32 });
@@ -1034,6 +1231,57 @@ describe('GameEngine informational furniture preview', () => {
       else expect(internal().editor.previewIntent).toBeNull();
     },
   );
+  it('invalidates a stationary preview at a real failed PNG completion while retaining the 1x1 clamp and 2x1 fallback', async () => {
+    internal().furniture = new Map(); internal().assetsLoaded = false;
+    engine.setLayout([{ id: 'bin', type: 'BIN', x: 5, y: 5, rotation: 0 }]);
+    let release!: (response: Response) => void;
+    const png = new Promise<Response>(resolve => { release = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: string) => input === '/assets/furniture/BIN/manifest.json'
+      ? Promise.resolve(Response.json({ file: 'BIN.png', width: 48, height: 32, footprintW: 3, footprintH: 2 }))
+      : input === '/assets/furniture/BIN/BIN.png' ? png : Promise.resolve(new Response('', { status: 404 }))));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recorded.ctx);
+    const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('BIN');
+    const loading = engine.init(); mouse('mousemove', 23, 15);
+    const initial = internal().getFurniturePreview();
+    release(new Response('', { status: 500 })); await loading;
+    expect(internal().assetsLoaded).toBe(true);
+    expect(internal().furniture.has('BIN')).toBe(false);
+    expect(internal().getFurniturePreview()).not.toBe(initial);
+    expect(internal().editor.previewIntent).toMatchObject({ x: 23, y: 15 });
+    expect(message).toHaveBeenLastCalledWith('Footprint extends beyond the office canvas. Using the 2×1 placeholder footprint.');
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(recorded.fills[recorded.fills.length - 1]).toEqual({ style: 'rgba(245, 185, 66, 0.25)', x: 368, y: 240, w: 32, h: 16 });
+    expect(geometry).not.toHaveBeenCalled();
+    mouse('mousedown', 23, 15); expect(cb.onPlaceFurniture).toHaveBeenCalledWith('BIN', 23, 15);
+  });
+  it('invalidates before synchronous characters-only fallback feedback with real loader paths', async () => {
+    internal().assetsLoaded = false;
+    let reject!: (error: Error) => void;
+    const firstCharacter = new Promise<Response>((_, rejectPromise) => { reject = rejectPromise; });
+    let characterLoads = 0;
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      if (input === '/assets/characters/char_0.png' && ++characterLoads === 1) return firstCharacter;
+      return Promise.resolve(new Response('', { status: input.startsWith('/assets/characters/') ? 200 : 404 }));
+    }));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 112, height: 96 })));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(recorded.ctx);
+    const message = vi.fn((status: string) => {
+      if (status === 'Touches the office border.') {
+        internal().renderEditorOverlay(16);
+        expect(recorded.fills[recorded.fills.length - 1]).toMatchObject({ x: 336, y: 224, w: 48, h: 32 });
+      }
+    });
+    engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
+    const loading = engine.init(); mouse('mousemove', 23, 15);
+    expect(message.mock.calls[message.mock.calls.length - 1]?.[0]).toContain('2×1 placeholder');
+    reject(new DOMException('Delayed character failure', 'AbortError')); await loading;
+    expect(characterLoads).toBe(2); expect(internal().assetsLoaded).toBe(true);
+    expect(message).toHaveBeenLastCalledWith('Touches the office border.');
+    const geometry = vi.spyOn(internal(), 'renderedFootprint');
+    for (let i = 0; i < 120; i++) internal().renderEditorOverlay(16);
+    expect(geometry).not.toHaveBeenCalled();
+  });
   it('retains exact-edge touch callback coordinates even beyond the rendered grid', () => {
     const message = vi.fn(); engine.setFurniturePreviewCallback(message); engine.setSelectedFurnitureType('DESK');
     touch('touchstart', [{ clientX: 384, clientY: 256 }]);
