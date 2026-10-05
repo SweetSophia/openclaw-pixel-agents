@@ -1,4 +1,4 @@
-*Development picked up again at 19th of April 2026. Expect many updates and improvements every week now!*
+*Active development, contributions are welcomed. 3D-Agent cross-platform App in development*
 
 # 🖥️ OpenClaw Pixel Agents
 
