@@ -139,4 +139,18 @@ describe('LiveActivity', () => {
     await settle();
     expect(screen.getByText(/Freshness unavailable/i)).toBeInTheDocument();
   });
+
+  it('retries after an invalid ingest timestamp and recovers when status becomes valid', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ dataSource: 'ingest', lastIngestAt: 0 }), {
+      status: 200, headers: { Date: new Date(now).toUTCString() },
+    }));
+    render(<LiveActivity agents={[agent]} connected snapshotReceivedAt={now} onSelectAgent={() => {}} />);
+    await settle();
+    expect(screen.getByText(/Freshness unavailable/i)).toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+
+    expect(screen.getByText('Updated 15s ago')).toBeInTheDocument();
+    expect(screen.queryByText(/Freshness unavailable/i)).not.toBeInTheDocument();
+  });
 });
