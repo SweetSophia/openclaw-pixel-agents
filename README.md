@@ -65,6 +65,14 @@ The right sidebar shows all configured agents with:
 - Toggle button to show/hide in the pixel office
 - Bulk Show All / Hide All controls
 
+### Live Activity
+
+The bottom **Live activity** dock counts working, attention-needed, idle, and inactive agents across every room, including agents hidden from the pixel office. Expand it to filter the roster, see models and rooms, or open an agent's existing details panel.
+
+Activity labels are estimates based on session recency and token counts; they do not identify the actual task or tool being used. **Observed changes** records up to 50 status changes seen since the page opened, including while the dock is collapsed. Reloading clears that history. Transcript excerpts appear separately under **Messages** when the source supplies them; collector snapshots currently supply session status only.
+
+Freshness is checked every 15 seconds. In ingest mode, the age comes from the last successful collector push, independently of socket connectivity. CLI mode shows when the browser last received an agent snapshot. Data older than 90 seconds is marked stale, with unavailable and waiting states shown explicitly.
+
 ### Layout Editor
 
 Click **✏️ Edit** in the header to enter editor mode:
