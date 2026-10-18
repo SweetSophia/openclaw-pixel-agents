@@ -11,7 +11,7 @@ interface ObservedChange {
   observedAt: number;
 }
 
-type SourceStatus = { dataSource: 'cli' | 'ingest'; lastIngestAt: number | null };
+type SourceStatus = { dataSource: 'cli-poll' | 'ingest'; updatedAt: number | null; serverTimeOffset: number };
 
 export function useActivityFeed(agents: AgentState[], snapshotReceivedAt: number | null) {
   const [changes, setChanges] = useState<ObservedChange[]>([]);
@@ -48,21 +48,32 @@ export function useActivityFeed(agents: AgentState[], snapshotReceivedAt: number
     let request: AbortController;
     let timeout: ReturnType<typeof setTimeout>;
     const poll = async () => {
+      const requestedAt = Date.now();
       request = new AbortController();
       timeout = setTimeout(() => request.abort(), 10_000);
       try {
-        const response = await fetch('/api/status', { signal: request.signal });
+        const response = await fetch('/api/status', { signal: request.signal, cache: 'no-store' });
         if (!response.ok) throw new Error('Status unavailable');
         const status = await response.json();
-        if ((status.dataSource !== 'ingest' && status.dataSource !== 'cli')
+        const serverTime = Date.parse(response.headers.get('Date') ?? '');
+        if ((status.dataSource !== 'ingest' && status.dataSource !== 'cli-poll')
           || (status.dataSource === 'ingest' && status.lastIngestAt !== null
             && !(Number.isFinite(status.lastIngestAt) && status.lastIngestAt > 0))) {
           throw new Error('Invalid source status');
         }
+        if (status.dataSource === 'ingest' && status.lastIngestAt !== null && !Number.isFinite(serverTime)) {
+          throw new Error('Server clock unavailable');
+        }
         if (!cancelled) {
-          setSource({ dataSource: status.dataSource, lastIngestAt: status.lastIngestAt ?? null });
+          const receivedAt = Date.now();
+          // Convert server age to the browser clock; include request time so a
+          // delayed response cannot make an older push look newly received.
+          const updatedAt = status.dataSource === 'ingest' && status.lastIngestAt !== null
+            ? requestedAt - Math.max(0, serverTime - status.lastIngestAt) : null;
+          const serverTimeOffset = Number.isFinite(serverTime) ? serverTime - receivedAt : 0;
+          setSource({ dataSource: status.dataSource, updatedAt, serverTimeOffset });
           setUnavailable(false);
-          setNow(Date.now());
+          setNow(receivedAt);
         }
       } catch {
         if (!cancelled) setUnavailable(true);
@@ -81,10 +92,10 @@ export function useActivityFeed(agents: AgentState[], snapshotReceivedAt: number
   }, []);
 
   // Receiving a cached server snapshot does not prove the collector is alive.
-  const updatedAt = source?.dataSource === 'ingest' ? source.lastIngestAt : snapshotReceivedAt;
+  const updatedAt = source?.dataSource === 'ingest' ? source.updatedAt : snapshotReceivedAt;
   const freshness = unavailable ? 'unavailable'
     : !source || !updatedAt ? 'waiting'
     : now - updatedAt >= 90_000 ? 'stale' : 'current';
 
-  return { changes, now, updatedAt, freshness, dataSource: source?.dataSource };
+  return { changes, now, sourceNow: now + (source?.serverTimeOffset ?? 0), updatedAt, freshness, dataSource: source?.dataSource };
 }

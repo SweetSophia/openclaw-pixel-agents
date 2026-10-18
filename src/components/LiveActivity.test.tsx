@@ -21,7 +21,7 @@ describe('LiveActivity', () => {
       url === '/api/status'
         ? { dataSource: 'ingest', lastIngestAt: now }
         : { messages: [] },
-    ), { status: 200 })));
+    ), { status: 200, headers: { Date: new Date(Date.now()).toUTCString() } })));
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -75,7 +75,7 @@ describe('LiveActivity', () => {
     expect(screen.getByText(/Data is stale/i)).toBeInTheDocument();
     open();
     expect(screen.getByText(/last known activity/i)).toBeInTheDocument();
-    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ dataSource: 'ingest', lastIngestAt: Date.now() }), { status: 200 }));
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ dataSource: 'ingest', lastIngestAt: Date.now() }), { status: 200, headers: { Date: new Date(Date.now()).toUTCString() } }));
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
     expect(screen.queryByText(/Data is stale/i)).not.toBeInTheDocument();
   });
@@ -92,7 +92,7 @@ describe('LiveActivity', () => {
     vi.mocked(fetch).mockImplementation(async (url) => new Response(JSON.stringify(
       url === '/api/status' ? { dataSource: 'ingest', lastIngestAt: now }
         : { messages: [{ id: 'm1', agentId: 'cybera', agentName: 'Cybera', role: 'assistant', text: 'Build completed.', timestamp: now }] },
-    ), { status: 200 }));
+    ), { status: 200, headers: { Date: new Date(Date.now()).toUTCString() } }));
     render(<LiveActivity agents={[agent]} connected snapshotReceivedAt={now} onSelectAgent={() => {}} />);
     await settle(); open(); await settle();
     expect(screen.getByRole('heading', { name: 'Messages' })).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe('LiveActivity', () => {
   });
 
   it('distinguishes CLI snapshot receipt from collector freshness during REST fallback', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ dataSource: 'cli', lastIngestAt: null }), { status: 200 }));
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ dataSource: 'cli-poll', lastIngestAt: null }), { status: 200 }));
     const props = { agents: [agent], connected: false, onSelectAgent: () => {} };
     const view = render(<LiveActivity {...props} snapshotReceivedAt={now - 120_000} />);
     await settle();
@@ -118,5 +118,25 @@ describe('LiveActivity', () => {
     expect(screen.getByText(/Snapshot received just now/i)).toBeInTheDocument();
     open();
     expect(screen.getByText(/OpenClaw CLI · REST fallback/i)).toBeInTheDocument();
+  });
+
+  it.each([-600_000, 600_000])('uses the server clock for collector age with a %ims clock offset', async offset => {
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({
+      dataSource: 'ingest', lastIngestAt: now + offset - 15_000,
+    }), { status: 200, headers: { Date: new Date(Date.now() + offset).toUTCString() } }));
+    render(<LiveActivity agents={[{ ...agent, lastActivity: now + offset - 30_000 }]} connected snapshotReceivedAt={now} onSelectAgent={() => {}} />);
+    await settle();
+    expect(screen.getByText('Updated 15s ago')).toBeInTheDocument();
+    open();
+    expect(screen.getByText('Session activity 30s ago')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(screen.getByText(/Data is stale/i)).toBeInTheDocument();
+  });
+
+  it('does not guess collector freshness when the server clock is unavailable', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ dataSource: 'ingest', lastIngestAt: now }), { status: 200 }));
+    render(<LiveActivity agents={[agent]} connected snapshotReceivedAt={now} onSelectAgent={() => {}} />);
+    await settle();
+    expect(screen.getByText(/Freshness unavailable/i)).toBeInTheDocument();
   });
 });

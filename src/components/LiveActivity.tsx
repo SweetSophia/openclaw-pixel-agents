@@ -17,14 +17,14 @@ export default function LiveActivity({ agents, connected, snapshotReceivedAt, on
   const [filter, setFilter] = useState<ActivityGroup | 'All'>('All');
   const panelId = useId();
   const toggle = useRef<HTMLButtonElement>(null);
-  const { changes, now, updatedAt, freshness, dataSource } = useActivityFeed(agents, snapshotReceivedAt);
+  const { changes, now, sourceNow, updatedAt, freshness, dataSource } = useActivityFeed(agents, snapshotReceivedAt);
   const counts = activityGroups.map(group => ({ group, count: agents.filter(agent => activityGroup(agent) === group).length }));
   const visibleAgents = agents.filter(agent => filter === 'All' || activityGroup(agent) === filter)
     .sort((a, b) => activityGroups.indexOf(activityGroup(a)) - activityGroups.indexOf(activityGroup(b)));
   const freshnessText = freshness === 'unavailable' ? 'Freshness unavailable'
     : freshness === 'waiting' ? 'Waiting for source data'
     : freshness === 'stale' ? `Data is stale · ${ageLabel(updatedAt!, now)}`
-    : `${dataSource === 'cli' ? 'Snapshot received' : 'Updated'} ${ageLabel(updatedAt!, now)}`;
+    : `${dataSource === 'cli-poll' ? 'Snapshot received' : 'Updated'} ${ageLabel(updatedAt!, now)}`;
 
   return (
     <section className={`activity-dock activity-dock--${freshness}`} aria-label="Live activity"
@@ -47,7 +47,7 @@ export default function LiveActivity({ agents, connected, snapshotReceivedAt, on
           Activity is estimated from session recency and token counts; task and tool details are not supplied.
           {freshness !== 'current' && ' Showing last known activity.'}
         </p>
-        <p className="activity-source">{dataSource === 'ingest' ? 'Collector' : dataSource === 'cli' ? 'OpenClaw CLI' : 'Source pending'}
+        <p className="activity-source">{dataSource === 'ingest' ? 'Collector' : dataSource === 'cli-poll' ? 'OpenClaw CLI' : 'Source pending'}
           {' · '}{connected ? 'Socket connected' : 'REST fallback'} · History since this page opened</p>
         <div className="activity-filters" role="group" aria-label="Filter agent activity">
           {(['All', ...activityGroups] as const).map(group => <button key={group}
@@ -63,7 +63,7 @@ export default function LiveActivity({ agents, connected, snapshotReceivedAt, on
                     <span className="activity-agent-heading"><strong>{agent.name}</strong>
                       <span className={`activity-state activity-state--${activityGroup(agent).toLowerCase().replace(/ /g, '-')}`}>{activityLabel(agent)}</span></span>
                     <span className="activity-agent-meta">{getRoomName(agent.roomId || resolveRoomByTags(agent.tags)) || 'Unknown room'} · {agent.model || 'No model'}</span>
-                    <span className="activity-agent-age">{agent.lastActivity > 0 ? `Session activity ${ageLabel(agent.lastActivity, now)}` : 'No recent session'}</span>
+                    <span className="activity-agent-age">{agent.lastActivity > 0 ? `Session activity ${ageLabel(agent.lastActivity, sourceNow)}` : 'No recent session'}</span>
                   </button>
                 </li>)}
               </ul>}

@@ -71,7 +71,7 @@ The bottom **Live activity** dock counts working, attention-needed, idle, and in
 
 Activity labels are estimates based on session recency and token counts; they do not identify the actual task or tool being used. **Observed changes** records up to 50 status changes seen since the page opened, including while the dock is collapsed. Reloading clears that history. Transcript excerpts appear separately under **Messages** when the source supplies them; collector snapshots currently supply session status only.
 
-Freshness is checked every 15 seconds. In ingest mode, the age comes from the last successful collector push, independently of socket connectivity. CLI mode shows when the browser last received an agent snapshot. Data older than 90 seconds is marked stale, with unavailable and waiting states shown explicitly.
+Freshness is checked every 15 seconds. In ingest mode, the age comes from the last successful collector push, independently of socket connectivity. The HTTP `Date` header supplies the server clock so browser clock differences do not distort the age; proxies must preserve this header. CLI mode shows when the browser last received an agent snapshot. Data older than 90 seconds is marked stale, with unavailable and waiting states shown explicitly.
 
 ### Layout Editor
 

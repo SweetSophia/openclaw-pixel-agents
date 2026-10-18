@@ -18,7 +18,12 @@ export default function MessageTicker() {
     };
     socket.on('ticker:messages', handleMessages);
     const cached = getCachedTickerMessages();
-    if (cached) { setMessages(cached); setStatus('ready'); }
+    if (cached) {
+      setMessages(cached); setStatus('ready');
+      // A live shared-socket cache already supplies the authoritative feed.
+      // Disconnected consumers still need the HTTP fallback to refresh it.
+      receivedSocketSnapshot = socket.connected;
+    }
 
     const controller = new AbortController();
     fetch('/api/messages', { signal: controller.signal })
@@ -30,7 +35,7 @@ export default function MessageTicker() {
         if (!Array.isArray(data.messages)) throw new Error('Invalid message snapshot');
         if (!cancelled && !receivedSocketSnapshot) { setMessages(data.messages); setStatus('ready'); }
       })
-      .catch(() => { if (!cancelled && !receivedSocketSnapshot) setStatus('error'); });
+      .catch(() => { if (!cancelled && !receivedSocketSnapshot && !cached?.length) setStatus('error'); });
     return () => {
       cancelled = true;
       controller.abort();
