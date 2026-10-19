@@ -12,7 +12,8 @@ const knownTypes = new Set<string>(FURNITURE_TYPES);
 /** Resolve legacy names after validation; retain unknown IDs for the fallback. */
 export function canonicalFurnitureType(type: string): string {
   const upper = type.toUpperCase();
+  if (knownTypes.has(upper)) return upper;
   if (upper === 'CHAIR') return 'CUSHIONED_CHAIR';
   if (upper === 'MONITOR') return 'PC';
-  return knownTypes.has(upper) ? upper : type;
+  return type;
 }
