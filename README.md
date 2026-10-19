@@ -254,6 +254,8 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `join(__dirname, "data")` | Persistence directory for preferences and layouts. Resolved relative to the compiled module location — dev writes under `server/data/`, standalone compiled startup writes under `dist/server/server/data/`. Set explicitly in production. Docker sets `DATA_DIR=/app/data`. |
 
+`CORS_ORIGIN` must include the browser's scheme, hostname, and port. For Tailscale access, list the MagicDNS hostname separately from the IP address. A missing origin can leave agent data updating through read-only REST polling while blocking Socket.IO and changes such as character designs.
+
 Agent preferences and layouts are written through a flushed same-directory temporary file, atomically renamed into place, and followed by a parent-directory sync on POSIX. A failure before replacement therefore leaves the previous JSON file intact instead of exposing a truncated target.
 
 ### Agent data-source modes

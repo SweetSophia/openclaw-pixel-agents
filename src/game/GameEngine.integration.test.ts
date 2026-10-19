@@ -224,6 +224,54 @@ function clientCenterOf(gridX: number, gridY: number): { x: number; y: number } 
   };
 }
 
+describe('GameEngine room changes retain configured seats', () => {
+  let engine: GameEngine;
+
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    engine = new GameEngine(makeCanvasWithStubbedContext().canvas, GRID);
+  });
+
+  afterEach(() => {
+    engine.stop();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('restores the configured seat across repeated room departures and returns', () => {
+    const seat = { x: 15, y: 10 };
+    engine.setLayout([], { cylena: seat });
+    for (let visit = 0; visit < 4; visit++) {
+      expect(engine.assignSeat('cylena')).toEqual(seat);
+      engine.addCharacter({ id: 'cylena', name: 'Cylena', ...seat, state: 'typing' });
+      engine.removeCharacter('cylena');
+    }
+  });
+
+  it('keeps a configured seat reserved while its agent is in another room', () => {
+    engine.setLayout([], { main: { x: 3, y: 3 } });
+    engine.removeCharacter('main');
+    expect(engine.assignSeat('visitor')).not.toEqual({ x: 3, y: 3 });
+    expect(engine.assignSeat('main')).toEqual({ x: 3, y: 3 });
+  });
+
+  it('releases generated seats when an unconfigured agent leaves', () => {
+    engine.setLayout([], { main: { x: 9, y: 4 } });
+    const generated = engine.assignSeat('visitor');
+    engine.removeCharacter('visitor');
+    expect(engine.assignSeat('next-visitor')).toEqual(generated);
+  });
+
+  it('replaces old reservations when a new layout defines different seats', () => {
+    engine.setLayout([], { main: { x: 3, y: 3 } });
+    engine.removeCharacter('main');
+    engine.setLayout([], { main: { x: 9, y: 4 } });
+    expect(engine.assignSeat('visitor')).toEqual({ x: 3, y: 3 });
+    expect(engine.assignSeat('main')).toEqual({ x: 9, y: 4 });
+  });
+});
+
 // ── Editor adapter describe ──────────────────────────────────────────────────
 
 describe('GameEngine integration: editor adapters', () => {

@@ -10,6 +10,7 @@ import { furnitureRectangle, assessFurniturePreview, type FurnitureRectangle } f
 import {
   loadAllAssets,
   loadCharacters,
+  getAgentCharacter,
   getSpriteFrame,
   type ReadonlyLoadedCharacter,
   type ReadonlyLoadedFloor,
@@ -202,6 +203,7 @@ export class GameEngine {
   // Layout data
   private placedFurniture: PlacedFurniture[] = [];
   private seats: Map<string, { x: number; y: number }> = new Map();
+  private configuredSeatIds = new Set<string>();
 
   // Pathfinding
   private obstacleGrid: boolean[][] | null = null;
@@ -1157,7 +1159,7 @@ export class GameEngine {
       this.renderPlaceholderCharacter(char, px, py, tileSize);
     } else {
       const override = this.characterSpriteOverrides.get(char.id);
-      const sprite = override ?? sprites[char.paletteIndex % sprites.length];
+      const sprite = override ?? getAgentCharacter(char.id) ?? sprites[char.paletteIndex % sprites.length];
       if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
       else {
         const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
@@ -1804,7 +1806,8 @@ export class GameEngine {
   removeCharacter(id: string) {
     this.characters.delete(id);
     this.idleBehaviors.delete(id);
-    this.seats.delete(id);
+    // Layout reservations survive room changes; only temporary seats are freed.
+    if (!this.configuredSeatIds.has(id)) this.seats.delete(id);
     // Issue #165: orphaned state. A removed character's speech bubble
     // would persist (re-apparent if the id is reused for a new
     // `waiting_input` agent), and the bubble's timer would keep running
@@ -2013,6 +2016,7 @@ export class GameEngine {
     this.scheduleObstacleRebuild();
     if (seats) {
       this.seats.clear();
+      this.configuredSeatIds = new Set(Object.keys(seats));
       for (const [aid, pos] of Object.entries(seats)) this.seats.set(aid, pos);
     }
   }

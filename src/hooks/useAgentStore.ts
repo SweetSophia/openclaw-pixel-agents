@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getCachedAgentsUpdate, getSharedSocket } from '../socket';
+import { getCachedAgentsSnapshot, getSharedSocket } from '../socket';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, resolveRoomByTags, type AgentTag } from '../../shared/types';
 
@@ -375,10 +375,13 @@ export function useAgentStore() {
     // has already received an `agents:update` snapshot, this
     // consumer missed it. Seed our state from the cached payload so
     // we don't render an empty list until the next broadcast.
-    const cachedAgents = getCachedAgentsUpdate();
-    if (cachedAgents) {
+    const cachedSnapshot = getCachedAgentsSnapshot();
+    if (socket.connected && cachedSnapshot) {
       socketRevisionRef.current += 1;
-      updateAgents(() => cachedAgents);
+      updateAgents(() => cachedSnapshot.agents);
+      setSnapshotReceivedAt(cachedSnapshot.receivedAt);
+      setError(null);
+      setConnected(true);
     }
 
     return () => {

@@ -147,6 +147,11 @@ function parseSeats(value: unknown, width: number, height: number): Record<strin
     if (!isIntInRange(x, 0, width - 1) || !isIntInRange(y, 0, height - 1)) return null;
     seats[agentId] = { x, y };
   }
+  // Shodan's live agent ID is main; retain positions from legacy layouts.
+  if (seats.shodan) {
+    seats.main ??= seats.shodan;
+    delete seats.shodan;
+  }
   return seats;
 }
 

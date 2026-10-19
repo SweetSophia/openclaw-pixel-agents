@@ -49,6 +49,66 @@ describe('asset loading at browser boundaries', () => {
     expect(legacyPaths.every(path => path.endsWith(`?v=${revision}`))).toBe(true);
   });
 
+  it('keeps an existing asset bundle drawable through repeated agent recompositions', async () => {
+    const { loadAllAssets, recomposeAgent, getSpriteFrame } = await import('./SpriteLoader');
+    const assets = await loadAllAssets();
+    const main = assets.characters[0];
+    const mainFrame = main.down[0].canvas;
+    const cybera = assets.characters[1];
+    for (const bodyIndex of [1, 2]) {
+      const previousFrame = cybera.down[0].canvas;
+      const replacement = recomposeAgent('cybera', { bodyIndex, hairIndex: 2, outfitIndex: 3 });
+
+      for (const direction of ['down', 'up', 'right', 'left'] as const) {
+        expect(cybera[direction]).toHaveLength(7);
+        for (const frame of cybera[direction]) {
+          expect(frame.canvas.width).toBe(16);
+          expect(frame.canvas.height).toBe(32);
+        }
+        for (const [state, count] of [['walk', 3], ['typing', 2], ['reading', 2], ['idle', 1]] as const) {
+          for (let tick = 0; tick < count; tick++) {
+            expect(getSpriteFrame(cybera, state, direction, tick)).not.toBeNull();
+          }
+        }
+      }
+      expect(replacement).toBe(cybera);
+      expect(cybera.down[0].canvas).not.toBe(previousFrame);
+      expect(previousFrame.width).toBe(0);
+      expect(main.down[0].canvas).toBe(mainFrame);
+      expect(mainFrame.width).toBe(16);
+    }
+  });
+
+  it('looks up each loaded character by agent identity', async () => {
+    const { loadAllAssets, getAgentCharacter, recomposeAgent } = await import('./SpriteLoader');
+    const assets = await loadAllAssets();
+    expect(getAgentCharacter('main')).toBe(assets.characters[0]);
+    expect(getAgentCharacter('cybera')).toBe(assets.characters[1]);
+    expect(getAgentCharacter('main')).not.toBe(getAgentCharacter('cybera'));
+    expect(getAgentCharacter('unknown')).toBeNull();
+    const custom = recomposeAgent('custom', { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 });
+    expect(custom).not.toBeNull();
+    expect(getAgentCharacter('custom')).toBe(custom);
+  });
+
+  it.each(['composed', 'legacy'] as const)('clears previous agent lookups when reloading %s characters', async mode => {
+    const { loadAllAssets, getAgentCharacter, recomposeAgent } = await import('./SpriteLoader');
+    const first = await loadAllAssets();
+    recomposeAgent('custom', { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 });
+    if (mode === 'legacy') {
+      vi.mocked(fetch).mockImplementation(async url => String(url).includes('/source/')
+        ? new Response('', { status: 404 })
+        : responseFor(String(url).split('?')[0]));
+    }
+
+    const current = await loadAllAssets();
+
+    expect(getAgentCharacter('custom')).toBeNull();
+    expect(getAgentCharacter('main')).toBe(mode === 'legacy' ? null : current.characters[0]);
+    expect(current.characters).toHaveLength(mode === 'legacy' ? 6 : 8);
+    expect(current.characters[0]).not.toBe(first.characters[0]);
+  });
+
   it('does no work for an already cancelled initialization', async () => {
     const { loadAllAssets } = await import('./SpriteLoader');
     const controller = new AbortController();
