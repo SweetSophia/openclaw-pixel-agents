@@ -130,29 +130,57 @@ function compositeFrame(
 /**
  * Load all source sprite sheets from MetroCity assets.
  * Must be called before composeCharacter().
+ * Publish a usable replacement before closing the previous set; discarded
+ * loads own and release only the bitmaps they decoded.
  */
 export async function loadSourceSheets(
   basePath = '/assets/source/MetroCity/',
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  const [body, hair, ...outfits] = await Promise.all([
-    loadPng(`${basePath}CharacterModel/Character Model.png`, signal),
-    loadPng(`${basePath}Hair/Hairs.png`, signal),
-    // Load all 6 outfit sheets
-    ...Array.from({ length: 6 }, (_, i) =>
-      loadPng(`${basePath}Outfits/Outfit${i + 1}.png`, signal).catch(err => {
-        signal?.throwIfAborted();
-        if (err.name === 'AbortError') throw err;
-        return null;
-      })
-    ),
-  ]);
+  const staged = new Set<ImageBitmap>();
+  let discarded = false;
+  const discard = () => {
+    discarded = true;
+    for (const bitmap of staged) bitmap.close();
+    staged.clear();
+  };
+  const loadSheet = async (path: string) => {
+    const bitmap = await loadPng(path, signal);
+    // Promise.all may already have rejected while another decode was pending.
+    if (discarded) bitmap.close();
+    else staged.add(bitmap);
+    return bitmap;
+  };
+  signal?.addEventListener('abort', discard, { once: true });
 
-  signal?.throwIfAborted();
-  bodySheet = body;
-  hairSheet = hair;
-  outfitSheets = outfits.filter((o): o is ImageBitmap => o !== null);
+  try {
+    const [body, hair, ...outfits] = await Promise.all([
+      loadSheet(`${basePath}CharacterModel/Character Model.png`),
+      loadSheet(`${basePath}Hair/Hairs.png`),
+      ...Array.from({ length: 6 }, (_, i) =>
+        loadSheet(`${basePath}Outfits/Outfit${i + 1}.png`).catch(err => {
+          signal?.throwIfAborted();
+          if (err.name === 'AbortError') throw err;
+          return null;
+        })
+      ),
+    ]);
+
+    signal?.throwIfAborted();
+    const nextOutfits = outfits.filter((o): o is ImageBitmap => o !== null);
+    if (nextOutfits.length === 0) throw new Error('No source outfit sheets loaded');
+    const previous = [bodySheet, hairSheet, ...outfitSheets];
+    bodySheet = body;
+    hairSheet = hair;
+    outfitSheets = nextOutfits;
+    for (const bitmap of previous) bitmap?.close();
+  } catch (err) {
+    discard();
+    throw err;
+  } finally {
+    signal?.removeEventListener('abort', discard);
+  }
 }
 
 /**
