@@ -64,9 +64,9 @@ scans JavaScript and TypeScript changes and runs weekly on the default branch.
 For asset-loading changes, also check a local production build (`npm run build`,
 then `npm start` with the required `CORS_ORIGIN`). Leave the browser cache enabled
 and reload several times within a minute: the console should report 8 characters,
-9 floors, and 25 furniture types, with no asset 429s. Sprite and manifest URLs
-include a build revision and are cached for a year; rebuild and restart the local
-server to verify that the revision changes and fresh assets load. Development
+9 floors, and 25 furniture types, with no asset 429s. Sprite, manifest, and
+background URLs include a build revision and are cached for a year; rebuild and
+restart the local server to verify that the revision changes and fresh assets load. Development
 URLs intentionally remain unversioned so edits appear immediately. HTML stays
 revalidatable, and asset requests that reach the server still consume the public
 GET/HEAD rate limit.

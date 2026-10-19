@@ -3,10 +3,11 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PixelOffice } from './PixelOffice';
 import { GameEngine } from '../game/GameEngine';
+import { EditorController } from '../game/EditorController';
 
 // Real React adapter, engine and controller. Browser asset I/O deliberately
 // stays pending; this exercises the real missing-sprite fallback before load.
-describe('PixelOffice furniture preview status', () => {
+describe('PixelOffice engine lifecycle and furniture preview status', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
@@ -17,13 +18,20 @@ describe('PixelOffice furniture preview status', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-  it('does not start a removed office when its real engine initialization finishes late', async () => {
+  it('silently finishes cancelled initialization without refreshing or restarting a removed office', async () => {
     const responses: Array<(response: Response) => void> = [];
-    vi.mocked(fetch).mockImplementation(() => new Promise(resolve => { responses.push(resolve); }));
+    let released = false;
+    // Settle later requests too, so a cancellation regression fails assertions
+    // rather than hanging if initialization incorrectly continues loading.
+    vi.mocked(fetch).mockImplementation(() => released
+      ? Promise.resolve(new Response('png'))
+      : new Promise(resolve => { responses.push(resolve); }));
     vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 16, height: 32, close: vi.fn() })));
     const initialization = vi.spyOn(GameEngine.prototype, 'init');
     const start = vi.spyOn(GameEngine.prototype, 'start');
     const stop = vi.spyOn(GameEngine.prototype, 'stop');
+    const refresh = vi.spyOn(EditorController.prototype, 'refreshPreview');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const view = render(<PixelOffice
       agents={[]} editorMode={false} deleteMode={false} activeLayout={null}
       selectedFurnitureType={null} onPlaceFurniture={vi.fn()} onMoveFurniture={vi.fn()}
@@ -33,10 +41,14 @@ describe('PixelOffice furniture preview status', () => {
     const pending = initialization.mock.results[0].value;
     view.unmount();
     expect(stop).toHaveBeenCalledOnce();
+    refresh.mockClear();
     await act(async () => {
+      released = true;
       for (const resolve of responses) resolve(new Response('png'));
       await pending;
     });
+    expect(error).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
     expect(requestAnimationFrame).not.toHaveBeenCalled();
   });

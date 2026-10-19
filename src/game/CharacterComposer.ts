@@ -19,7 +19,7 @@
  *   "left" derived by flipping "right"
  */
 
-import { assetUrl } from '../util/assetUrl';
+import { loadPng } from '../util/loadPng';
 
 // ── Source constants ───────────────────────────────────────
 
@@ -74,17 +74,6 @@ let outfitSheets: ImageBitmap[] = [];
 let shadowSheet: ImageBitmap | null = null;
 
 // ── Helpers ────────────────────────────────────────────────
-
-async function loadPng(path: string, signal?: AbortSignal): Promise<ImageBitmap> {
-  signal?.throwIfAborted();
-  const response = await fetch(assetUrl(path), { signal });
-  if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
-  const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  if (signal?.aborted) bitmap.close();
-  signal?.throwIfAborted();
-  return bitmap;
-}
 
 /**
  * Extract a single 32×32 frame from a source sprite sheet.

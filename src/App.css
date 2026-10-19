@@ -49,8 +49,6 @@ body {
   width: 100vw;
   height: 100vh;
   position: relative; /* All HUD elements float inside here */
-  /* Cyber Background inserted here */
-  background-image: url('/assets/background.png');
   background-size: cover;
   background-position: center;
 }

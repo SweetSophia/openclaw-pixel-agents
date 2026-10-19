@@ -27,6 +27,18 @@ vi.mock('./components/SoundControls', () => ({ SoundControls: () => null }));
 vi.mock('./components/RoomSwitcher', () => ({ RoomSwitcher: () => null }));
 vi.mock('./components/MessageTicker', () => ({ default: () => null }));
 
+describe('App background caching', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it('renders the background with the same build revision as sprites', () => {
+    const revision = 'a'.repeat(32);
+    vi.stubGlobal('__ASSET_BUILD_ID__', revision);
+    const view = render(<App />);
+    const background = window.getComputedStyle(view.container.querySelector('.app')!).backgroundImage;
+    expect(background).toBe(`url("/assets/background.png?v=${revision}")`);
+  });
+});
+
 describe('App furniture palette session lifecycle', () => {
   afterEach(cleanup);
 

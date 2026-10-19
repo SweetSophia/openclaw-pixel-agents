@@ -11,6 +11,7 @@ import { useLayoutStore } from './hooks/useLayoutStore';
 import { useLiveSync } from './hooks/useLiveSync';
 import { sfx } from './audio/SoundFX';
 import { newEntityId } from './util/id';
+import { assetUrl } from './util/assetUrl';
 import { getRoomName, type PlacedFurniture } from '../shared/types';
 import './App.css';
 
@@ -174,7 +175,7 @@ export const App: React.FC = () => {
   }, []);
 
   return (
-    <div className="app">
+    <div className="app" style={{ backgroundImage: `url("${assetUrl('/assets/background.png')}")` }}>
       <header className="app-header" ref={headerRef}>
         <h1 aria-label="OpenClaw Pixel Agents"><span aria-hidden="true">🖥️ </span><span className="brand-text">OpenClaw Pixel Agents</span></h1>
         <RoomSwitcher

@@ -31,6 +31,7 @@ import {
   type ComposedCharacter,
 } from './CharacterComposer';
 import { assetUrl } from '../util/assetUrl';
+import { loadPng } from '../util/loadPng';
 
 // ── Types ──────────────────────────────────────────────────
 //
@@ -161,18 +162,6 @@ const cachedFurniture: Map<string, LoadedFurnitureItem> = new Map();
 const cachedComposed: Map<string, ComposedCharacter> = new Map();
 
 // ── Helpers ────────────────────────────────────────────────
-
-async function loadPng(path: string, signal?: AbortSignal): Promise<ImageBitmap> {
-  signal?.throwIfAborted();
-
-  const response = await fetch(assetUrl(path), { signal });
-  if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
-  const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  if (signal?.aborted) bitmap.close();
-  signal?.throwIfAborted();
-  return bitmap;
-}
 
 function sliceFrame(
   bitmap: ImageBitmap,
