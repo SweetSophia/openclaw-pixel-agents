@@ -32,6 +32,7 @@ import {
 } from './CharacterComposer';
 import { assetUrl } from '../util/assetUrl';
 import { loadPng } from '../util/loadPng';
+import { FURNITURE_TYPES } from '../../shared/furniture';
 
 // ── Types ──────────────────────────────────────────────────
 //
@@ -327,15 +328,7 @@ export async function loadFurniture(
   basePath = '/assets/furniture/',
   signal?: AbortSignal,
 ): Promise<ReadonlyMap<string, ReadonlyLoadedFurnitureItem>> {
-  const furnitureTypes = [
-    'BIN', 'BOOKSHELF', 'CACTUS', 'CLOCK', 'COFFEE', 'COFFEE_TABLE',
-    'CUSHIONED_BENCH', 'CUSHIONED_CHAIR', 'DESK', 'DOUBLE_BOOKSHELF',
-    'HANGING_PLANT', 'LARGE_PAINTING', 'LARGE_PLANT', 'PC', 'PLANT',
-    'PLANT_2', 'POT', 'SMALL_PAINTING', 'SMALL_PAINTING_2', 'SMALL_TABLE',
-    'SOFA', 'TABLE_FRONT', 'WHITEBOARD', 'WOODEN_BENCH', 'WOODEN_CHAIR',
-  ];
-
-  for (const type of furnitureTypes) {
+  for (const type of FURNITURE_TYPES) {
     try {
       signal?.throwIfAborted();
       const manifestRes = await fetch(assetUrl(`${basePath}${type}/manifest.json`), { signal });
