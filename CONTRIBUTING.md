@@ -83,7 +83,13 @@ GET/HEAD rate limit.
 
 1. Add sprite PNG(s) to `public/assets/furniture/<TYPE>/`
 2. Create a `manifest.json` describing dimensions and orientations
-3. The furniture type will automatically appear in the catalog API and editor palette
+3. Add the canonical uppercase ID to `FURNITURE_TYPES` in `shared/furniture.ts`.
+   The catalog API, editor palette, and sprite loader use this list.
+
+Layout validation resolves known IDs regardless of case, plus the legacy names
+`chair` (cushioned chair) and `monitor` (PC). Unknown safe IDs keep their placeholder.
+Existing layout files are normalized when read without being rewritten; saving
+an edit stores canonical IDs.
 
 ## Adding Character Sprites
 

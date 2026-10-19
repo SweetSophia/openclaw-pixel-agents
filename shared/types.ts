@@ -84,7 +84,7 @@ export interface OfficeLayout {
 
 export interface PlacedFurniture {
   id: string;
-  type: string;       // e.g. "desk", "chair", "plant", "monitor"
+  type: string;       // Canonical asset ID, e.g. "DESK", "CUSHIONED_CHAIR", "PLANT", "PC".
   x: number;
   y: number;
   rotation: number;   // 0, 90, 180, 270

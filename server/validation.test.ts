@@ -29,6 +29,30 @@ describe("runtime validators", () => {
     expect(parseOfficeLayoutDoc(defaultLayout)).toMatchObject({ id: "default", width: 24, height: 16 });
   });
 
+  it.each([
+    ["desk", "DESK"], ["DeSk", "DESK"], ["large_plant", "LARGE_PLANT"],
+    ["cushioned_chair", "CUSHIONED_CHAIR"], ["chair", "CUSHIONED_CHAIR"],
+    ["CHAIR", "CUSHIONED_CHAIR"], ["monitor", "PC"], ["Monitor", "PC"],
+    ["PC", "PC"], ["vendor.Custom", "vendor.Custom"], ["unknown", "unknown"],
+  ])("resolves known legacy furniture type %s as %s on reads and writes", (type, expected) => {
+    const furniture = Object.freeze({ id: "legacy-instance", type, x: 2, y: 3, rotation: 90, state: "off" });
+    const document = { ...defaultLayout, furniture: [furniture] };
+    expect(parseOfficeLayoutDoc(document)?.furniture).toEqual([{ ...furniture, type: expected }]);
+    expect(parseLayoutMutationBody({ furniture: [furniture] }, { width: 24, height: 16 })).toEqual({
+      ok: true, body: { furniture: [{ ...furniture, type: expected }] }, baseUpdatedAt: undefined,
+    });
+    expect(document.furniture[0]).toBe(furniture);
+    expect(furniture.type).toBe(type);
+  });
+
+  it.each(["../desk", " chair ", "deſk", "chair/../../", "chair?state=on"])(
+    "rejects unsafe furniture identifiers before normalization: %s", type => {
+      const furniture = [{ id: "unsafe", type, x: 1, y: 1, rotation: 0 }];
+      expect(parseOfficeLayoutDoc({ ...defaultLayout, furniture })).toBeNull();
+      expect(parseLayoutMutationBody({ furniture }, { width: 24, height: 16 }).ok).toBe(false);
+    },
+  );
+
   it("rejects malformed layout documents", () => {
     expect(parseOfficeLayoutDoc({ ...defaultLayout, id: "../default" })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, name: "   " })).toBeNull();
