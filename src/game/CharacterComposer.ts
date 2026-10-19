@@ -19,6 +19,8 @@
  *   "left" derived by flipping "right"
  */
 
+import { loadPng } from '../util/loadPng';
+
 // ── Source constants ───────────────────────────────────────
 
 /** Source frame size — all MetroCity sheets use 32×32 */
@@ -72,13 +74,6 @@ let outfitSheets: ImageBitmap[] = [];
 let shadowSheet: ImageBitmap | null = null;
 
 // ── Helpers ────────────────────────────────────────────────
-
-async function loadPng(path: string): Promise<ImageBitmap> {
-  const response = await fetch(path);
-  if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
-  const blob = await response.blob();
-  return createImageBitmap(blob);
-}
 
 /**
  * Extract a single 32×32 frame from a source sprite sheet.
@@ -138,16 +133,23 @@ function compositeFrame(
  */
 export async function loadSourceSheets(
   basePath = '/assets/source/MetroCity/',
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const [body, hair, ...outfits] = await Promise.all([
-    loadPng(`${basePath}CharacterModel/Character Model.png`),
-    loadPng(`${basePath}Hair/Hairs.png`),
+    loadPng(`${basePath}CharacterModel/Character Model.png`, signal),
+    loadPng(`${basePath}Hair/Hairs.png`, signal),
     // Load all 6 outfit sheets
     ...Array.from({ length: 6 }, (_, i) =>
-      loadPng(`${basePath}Outfits/Outfit${i + 1}.png`).catch(() => null)
+      loadPng(`${basePath}Outfits/Outfit${i + 1}.png`, signal).catch(err => {
+        signal?.throwIfAborted();
+        if (err.name === 'AbortError') throw err;
+        return null;
+      })
     ),
   ]);
 
+  signal?.throwIfAborted();
   bodySheet = body;
   hairSheet = hair;
   outfitSheets = outfits.filter((o): o is ImageBitmap => o !== null);
