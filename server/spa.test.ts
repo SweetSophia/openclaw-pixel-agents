@@ -87,6 +87,37 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     resetRateLimitBuckets();
   });
 
+  it("caches versioned assets across reloads, including HEAD and conditional responses", async () => {
+    const path = `/assets/fixture.txt?v=${"a".repeat(32)}`;
+    const first = await request(app).get(path);
+    expect(first.status).toBe(200);
+    expect(first.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    const head = await request(app).head(path);
+    expect(head.headers["cache-control"]).toBe(first.headers["cache-control"]);
+    const revalidated = await request(app).get(path).set("If-None-Match", first.headers.etag);
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers["cache-control"]).toBe(first.headers["cache-control"]);
+  });
+
+  it.each([
+    "/assets/fixture.txt", "/assets/fixture.txt?v=invalid", "/index.html",
+    `/index.html?v=${"a".repeat(32)}`, `/?v=${"a".repeat(32)}`,
+    `/some/client-side/route?v=${"a".repeat(32)}`,
+    `/assets/%2e%2e%2findex.html?v=${"a".repeat(32)}`,
+  ])("keeps unversioned assets and HTML revalidatable: %s", async path => {
+    const response = await request(app).get(path);
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("public, max-age=0");
+  });
+
+  it("still counts versioned asset requests against the 120 request limit", async () => {
+    const path = `/assets/fixture.txt?v=${"a".repeat(32)}`;
+    for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
+      expect((await request(app).get(path)).status).toBe(200);
+    }
+    expect((await request(app).get(path)).status).toBe(429);
+  });
+
   it("allows up to 120 GETs then returns 429 on the 121st (threshold pin)", async () => {
     for (let i = 0; i < PUBLIC_GET_RATE_LIMIT_MAX; i++) {
       const res = await request(app).get("/assets/fixture.txt");

@@ -8,10 +8,13 @@
  * object to pick the variant.
  */
 
+import { assetUrl } from '../util/assetUrl';
+
 const SHEET_CACHE = new Map<string, Promise<HTMLImageElement>>();
 
 /** Load an image from a URL and return an HTMLImageElement (cached, deduped) */
 export function loadImage(src: string): Promise<HTMLImageElement> {
+  src = assetUrl(src);
   const cached = SHEET_CACHE.get(src);
   if (cached) return cached;
 

@@ -340,6 +340,7 @@ export class GameEngine {
       this.floorCacheValid = false;
       console.log(`[GameEngine] Assets loaded: ${furniture.size} furniture types, ${characters.length} characters, ${floors.length} floors`);
     } catch (err) {
+      if (signal?.aborted) return;
       console.error('[GameEngine] Asset load failed:', err);
       try {
         this.characters_sprites = await loadCharacters(undefined, signal);

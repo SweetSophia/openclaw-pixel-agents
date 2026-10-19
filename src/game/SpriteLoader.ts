@@ -30,6 +30,7 @@ import {
   type CharacterRecipe,
   type ComposedCharacter,
 } from './CharacterComposer';
+import { assetUrl } from '../util/assetUrl';
 
 // ── Types ──────────────────────────────────────────────────
 //
@@ -162,12 +163,15 @@ const cachedComposed: Map<string, ComposedCharacter> = new Map();
 // ── Helpers ────────────────────────────────────────────────
 
 async function loadPng(path: string, signal?: AbortSignal): Promise<ImageBitmap> {
-  if (signal?.aborted) throw new DOMException('Aborted');
+  signal?.throwIfAborted();
 
-  const response = await fetch(path, { signal });
+  const response = await fetch(assetUrl(path), { signal });
   if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
   const blob = await response.blob();
-  return createImageBitmap(blob);
+  const bitmap = await createImageBitmap(blob);
+  if (signal?.aborted) bitmap.close();
+  signal?.throwIfAborted();
+  return bitmap;
 }
 
 function sliceFrame(
@@ -283,7 +287,9 @@ export async function loadFloors(
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(bitmap, 0, 0, FLOOR_TILE_SIZE, FLOOR_TILE_SIZE);
       floors.push({ canvas });
-    } catch {
+    } catch (err) {
+      signal?.throwIfAborted();
+      if (err instanceof Error && err.name === 'AbortError') throw err;
       // Skip missing tiles
     }
   }
@@ -342,7 +348,9 @@ export async function loadFurniture(
 
   for (const type of furnitureTypes) {
     try {
-      const manifestRes = await fetch(`${basePath}${type}/manifest.json`, { signal });
+      signal?.throwIfAborted();
+      const manifestRes = await fetch(assetUrl(`${basePath}${type}/manifest.json`), { signal });
+      signal?.throwIfAborted();
       if (!manifestRes.ok) continue;
 
       const manifest = (await manifestRes.json()) as ManifestNode;
@@ -395,7 +403,9 @@ export async function loadFurniture(
         footprintW,
         footprintH,
       });
-    } catch {
+    } catch (err) {
+      signal?.throwIfAborted();
+      if (err instanceof Error && err.name === 'AbortError') throw err;
       // Skip broken furniture
     }
   }
@@ -420,6 +430,7 @@ function withAssetFallback<T>(promise: Promise<T>, label: string, fallback: T): 
  * (issue #132).
  */
 export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAssets> {
+  signal?.throwIfAborted();
   // Load floors and furniture in parallel
   const [floors, furniture] = await Promise.all([
     withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as readonly ReadonlyLoadedFloor[]),
@@ -429,7 +440,9 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAsset
   // Try paperdoll compositor
   let characters: readonly ReadonlyLoadedCharacter[] = [];
   try {
-    await loadSourceSheets();
+    await loadSourceSheets(undefined, signal);
+    // A discarded mount must never clear canvases already used by its replacement.
+    signal?.throwIfAborted();
     for (const prev of cachedComposed.values()) disposeComposed(prev);
     cachedComposed.clear();
 
@@ -447,6 +460,8 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAsset
 
     console.log(`[SpriteLoader] Composed ${cachedComposed.size} characters from source sheets`);
   } catch (err) {
+    signal?.throwIfAborted();
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     console.warn('[SpriteLoader] Compositor failed, falling back to pre-composited sprites:', err);
     // `loadCharacters` already returns the readonly view; assign
     // directly — no spread, no defensive copy (issue #132). The

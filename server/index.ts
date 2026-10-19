@@ -43,6 +43,7 @@ import {
 import { isValidLayoutId } from "./layouts";
 import { logger } from "./logger";
 import { atomicWriteFileSync } from "./persistence";
+import { assetCacheHeaders } from "./staticAssets";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -240,7 +241,9 @@ const FRONTEND_DIR = process.env.FRONTEND_DIR || resolve(__dirname, "..", "..", 
 // frontend directory already existing at boot (issue #156).
 app.use(publicGetRateLimiter);
 if (existsSync(FRONTEND_DIR)) {
-  app.use(express.static(FRONTEND_DIR));
+  app.use(express.static(FRONTEND_DIR, {
+    setHeaders: assetCacheHeaders(join(FRONTEND_DIR, "assets")),
+  }));
 }
 
 // ---- Configuration ----
