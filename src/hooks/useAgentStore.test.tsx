@@ -132,6 +132,21 @@ describe('useAgentStore REST polling fallback', () => {
     unmount();
   });
 
+  it('tracks accepted snapshots separately from transport events and preference changes', async () => {
+    vi.setSystemTime(1_800_000_000_000);
+    const { snapshots, unmount } = await renderStoreProbe();
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_000_000);
+    vi.setSystemTime(1_800_000_010_000);
+    await emitSocketEvent('agents:update', []);
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_010_000);
+    vi.setSystemTime(1_800_000_020_000);
+    await act(async () => {
+      socketMock.socket.emit('recipe-update', { agentId: 'cybera', recipe: { bodyIndex: 0, hairIndex: 1, outfitIndex: 2 } });
+    });
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_010_000);
+    unmount();
+  });
+
   it('continues polling while WebSocket is disconnected', async () => {
     const { unmount } = await renderStoreProbe();
 

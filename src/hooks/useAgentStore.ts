@@ -50,6 +50,7 @@ function isRecipeUpdateEvent(value: unknown): value is RecipeUpdateEvent {
 export function useAgentStore() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [connected, setConnected] = useState(false);
+  const [snapshotReceivedAt, setSnapshotReceivedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeRoomId, setActiveRoomId] = useState<string>('office');
   const socketRevisionRef = useRef(0);
@@ -82,6 +83,7 @@ export function useAgentStore() {
         || pendingMutationsRef.current > 0
       ) return;
       updateAgents(() => data.agents || []);
+      setSnapshotReceivedAt(Date.now());
       setError(null);
     } catch (err) {
       if (
@@ -334,6 +336,7 @@ export function useAgentStore() {
     const handleUpdate = (updatedAgents: AgentState[]) => {
       socketRevisionRef.current += 1;
       updateAgents(() => updatedAgents);
+      setSnapshotReceivedAt(Date.now());
       setError(null);
       setConnected(true);
     };
@@ -397,5 +400,5 @@ export function useAgentStore() {
     return () => clearInterval(pollTimer);
   }, [connected, fetchAgents]);
 
-  return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
+  return { agents, connected, snapshotReceivedAt, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
 }

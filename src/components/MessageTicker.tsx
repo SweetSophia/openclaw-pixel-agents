@@ -1,144 +1,60 @@
-/**
- * MessageTicker — horizontal scrolling feed of recent agent messages
- *
- * Displays a news-ticker style bar at the bottom of the pixel office
- * showing the latest messages from all active agents. Pauses on hover.
- */
-
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { getCachedTickerMessages, getSharedSocket } from '../socket';
 import type { TickerMessage } from '../../shared/types';
 import './MessageTicker.css';
 
-/** Format timestamp to HH:MM */
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-/** Truncate text with ellipsis */
-function truncate(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen - 1) + '…';
-}
-
+/** Actual transcript excerpts, kept separate from inferred agent activity. */
 export default function MessageTicker() {
   const [messages, setMessages] = useState<TickerMessage[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
-  const trackRef = useRef<HTMLDivElement>(null);
-
-  // Tick every 30s so age-based opacity updates even when no new messages arrive
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Connect to WebSocket
-  useEffect(() => {
-    let isCancelled = false;
-    // Issue #218: reuse the shared module-level socket instead of opening
-    // a fresh connection. The dashboard previously maintained three
-    // WebSocket connections per browser; the singleton collapses that to one.
+    let cancelled = false;
+    let receivedSocketSnapshot = false;
     const socket = getSharedSocket();
-
-    const handleConnect = () => { if (!isCancelled) setConnected(true); };
-    const handleDisconnect = () => { if (!isCancelled) setConnected(false); };
-    const handleMessages = (msgs: TickerMessage[]) => { if (!isCancelled) setMessages(msgs); };
-
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
+    const handleMessages = (next: TickerMessage[]) => {
+      receivedSocketSnapshot = true;
+      if (!cancelled) { setMessages(next); setStatus('ready'); }
+    };
     socket.on('ticker:messages', handleMessages);
-
-    // Issue #218: a consumer mounting after the shared singleton has
-    // already connected would miss the initial `connect` event. Run
-    // the handler immediately if the socket is already connected.
-    if (socket.connected) {
-      handleConnect();
+    const cached = getCachedTickerMessages();
+    if (cached) {
+      setMessages(cached); setStatus('ready');
+      // A live shared-socket cache already supplies the authoritative feed.
+      // Disconnected consumers still need the HTTP fallback to refresh it.
+      receivedSocketSnapshot = socket.connected;
     }
 
-    // Issue #218 (singleton + late consumers): if another consumer has
-    // already received a `ticker:messages` snapshot, this consumer
-    // missed it. Seed from the cached payload so we render the latest
-    // ticker immediately rather than waiting for the next broadcast.
-    const cachedMessages = getCachedTickerMessages();
-    if (cachedMessages) {
-      setMessages(cachedMessages);
-    }
-
-    // Fetch initial state; abort if this effect is cleaned up before it resolves
     const controller = new AbortController();
-    fetch("/api/messages", { signal: controller.signal })
-      .then(r => r.json())
-      .then(data => {
-        if (!isCancelled && data.messages) setMessages(data.messages);
+    fetch('/api/messages', { signal: controller.signal })
+      .then(response => {
+        if (!response.ok) throw new Error('Messages unavailable');
+        return response.json();
       })
-      .catch(() => {});
-
+      .then(data => {
+        if (!Array.isArray(data.messages)) throw new Error('Invalid message snapshot');
+        if (!cancelled && !receivedSocketSnapshot) { setMessages(data.messages); setStatus('ready'); }
+      })
+      .catch(() => { if (!cancelled && !receivedSocketSnapshot && !cached?.length) setStatus('error'); });
     return () => {
-      isCancelled = true;
+      cancelled = true;
       controller.abort();
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
       socket.off('ticker:messages', handleMessages);
-      // Do NOT call socket.disconnect() — the socket is shared with
-      // useAgentStore and useLiveSync.
     };
   }, []);
 
-  // Calculate scroll duration and width based on content
-  const updateScrollParams = useCallback(() => {
-    if (!trackRef.current) return;
-    const track = trackRef.current;
-
-    // Total distance the track must travel (content width + viewport width so
-    // items fully exit on the left before looping)
-    const totalDistance = track.scrollWidth + (track.parentElement?.clientWidth ?? 0);
-    const duration = Math.max(20, totalDistance / 40); // ~40px per second
-
-    track.style.setProperty('--ticker-width', `-${totalDistance}px`);
-    track.style.setProperty('--ticker-duration', `${duration}s`);
-  }, [messages]);
-
-  useEffect(() => {
-    // Delay to let DOM update
-    const timer = setTimeout(updateScrollParams, 100);
-    return () => clearTimeout(timer);
-  }, [messages, updateScrollParams]);
-
-  // Age-based opacity class — uses `now` state so it re-evaluates every 30s
-  // even when no new messages arrive, ensuring old messages actually fade
-  const getAgeClass = (msg: TickerMessage) => {
-    const age = now - msg.timestamp;
-    if (age < 180000) return 'visible'; // < 3 min: full opacity
-    return 'fading'; // > 3 min: fading
-  };
-
   return (
-    <div className="ticker-container">
-      <div className="ticker-label">
-        {connected ? '📡 Live' : '⏳'}
-      </div>
-      <div className="ticker-track">
-        {messages.length === 0 ? (
-          <span className="ticker-empty">Waiting for agent activity…</span>
-        ) : (
-          <div className="ticker-messages" ref={trackRef}>
-            {messages.map((msg) => (
-              <span key={msg.id} className={`ticker-msg ${getAgeClass(msg)}`}>
-                <span className={`ticker-msg-name ${msg.role === 'user' ? 'user-msg' : ''}`}>
-                  {msg.role === 'user' ? '👤' : '🤖'} {msg.agentName}
-                </span>
-                <span className={`ticker-msg-text ${msg.role === 'user' ? 'user-msg' : ''}`}>
-                  {truncate(msg.text, 120)}
-                </span>
-                <span className="ticker-msg-time">{fmtTime(msg.timestamp)}</span>
-              </span>
-            ))}
+    <section className="transcript-messages" aria-label="Transcript messages">
+      <h2>Messages</h2>
+      {status === 'error' && <p className="activity-empty" role="status">Messages unavailable. Waiting for the next transcript update.</p>}
+      {messages.length === 0 && status !== 'error' && <p className="activity-empty">{status === 'loading' ? 'Loading transcript messages…' : 'No transcript messages available from this source.'}</p>}
+      {messages.length > 0 && <ul>{messages.slice(-30).reverse().map(message => <li key={message.id}>
+          <div className="transcript-meta"><strong>{message.agentName}</strong>
+            <span>{message.role === 'user' ? 'User message' : 'Assistant message'}</span>
+            <time dateTime={new Date(message.timestamp).toISOString()}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
           </div>
-        )}
-      </div>
-    </div>
+          <p>{message.text}</p>
+        </li>)}</ul>}
+    </section>
   );
 }

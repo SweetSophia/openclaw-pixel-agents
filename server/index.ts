@@ -1069,7 +1069,7 @@ async function pollAndBroadcast(): Promise<void> {
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
     if (applied) {
-      // Broadcast only when the visible agent snapshot actually changes.
+      // Every accepted CLI snapshot refreshes clients, including unchanged data.
       io.emit("agents:update", snapshot);
     }
 
