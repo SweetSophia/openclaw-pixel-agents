@@ -16,6 +16,31 @@ describe('PixelOffice furniture preview status', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 768, height: 512 } as DOMRect);
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('does not start a removed office when its real engine initialization finishes late', async () => {
+    const responses: Array<(response: Response) => void> = [];
+    vi.mocked(fetch).mockImplementation(() => new Promise(resolve => { responses.push(resolve); }));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 16, height: 32, close: vi.fn() })));
+    const initialization = vi.spyOn(GameEngine.prototype, 'init');
+    const start = vi.spyOn(GameEngine.prototype, 'start');
+    const stop = vi.spyOn(GameEngine.prototype, 'stop');
+    const view = render(<PixelOffice
+      agents={[]} editorMode={false} deleteMode={false} activeLayout={null}
+      selectedFurnitureType={null} onPlaceFurniture={vi.fn()} onMoveFurniture={vi.fn()}
+      onSelectFurniture={vi.fn()} onRotateFurniture={vi.fn()}
+    />);
+    expect(responses).toHaveLength(2);
+    const pending = initialization.mock.results[0].value;
+    view.unmount();
+    expect(stop).toHaveBeenCalledOnce();
+    await act(async () => {
+      for (const resolve of responses) resolve(new Response('png'));
+      await pending;
+    });
+    expect(start).not.toHaveBeenCalled();
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+  });
+
   it('registers one initially empty polite node before updates, retains its identity and clears on layout and cleanup', () => {
     const props = {
       agents: [], editorMode: true, deleteMode: false, selectedFurnitureType: 'MISSING',
