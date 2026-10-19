@@ -2,6 +2,7 @@
 :root {
   --bg-base: #06080F;
   --bg-panel: rgba(15, 20, 30, 0.65);
+  --bg-dialog: #0F141E;
   --bg-panel-hover: rgba(25, 30, 45, 0.8);
   
   --acc-cyan: #00F0FF;
