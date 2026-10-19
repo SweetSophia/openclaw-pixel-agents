@@ -5,7 +5,7 @@ const revision = 'a'.repeat(32);
 function responseFor(path: string): Response {
   return path.endsWith('/manifest.json')
     ? new Response(JSON.stringify({ file: 'sprite.png', width: 16, height: 32 }))
-    : new Response(new Blob(['png']));
+    : new Response('png');
 }
 
 describe('asset loading at browser boundaries', () => {
