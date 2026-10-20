@@ -317,7 +317,7 @@
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 .sidebar-footer button.danger {
-  color: #ff6b91;
+  color: var(--text-danger);
   border-color: var(--acc-pink);
   background: rgba(255, 0, 85, 0.1);
 }

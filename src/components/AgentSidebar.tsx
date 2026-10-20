@@ -31,13 +31,13 @@ const activityIcons: Record<AgentActivity, string> = {
 };
 
 const activityColors: Record<AgentActivity, string> = {
-  idle: '#8a93b2',
+  idle: 'var(--text-muted)',
   thinking: '#ffc107',
   typing: '#4ecca3',
   reading: '#17a2b8',
   running_command: '#e94560',
   waiting_input: '#ff6b6b',
-  sleeping: '#8a93b2',
+  sleeping: 'var(--text-muted)',
   error: '#dc3545',
 };
 
