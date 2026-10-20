@@ -19,6 +19,7 @@ import {
   type Direction,
 } from './SpriteLoader';
 import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
+import { resolveSeatPosition } from './seatPosition';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
@@ -203,7 +204,7 @@ export class GameEngine {
   // Layout data
   private placedFurniture: PlacedFurniture[] = [];
   private seats: Map<string, { x: number; y: number }> = new Map();
-  private configuredSeatIds = new Set<string>();
+  private configuredSeats = new Map<string, Point>();
 
   // Pathfinding
   private obstacleGrid: boolean[][] | null = null;
@@ -325,7 +326,7 @@ export class GameEngine {
       const seat = this.assignSeat(agent.id);
       this.addCharacter({
         id: agent.id, name: agent.name,
-        x: seat.x, y: seat.y + 1,
+        x: seat.x, y: seat.y,
         state: agent.state, spriteId: undefined,
         lastMessage: agent.lastMessage,
       });
@@ -423,6 +424,9 @@ export class GameEngine {
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
     this._obstacleRebuildScheduled = false;
+    // Reserve every configured floor position before assigning temporary seats.
+    for (const [id, anchor] of this.configuredSeats) this.seats.set(id, { ...anchor });
+    for (const [id, anchor] of this.configuredSeats) this.seats.set(id, this.resolveSeat(id, anchor));
   }
 
   private scheduleObstacleRebuild() {
@@ -1807,7 +1811,7 @@ export class GameEngine {
     this.characters.delete(id);
     this.idleBehaviors.delete(id);
     // Layout reservations survive room changes; only temporary seats are freed.
-    if (!this.configuredSeatIds.has(id)) this.seats.delete(id);
+    if (!this.configuredSeats.has(id)) this.seats.delete(id);
     // Issue #165: orphaned state. A removed character's speech bubble
     // would persist (re-apparent if the id is reused for a new
     // `waiting_input` agent), and the bubble's timer would keep running
@@ -1849,8 +1853,8 @@ export class GameEngine {
 
     // When activity changes to a desk activity, route to seat
     if (mut.state && ['typing', 'reading', 'running_command', 'thinking'].includes(mut.state)) {
-      const seat = this.seats.get(id);
-      if (seat) {
+      if (this.seats.has(id)) {
+        const seat = this.assignSeat(id);
         char.targetX = seat.x;
         char.targetY = seat.y;
       }
@@ -1951,20 +1955,34 @@ export class GameEngine {
   // all rows are reachable; the column stride of 2 leaves room for
   // adjacent placement. If the entire inner rectangle is occupied,
   // spiral outward from the grid center to find the nearest
-  // unoccupied tile. Only when even the spiral is exhausted do we
-  // fall back to the center — and even then we offset by a per-
-  // engine overflow counter so successive overflow agents don't all
-  // stack on the same tile.
+  // unoccupied tile. If furniture fills that area, use the remaining floor
+  // near the room edges before sharing an existing floor position.
   private overflowOffset = 0;
 
+  private resolveSeat(agentId: string, anchor: Point): Point {
+    if (!this.obstacleGrid) return { ...anchor };
+    const desks = this.placedFurniture.filter(item => item.type === 'DESK').map(item => {
+      const sprite = this.furniture.get(item.type);
+      return {
+        ...furnitureRectangle(item.x, item.y, sprite?.footprintW ?? 2, sprite?.footprintH ?? 1, item.rotation || 0),
+        rotation: item.rotation || 0,
+      };
+    });
+    const reserved = new Set([...this.seats.entries()]
+      .filter(([id]) => id !== agentId).map(([, point]) => `${point.x},${point.y}`));
+    return resolveSeatPosition(anchor, desks, this.obstacleGrid, reserved);
+  }
+
   assignSeat(agentId: string): { x: number; y: number } {
-    if (this.seats.has(agentId)) return this.seats.get(agentId)!;
+    this.ensureObstacles();
+    const existing = this.seats.get(agentId);
+    if (existing) return existing;
     const used = new Set(Array.from(this.seats.values()).map(p => `${p.x},${p.y}`));
     const inner = { xMin: 3, xMax: this.config.gridWidth - 3 };
     const innerY = { yMin: 3, yMax: this.config.gridHeight - 2 };
     for (let y = innerY.yMin; y < innerY.yMax; y++) {
       for (let x = inner.xMin; x < inner.xMax; x += 2) {
-        if (!used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+        if (!this.obstacleGrid?.[y]?.[x] && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
       }
     }
     // Inner rectangle exhausted — spiral outward from center to find the
@@ -1979,18 +1997,23 @@ export class GameEngine {
           const y = cy + dy;
           if (x < inner.xMin || x >= inner.xMax) continue;
           if (y < innerY.yMin || y >= innerY.yMax) continue;
-          if (!used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+          if (!this.obstacleGrid?.[y]?.[x] && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
         }
       }
     }
-    // Truly no tile available — fall back to (cx, cy) but offset by
-    // the per-engine overflow counter so successive overflow agents
-    // don't all stack on the same tile. Bounded by the inner
-    // rectangle dimensions; in practice the office has far fewer
-    // agents than inner-rectangle capacity (99 cells in a 24×16 grid)
-    // so this branch rarely fires.
+    const sharedFloor: Point[] = [];
+    for (let y = 1; y < this.config.gridHeight - 1; y++) {
+      for (let x = 1; x < this.config.gridWidth - 1; x++) {
+        if (this.obstacleGrid?.[y]?.[x] !== false) continue;
+        const point = { x, y };
+        if (!used.has(`${x},${y}`)) { this.seats.set(agentId, point); return point; }
+        sharedFloor.push(point);
+      }
+    }
+    // Share floor when it is all reserved. Retain the legacy fallback only
+    // for layouts with no walkable tile at all.
     const offset = this.overflowOffset++;
-    const fb = { x: cx + (offset % 3), y: cy + (offset % 3) };
+    const fb = sharedFloor[offset % sharedFloor.length] ?? { x: cx + (offset % 3), y: cy + (offset % 3) };
     this.seats.set(agentId, fb);
     return fb;
   }
@@ -2016,8 +2039,8 @@ export class GameEngine {
     this.scheduleObstacleRebuild();
     if (seats) {
       this.seats.clear();
-      this.configuredSeatIds = new Set(Object.keys(seats));
-      for (const [aid, pos] of Object.entries(seats)) this.seats.set(aid, pos);
+      this.configuredSeats = new Map(Object.entries(seats).map(([id, point]) => [id, { ...point }]));
+      for (const [aid, pos] of this.configuredSeats) this.seats.set(aid, { ...pos });
     }
   }
 
