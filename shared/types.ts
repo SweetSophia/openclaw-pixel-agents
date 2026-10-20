@@ -136,7 +136,7 @@ export const TAG_COLORS: Record<AgentTag, string> = {
   coding: '#4ecca3',
   research: '#a78bfa',
   monitoring: '#fbbf24',
-  infrastructure: '#6b7280',
+  infrastructure: '#9ca3af',
   orchestration: '#f472b6',
   creative: '#fb923c',
   analysis: '#60a5fa',

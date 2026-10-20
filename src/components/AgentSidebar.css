@@ -105,11 +105,7 @@
   border-color: var(--acc-green);
   box-shadow: 0 0 10px rgba(0, 255, 170, 0.15), inset 0 0 5px rgba(0, 255, 170, 0.1);
 }
-.agent-card.inactive {
-  opacity: 0.6;
-}
 .agent-card.disabled {
-  opacity: 0.3;
   border-style: dashed;
 }
 
@@ -154,6 +150,8 @@
 
 .agent-name {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-body);
   font-size: 14px;
   font-weight: 600;
@@ -168,6 +166,7 @@
 
 /* Toggle switch */
 .toggle-btn {
+  flex-shrink: 0;
   background: none;
   border: none;
   cursor: pointer;
@@ -182,6 +181,7 @@
 
 .agent-details {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
@@ -201,6 +201,8 @@
 .agent-model {
   font-size: 11px;
   color: var(--text-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .agent-tokens {
@@ -244,6 +246,8 @@
 }
 
 .tag-badge {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-family: var(--font-body);
   font-size: 10px;
   padding: 2px 8px;
@@ -258,7 +262,6 @@
   border: none;
   cursor: pointer;
   font-size: 12px;
-  opacity: 0.5;
   transition: opacity 0.15s;
 }
 .tag-edit-btn:hover { opacity: 1; text-shadow: 0 0 5px #fff; }
@@ -314,7 +317,7 @@
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 .sidebar-footer button.danger {
-  color: var(--acc-pink);
+  color: var(--text-danger);
   border-color: var(--acc-pink);
   background: rgba(255, 0, 85, 0.1);
 }
