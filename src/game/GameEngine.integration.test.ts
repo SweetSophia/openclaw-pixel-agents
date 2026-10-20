@@ -226,17 +226,51 @@ function clientCenterOf(gridX: number, gridY: number): { x: number; y: number } 
 
 describe('GameEngine room changes retain configured seats', () => {
   let engine: GameEngine;
+  let drawImage = vi.fn<(...args: unknown[]) => void>();
 
   beforeEach(() => {
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
-    engine = new GameEngine(makeCanvasWithStubbedContext().canvas, GRID);
+    drawImage = vi.fn();
+    engine = new GameEngine(makeCanvasWithStubbedContext(drawImage).canvas, GRID);
   });
 
   afterEach(() => {
     engine.stop();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('spawns demo Shodan with the live identity, configured seat, and main sprite', async () => {
+    // Keep the successful asset cache separate from later failure-path tests.
+    engine.stop();
+    vi.resetModules();
+    const { GameEngine: DemoGameEngine } = await import('./GameEngine');
+    engine = new DemoGameEngine(makeCanvasWithStubbedContext(drawImage).canvas, GRID);
+    vi.stubGlobal('__ASSET_BUILD_ID__', 'a'.repeat(32));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/manifest.json')
+      ? Response.json({ file: 'sprite.png', width: 16, height: 32 })
+      : new Response('png')));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 768, height: 288, close: vi.fn() })));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(makeRecordingContext().ctx);
+    const seat = { x: 9, y: 4 };
+    engine.setLayout([], { main: seat });
+
+    await engine.init(undefined, true);
+
+    const internal = engine as unknown as TestGameEngine & {
+      renderCharacter(character: SubAgentCharacter, tileSize: number): void;
+    };
+    const shodan = [...internal.characters.values()].find(character => character.name === 'Shodan');
+    expect(shodan).toMatchObject({ id: 'main', x: seat.x, y: seat.y + 1 });
+    expect(engine.getCharacterIds()).not.toContain('shodan');
+    const { getAgentCharacter } = await import('./SpriteLoader');
+    const sprite = getAgentCharacter('main');
+    expect(sprite).not.toBeNull();
+    internal.renderCharacter(shodan!, GRID.tileSize);
+    const renderedFrame = drawImage.mock.calls[0][0];
+    expect(sprite!.down.some(frame => frame.canvas === renderedFrame)).toBe(true);
+    expect(getAgentCharacter('cybera')!.down.some(frame => frame.canvas === renderedFrame)).toBe(false);
   });
 
   it('restores the configured seat across repeated room departures and returns', () => {

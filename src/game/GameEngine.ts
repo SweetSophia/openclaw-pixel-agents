@@ -312,7 +312,7 @@ export class GameEngine {
   private spawnDemoAgents() {
     const demoAgents = [
       { id: 'cybera', name: 'Cybera', state: 'typing' },
-      { id: 'shodan', name: 'Shodan', state: 'thinking' },
+      { id: 'main', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
       { id: 'descartes', name: 'Descartes', state: 'idle' },
       { id: 'chi', name: 'Chi', state: 'waiting_input', lastMessage: 'Need input on the deploy config...' },
