@@ -209,6 +209,7 @@ export class GameEngine {
   // Layout data
   private placedFurniture: PlacedFurniture[] = [];
   private sceneFurniture: FurnitureSceneEntry[] | null = null;
+  private sceneSeats: Array<Point & { id: string }> = [];
   private sceneFootprints = new Map<string, { sprite: ReadonlyLoadedFurnitureItem | undefined; width: number; height: number; loaded: boolean }>();
   private seats: Map<string, { x: number; y: number }> = new Map();
   private configuredSeats = new Map<string, Point>();
@@ -1089,6 +1090,20 @@ export class GameEngine {
   }
 
   private legacyFurnitureDrawOrder(): FurnitureSceneEntry[] {
+    if (this.sceneFurniture && this.sceneSeats.length === this.seats.size) {
+      let index = 0;
+      let unchanged = true;
+      for (const [id, seat] of this.seats) {
+        const previous = this.sceneSeats[index++];
+        // Seat insertion order controls stable ties between overlapping desks.
+        if (previous.id !== id || previous.x !== seat.x || previous.y !== seat.y) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) return this.sceneFurniture;
+    }
+    this.sceneSeats = [];
     const furniture = [
       { id: 'legacy-plant', type: 'LARGE_PLANT', x: 1, y: 1, rotation: 0 },
       { id: 'legacy-coffee', type: 'COFFEE', x: 22, y: 1, rotation: 0 },
@@ -1098,12 +1113,14 @@ export class GameEngine {
     ].map(item => ({ item, rectangle: this.renderedFootprint(item.type, item.x, item.y, 0),
       isSurface: false, canPlaceOnSurfaces: false }));
     for (const [id, seat] of this.seats) {
+      this.sceneSeats.push({ id, ...seat });
       const item = { id, type: 'DESK', x: seat.x, y: seat.y, rotation: 0 };
       // Legacy desks are drawn above their seat, whose row is the front floor.
       furniture.push({ item, rectangle: { x: seat.x, y: seat.y - 1, width: 2, height: 1, fallback: false },
         isSurface: true, canPlaceOnSurfaces: false });
     }
-    return furnitureDrawOrder(furniture);
+    this.sceneFurniture = furnitureDrawOrder(furniture);
+    return this.sceneFurniture;
   }
 
   private renderFurniture(tileSize: number, zoom: number) {

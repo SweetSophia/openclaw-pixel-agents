@@ -381,4 +381,57 @@ describe('GameEngine scene depth with real loaded sprites', () => {
     }
     expect(overlaps).toHaveBeenCalledTimes(initialSupportWork);
   });
+
+  it('reuses unchanged legacy furniture ordering while moving characters cross their seat row', async () => {
+    const scene = await loadScene();
+    const depth = await import('./sceneDepth');
+    const orderFurniture = vi.spyOn(depth, 'furnitureDrawOrder');
+    scene.engine.setLayout([], { main: { x: 9, y: 8 } });
+    scene.engine.assignSeat('main');
+    scene.engine.addCharacter({ id: 'main', name: 'Shodan', x: 9, y: 7.9, state: 'typing' });
+    scene.render();
+    const initialOrderingWork = orderFurniture.mock.calls.length;
+    expect(initialOrderingWork).toBeGreaterThan(0);
+
+    for (let frame = 0; frame < 20; frame++) {
+      const y = frame % 2 === 0 ? 8.1 : 7.9;
+      scene.engine.updateCharacter('main', { y });
+      const paints = scene.render();
+      const characterIndex = lastPaint(paints, scene.characterPaint);
+      const deskIndex = lastPaint(paints, paint => paint.kind === 'image' && paint.source === scene.sprite('DESK'));
+      expect(characterIndex < deskIndex).toBe(y < 8);
+    }
+    expect(orderFurniture).toHaveBeenCalledTimes(initialOrderingWork);
+  });
+
+  it('refreshes legacy desk groups when public seat APIs add, remove, reorder and reassign seats', async () => {
+    const scene = await loadScene();
+    scene.engine.setLayout([], {});
+    const deskPositions = () => scene.render().flatMap(paint => paint.kind === 'image'
+      && paint.source === scene.sprite('DESK') ? [paint.coordinates.slice(0, 2)] : []);
+    const position = (seat: { x: number; y: number }) => [seat.x * 32, seat.y * 32 - 64];
+    const mainSeat = scene.engine.assignSeat('main');
+    scene.engine.addCharacter({ id: 'main', name: 'Shodan', ...mainSeat, state: 'typing' });
+    expect(deskPositions()).toEqual([position(mainSeat)]);
+
+    const cyberaSeat = scene.engine.assignSeat('cybera');
+    scene.engine.addCharacter({ id: 'cybera', name: 'Cybera', ...cyberaSeat, state: 'typing' });
+    expect(deskPositions()).toEqual([position(mainSeat), position(cyberaSeat)]);
+
+    // Identical ids and coordinates can still have a new same-row paint order.
+    scene.engine.removeCharacter('main');
+    const restoredMainSeat = scene.engine.assignSeat('main');
+    expect(restoredMainSeat).toEqual(mainSeat);
+    scene.engine.addCharacter({ id: 'main', name: 'Shodan', ...restoredMainSeat, state: 'typing' });
+    expect(deskPositions()).toEqual([position(cyberaSeat), position(mainSeat)]);
+
+    scene.engine.removeCharacter('main');
+    expect(deskPositions()).toEqual([position(cyberaSeat)]);
+
+    scene.engine.removeCharacter('cybera');
+    const reassignedCyberaSeat = scene.engine.assignSeat('cybera');
+    expect(reassignedCyberaSeat).not.toEqual(cyberaSeat);
+    scene.engine.addCharacter({ id: 'cybera', name: 'Cybera', ...reassignedCyberaSeat, state: 'typing' });
+    expect(deskPositions()).toEqual([position(reassignedCyberaSeat)]);
+  });
 });
