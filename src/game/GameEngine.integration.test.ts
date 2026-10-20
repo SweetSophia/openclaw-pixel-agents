@@ -478,6 +478,27 @@ describe('GameEngine seats beside desks', () => {
     }
   });
 
+  it('evacuates a desk-covered worker toward its desk front instead of a nearer sealed floor pocket', () => {
+    engine.setLayout([desk], { main: { x: desk.x, y: desk.y } });
+    engine.addCharacter({ id: 'main', name: 'Shodan', ...engine.assignSeat('main'), state: 'typing' });
+    // The moved desk covers (10,6). Furniture closes three sides of (10,5),
+    // leaving that nearest floor tile sealed behind the desk; (10,8) is open.
+    const movedDesk = { ...desk, y: 6 };
+    engine.setLayout([
+      movedDesk,
+      { id: 'pocket-left', type: 'MISSING_SPRITE', x: 9, y: 4, rotation: 90 },
+      { id: 'pocket-right', type: 'MISSING_SPRITE', x: 11, y: 4, rotation: 90 },
+      { id: 'pocket-top', type: 'MISSING_SPRITE', x: 10, y: 4, rotation: 0 },
+    ], { main: { x: 9, y: 6 } });
+    flushLayoutFrame();
+
+    const character = internal().characters.get('main')!;
+    expect({ x: character.targetX, y: character.targetY }).toEqual({ x: 10, y: 8 });
+    for (let step = 0; step < 100; step++) internal().update(0.1);
+    expect(character.x).toBeCloseTo(10, 5);
+    expect(character.y).toBeCloseTo(8, 5);
+  });
+
   it('refreshes a moving worker\'s destination when a later layout moves its desk', () => {
     engine.setLayout([desk], { main: { x: desk.x, y: desk.y } });
     engine.assignSeat('main');

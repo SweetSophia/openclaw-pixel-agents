@@ -424,11 +424,15 @@ export class GameEngine {
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
     this._obstacleRebuildScheduled = false;
-    // Furniture edits can cover an agent's current tile. Move only blocked
-    // origins onto floor before resolving destinations in their connected area.
+    // Furniture edits can cover an agent's current tile. Evacuate toward its
+    // intended seat's connected floor, avoiding nearer sealed pockets.
+    const desks = this.deskFootprints();
     for (const char of this.characters.values()) {
       if (this.obstacleGrid[Math.round(char.y)]?.[Math.round(char.x)] === false) continue;
-      const floor = resolveSeatPosition({ x: Math.round(char.x), y: Math.round(char.y) }, [], this.obstacleGrid, new Set());
+      const origin = { x: Math.round(char.x), y: Math.round(char.y) };
+      const anchor = this.configuredSeats.get(char.id) ?? this.seats.get(char.id) ?? origin;
+      const preferredSeat = resolveSeatPosition(anchor, desks, this.obstacleGrid, new Set());
+      const floor = resolveSeatPosition(origin, [], this.obstacleGrid, new Set(), reachableFloor(this.obstacleGrid, preferredSeat));
       char.x = floor.x;
       char.y = floor.y;
     }
@@ -1983,15 +1987,19 @@ export class GameEngine {
   // near the room edges before sharing an existing floor position.
   private overflowOffset = 0;
 
-  private resolveSeat(agentId: string, anchor: Point, reservations = this.seats): Point {
-    if (!this.obstacleGrid) return { ...anchor };
-    const desks = this.placedFurniture.filter(item => item.type === 'DESK').map(item => {
+  private deskFootprints() {
+    return this.placedFurniture.filter(item => item.type === 'DESK').map(item => {
       const sprite = this.furniture.get(item.type);
       return {
         ...furnitureRectangle(item.x, item.y, sprite?.footprintW ?? 2, sprite?.footprintH ?? 1, item.rotation || 0),
         rotation: item.rotation || 0,
       };
     });
+  }
+
+  private resolveSeat(agentId: string, anchor: Point, reservations = this.seats): Point {
+    if (!this.obstacleGrid) return { ...anchor };
+    const desks = this.deskFootprints();
     const reserved = new Set([...reservations.entries()]
       .filter(([id]) => id !== agentId).map(([, point]) => `${point.x},${point.y}`));
     const char = this.characters.get(agentId);
