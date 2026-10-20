@@ -85,6 +85,8 @@ const AGENT_PALETTES: Record<'cybera' | 'main' | 'shodan' | 'cyberlogis' | 'desc
   chi: 4, cylena: 5, sysauxilia: 3, miku: 0,
 };
 
+const DESK_STATES = new Set(['typing', 'reading', 'running_command', 'thinking']);
+
 // ── State Transition Visual Effects ────────────────────
 
 interface Particle {
@@ -444,7 +446,7 @@ export class GameEngine {
     for (const char of this.characters.values()) {
       if (!char.isSubAgent) {
         const seat = this.assignSeat(char.id);
-        if (['typing', 'reading', 'running_command', 'thinking'].includes(char.state)) {
+        if (DESK_STATES.has(char.state)) {
           char.targetX = seat.x;
           char.targetY = seat.y;
         }
@@ -1879,7 +1881,7 @@ export class GameEngine {
     }
 
     // When activity changes to a desk activity, route to seat
-    if (mut.state && ['typing', 'reading', 'running_command', 'thinking'].includes(mut.state)) {
+    if (mut.state && DESK_STATES.has(mut.state)) {
       this.ensureObstacles();
       if (this.seats.has(id)) {
         const seat = this.assignSeat(id);
