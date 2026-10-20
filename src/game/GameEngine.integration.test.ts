@@ -32,6 +32,7 @@ import { getDayPhase } from './Schedule';
 import type { Point } from './Pathfinder';
 import type { ReadonlyLoadedCharacter } from './SpriteLoader';
 import { sfx } from '../audio/SoundFX';
+import deskManifest from '../../public/assets/furniture/DESK/manifest.json';
 
 // Web Audio is unavailable in jsdom; replace the singleton with no-op spies
 // that cover exactly the methods the production engine calls.
@@ -262,7 +263,7 @@ describe('GameEngine room changes retain configured seats', () => {
       renderCharacter(character: SubAgentCharacter, tileSize: number): void;
     };
     const shodan = [...internal.characters.values()].find(character => character.name === 'Shodan');
-    expect(shodan).toMatchObject({ id: 'main', x: seat.x, y: seat.y + 1 });
+    expect(shodan).toMatchObject({ id: 'main', x: seat.x, y: seat.y });
     expect(engine.getCharacterIds()).not.toContain('shodan');
     const { getAgentCharacter } = await import('./SpriteLoader');
     const sprite = getAgentCharacter('main');
@@ -303,6 +304,317 @@ describe('GameEngine room changes retain configured seats', () => {
     engine.setLayout([], { main: { x: 9, y: 4 } });
     expect(engine.assignSeat('visitor')).toEqual({ x: 3, y: 3 });
     expect(engine.assignSeat('main')).toEqual({ x: 9, y: 4 });
+  });
+});
+
+describe('GameEngine seats beside desks', () => {
+  let engine: GameEngine;
+  let scheduledFrames: FrameRequestCallback[];
+  const desk: PlacedFurniture = { id: 'desk-main', type: 'DESK', x: 9, y: 4, rotation: 0 };
+  const front = { x: 10, y: 6 };
+  const deskTiles = new Set([9, 10, 11].flatMap(x => [4, 5].map(y => `${x},${y}`)));
+  const internal = () => engine as unknown as TestGameEngine;
+  const flushLayoutFrame = () => {
+    for (const callback of scheduledFrames.splice(0)) callback(0);
+  };
+  const insideDesk = (point: Point, item: PlacedFurniture) => point.x >= item.x && point.x < item.x + 3
+    && point.y >= item.y && point.y < item.y + 2;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const { GameEngine: DeskGameEngine } = await import('./GameEngine');
+    scheduledFrames = [];
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      scheduledFrames.push(callback);
+      return scheduledFrames.length;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.stubGlobal('__ASSET_BUILD_ID__', 'a'.repeat(32));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/furniture/DESK/manifest.json')) return Response.json(deskManifest);
+      if (url.includes('/manifest.json')) return new Response('', { status: 404 });
+      return new Response('png');
+    }));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 768, height: 288, close: vi.fn() })));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(makeRecordingContext().ctx);
+    engine = new DeskGameEngine(makeCanvasWithStubbedContext().canvas, GRID);
+    await engine.init();
+  });
+
+  afterEach(() => {
+    engine.stop();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('spawns an agent centered in front of a desk when its persisted seat is the desk anchor', () => {
+    const seats = Object.freeze({ main: Object.freeze({ x: 9, y: 4 }) });
+    engine.setLayout([desk], seats);
+    const seat = engine.assignSeat('main');
+    engine.addCharacter({ id: 'main', name: 'Shodan', ...seat, state: 'typing' });
+
+    expect(seat).toEqual(front);
+    expect(internal().characters.get('main')).toMatchObject(front);
+    expect(seats.main).toEqual({ x: 9, y: 4 });
+  });
+
+  it.each(['typing', 'reading', 'running_command', 'thinking'] as const)(
+    'returns a %s agent to the same free position in front of its desk', state => {
+      engine.setLayout([desk], { main: { x: 9, y: 4 } });
+      engine.assignSeat('main');
+      engine.addCharacter({ id: 'main', name: 'Shodan', x: 14, y: 8, state: 'idle' });
+
+      engine.updateCharacter('main', { state });
+
+      const character = internal().characters.get('main')!;
+      expect({ x: character.targetX, y: character.targetY }).toEqual(front);
+      expect(character.path[character.path.length - 1]).toEqual(front);
+      expect(character.path.every(({ x, y }) => !deskTiles.has(`${x},${y}`))).toBe(true);
+      for (let step = 0; step < 100; step++) {
+        internal().update(0.1);
+        expect(deskTiles.has(`${Math.round(character.x)},${Math.round(character.y)}`)).toBe(false);
+      }
+      expect(character.x).toBeCloseTo(front.x, 5);
+      expect(character.y).toBeCloseTo(front.y, 5);
+    },
+  );
+
+  it('keeps the resolved desk position through repeated room departures and returns', () => {
+    engine.setLayout([desk], { main: { x: 9, y: 4 } });
+    for (let visit = 0; visit < 4; visit++) {
+      const seat = engine.assignSeat('main');
+      engine.addCharacter({ id: 'main', name: 'Shodan', ...seat, state: 'typing' });
+      expect(internal().characters.get('main')).toMatchObject(front);
+      engine.removeCharacter('main');
+    }
+  });
+
+  it('reserves an absent configured agent\'s desk-front position before assigning visitor seats', () => {
+    const expected = { x: 5, y: 3 };
+    engine.setLayout([{ ...desk, x: 4, y: 1 }], { main: { x: 4, y: 1 } });
+    expect(engine.assignSeat('visitor-1')).not.toEqual(expected);
+    expect(engine.assignSeat('visitor-2')).not.toEqual(expected);
+    expect(engine.assignSeat('main')).toEqual(expected);
+
+    engine.removeCharacter('main');
+    engine.removeCharacter('visitor-2');
+    expect(engine.assignSeat('main')).toEqual(expected);
+  });
+
+  it('preserves an explicit already-free seat instead of moving it to the desk front', () => {
+    const freeSeat = { x: 13, y: 8 };
+    engine.setLayout([desk], { main: freeSeat });
+    expect(engine.assignSeat('main')).toEqual(freeSeat);
+    engine.addCharacter({ id: 'main', name: 'Shodan', x: 14, y: 8, state: 'idle' });
+    engine.updateCharacter('main', { state: 'typing' });
+    const character = internal().characters.get('main')!;
+    expect({ x: character.targetX, y: character.targetY }).toEqual(freeSeat);
+    for (let step = 0; step < 20; step++) internal().update(0.1);
+    expect(character.x).toBeCloseTo(freeSeat.x, 5);
+    expect(character.y).toBeCloseTo(freeSeat.y, 5);
+  });
+
+  it.each([
+    { rotation: 90, expected: { x: 7, y: 5 } },
+    { rotation: 180, expected: { x: 8, y: 2 } },
+    { rotation: 270, expected: { x: 11, y: 3 } },
+  ])('places an overlapping seat in front of a desk rotated $rotation degrees', ({ rotation, expected }) => {
+    engine.setLayout([{ ...desk, rotation }], { main: { x: 9, y: 4 } });
+    const seat = engine.assignSeat('main');
+    engine.addCharacter({ id: 'main', name: 'Shodan', ...seat, state: 'typing' });
+
+    expect(seat).toEqual(expected);
+    expect(internal().characters.get('main')).toMatchObject(expected);
+  });
+
+  it('uses a nearby free position when furniture blocks the center in front of the desk', () => {
+    engine.setLayout([
+      desk,
+      { id: 'blocking-furniture', type: 'MISSING_SPRITE', x: 10, y: 6, rotation: 0 },
+    ], { main: { x: 9, y: 4 } });
+    const seat = engine.assignSeat('main');
+    const blocked = new Set([...deskTiles, '10,6', '11,6']);
+
+    expect(blocked.has(`${seat.x},${seat.y}`)).toBe(false);
+    expect(Math.abs(seat.x - front.x) + Math.abs(seat.y - front.y)).toBeLessThanOrEqual(2);
+    expect(seat.x).toBeGreaterThan(0);
+    expect(seat.x).toBeLessThan(GRID.gridWidth - 1);
+    expect(seat.y).toBeGreaterThan(0);
+    expect(seat.y).toBeLessThan(GRID.gridHeight - 1);
+  });
+
+  it('keeps an unconfigured agent on free floor in a heavily furnished office', () => {
+    const desks = Array.from({ length: 6 }, (_, row) => Array.from({ length: 6 }, (_, column) => ({
+      ...desk, id: `desk-${row}-${column}`, x: 3 + column * 3, y: 3 + row * 2,
+    }))).flat();
+    engine.setLayout(desks, {});
+    const seat = engine.assignSeat('visitor');
+    expect(desks.some(item => seat.x >= item.x && seat.x < item.x + 3
+      && seat.y >= item.y && seat.y < item.y + 2)).toBe(false);
+    expect(seat.x).toBeGreaterThan(0);
+    expect(seat.x).toBeLessThan(GRID.gridWidth - 1);
+    expect(seat.y).toBeGreaterThan(0);
+    expect(seat.y).toBeLessThan(GRID.gridHeight - 1);
+  });
+
+  it('refreshes a seated worker after repeated layout changes cover its previous floor position', () => {
+    engine.setLayout([desk], { main: { x: desk.x, y: desk.y } });
+    engine.addCharacter({ id: 'main', name: 'Shodan', ...engine.assignSeat('main'), state: 'typing' });
+    for (const y of [6, 8]) {
+      const movedDesk = { ...desk, y };
+      const destination = { x: 10, y: y + 2 };
+      engine.setLayout([movedDesk], { main: { x: movedDesk.x, y } });
+      flushLayoutFrame();
+
+      const character = internal().characters.get('main')!;
+      expect(insideDesk({ x: Math.round(character.x), y: Math.round(character.y) }, movedDesk)).toBe(false);
+      expect({ x: character.targetX, y: character.targetY }).toEqual(destination);
+      for (let step = 0; step < 100; step++) {
+        internal().update(0.1);
+        expect(insideDesk({ x: Math.round(character.x), y: Math.round(character.y) }, movedDesk)).toBe(false);
+      }
+      expect(character.x).toBeCloseTo(destination.x, 5);
+      expect(character.y).toBeCloseTo(destination.y, 5);
+    }
+  });
+
+  it('evacuates a desk-covered worker toward its desk front instead of a nearer sealed floor pocket', () => {
+    engine.setLayout([desk], { main: { x: desk.x, y: desk.y } });
+    engine.addCharacter({ id: 'main', name: 'Shodan', ...engine.assignSeat('main'), state: 'typing' });
+    // The moved desk covers (10,6). Furniture closes three sides of (10,5),
+    // leaving that nearest floor tile sealed behind the desk; (10,8) is open.
+    const movedDesk = { ...desk, y: 6 };
+    engine.setLayout([
+      movedDesk,
+      { id: 'pocket-left', type: 'MISSING_SPRITE', x: 9, y: 4, rotation: 90 },
+      { id: 'pocket-right', type: 'MISSING_SPRITE', x: 11, y: 4, rotation: 90 },
+      { id: 'pocket-top', type: 'MISSING_SPRITE', x: 10, y: 4, rotation: 0 },
+    ], { main: { x: 9, y: 6 } });
+    flushLayoutFrame();
+
+    const character = internal().characters.get('main')!;
+    expect({ x: character.targetX, y: character.targetY }).toEqual({ x: 10, y: 8 });
+    for (let step = 0; step < 100; step++) internal().update(0.1);
+    expect(character.x).toBeCloseTo(10, 5);
+    expect(character.y).toBeCloseTo(8, 5);
+  });
+
+  it('refreshes a moving worker\'s destination when a later layout moves its desk', () => {
+    engine.setLayout([desk], { main: { x: desk.x, y: desk.y } });
+    engine.assignSeat('main');
+    engine.addCharacter({ id: 'main', name: 'Shodan', x: 4, y: 9, state: 'idle' });
+    engine.updateCharacter('main', { state: 'typing' });
+    for (let step = 0; step < 5; step++) internal().update(0.1);
+    const movedDesk = { ...desk, y: 7 };
+    engine.setLayout([movedDesk], { main: { x: 9, y: 7 } });
+    flushLayoutFrame();
+
+    const character = internal().characters.get('main')!;
+    expect({ x: character.targetX, y: character.targetY }).toEqual({ x: 10, y: 9 });
+    expect(character.path[character.path.length - 1]).toEqual({ x: 10, y: 9 });
+    for (let step = 0; step < 100; step++) internal().update(0.1);
+    expect(character.x).toBeCloseTo(10, 5);
+    expect(character.y).toBeCloseTo(9, 5);
+  });
+
+  it('reroutes an existing path when the seat stays fixed but a layout update blocks the route', () => {
+    const seats = { main: { x: desk.x, y: desk.y } };
+    engine.setLayout([desk], seats);
+    engine.assignSeat('main');
+    engine.addCharacter({ id: 'main', name: 'Shodan', x: 4, y: 6, state: 'idle' });
+    engine.updateCharacter('main', { state: 'typing' });
+    for (let step = 0; step < 5; step++) internal().update(0.1);
+    engine.setLayout([desk, { id: 'new-obstacle', type: 'MISSING_SPRITE', x: 7, y: 6, rotation: 0 }], seats);
+    flushLayoutFrame();
+
+    const character = internal().characters.get('main')!;
+    const blocked = new Set(['7,6', '8,6', ...deskTiles]);
+    expect(character.path.every(({ x, y }) => !blocked.has(`${x},${y}`))).toBe(true);
+    for (let step = 0; step < 100; step++) {
+      internal().update(0.1);
+      expect(blocked.has(`${Math.round(character.x)},${Math.round(character.y)}`)).toBe(false);
+    }
+    expect(character.x).toBeCloseTo(front.x, 5);
+    expect(character.y).toBeCloseTo(front.y, 5);
+  });
+
+  it('refreshes an existing temporary seat when a later layout covers it with furniture', () => {
+    engine.setLayout([], {});
+    const original = engine.assignSeat('visitor');
+    engine.addCharacter({ id: 'visitor', name: 'Visitor', ...original, state: 'typing' });
+    const newDesk = { ...desk, ...original };
+    engine.setLayout([newDesk], {});
+    flushLayoutFrame();
+
+    const character = internal().characters.get('visitor')!;
+    expect(insideDesk({ x: Math.round(character.x), y: Math.round(character.y) }, newDesk)).toBe(false);
+    const seat = engine.assignSeat('visitor');
+    expect(insideDesk(seat, newDesk)).toBe(false);
+    expect({ x: character.targetX, y: character.targetY }).toEqual(seat);
+    for (let step = 0; step < 100; step++) internal().update(0.1);
+    expect(character.x).toBeCloseTo(seat.x, 5);
+    expect(character.y).toBeCloseTo(seat.y, 5);
+  });
+
+  it('uses reachable floor for an existing worker whose configured desk lies across a partition', () => {
+    const partition: PlacedFurniture[] = Array.from({ length: 14 }, (_, index) => ({
+      id: `partition-${index}`, type: 'MISSING_SPRITE', x: 12, y: index + 1, rotation: 0,
+    }));
+    const farDesk = { ...desk, x: 16 };
+    engine.setLayout([farDesk, ...partition], { main: { x: 16, y: 4 } });
+    engine.assignSeat('main'); // Reserve the desk before the worker appears on the other side.
+    engine.addCharacter({ id: 'main', name: 'Shodan', x: 4, y: 6, state: 'idle' });
+    const reachableSeat = engine.assignSeat('main');
+    engine.updateCharacter('main', { state: 'typing' });
+
+    const character = internal().characters.get('main')!;
+    expect(reachableSeat).toEqual({ x: 11, y: 6 });
+    expect({ x: character.targetX, y: character.targetY }).toEqual(reachableSeat);
+    expect(character.path.length).toBeGreaterThan(0);
+    for (let step = 0; step < 100; step++) {
+      internal().update(0.1);
+      expect(character.x).toBeLessThan(12);
+    }
+    expect(character.x).toBeCloseTo(reachableSeat.x, 5);
+    expect(character.y).toBeCloseTo(reachableSeat.y, 5);
+  });
+
+  it('assigns a temporary seat on the existing worker\'s side of a partition', () => {
+    const partition: PlacedFurniture[] = Array.from({ length: 14 }, (_, index) => ({
+      id: `partition-${index}`, type: 'MISSING_SPRITE', x: 12, y: index + 1, rotation: 0,
+    }));
+    engine.setLayout(partition, {});
+    engine.addCharacter({ id: 'visitor', name: 'Visitor', x: 18, y: 6, state: 'idle' });
+    const seat = engine.assignSeat('visitor');
+    engine.updateCharacter('visitor', { state: 'typing' });
+
+    const character = internal().characters.get('visitor')!;
+    expect(seat.x).toBeGreaterThan(13);
+    expect({ x: character.targetX, y: character.targetY }).toEqual(seat);
+    for (let step = 0; step < 100; step++) {
+      internal().update(0.1);
+      expect(character.x).toBeGreaterThan(13);
+    }
+    expect(character.x).toBeCloseTo(seat.x, 5);
+    expect(character.y).toBeCloseTo(seat.y, 5);
+  });
+
+  it('keeps an arrived worker at its reserved floor position across identical activity updates', () => {
+    const furniture: PlacedFurniture[] = [5, 6, 7].flatMap(y => [5, 7].map(x => ({
+      id: `box-${x}-${y}`, type: 'MISSING_SPRITE', x, y, rotation: 0,
+    })));
+    engine.setLayout(furniture, { main: { x: 6, y: 6 } });
+    engine.addCharacter({ id: 'main', name: 'Shodan', x: 2, y: 6, state: 'idle' });
+    engine.updateCharacter('main', { state: 'typing' });
+    const character = internal().characters.get('main')!;
+    const destination = { x: character.targetX, y: character.targetY };
+    for (let step = 0; step < 100; step++) internal().update(0.1);
+    expect({ x: character.x, y: character.y }).toEqual(destination);
+
+    engine.updateCharacter('main', { state: 'typing' });
+
+    expect({ x: character.targetX, y: character.targetY }).toEqual(destination);
+    expect(engine.assignSeat('main')).toEqual(destination);
   });
 });
 
@@ -550,13 +862,17 @@ describe('GameEngine integration: obstacle-aware movement', () => {
 
     const character = engine.characters.get('walker')!;
     const blocked = new Set(['4,3', '5,3']);
-    const destination = character.path[character.path.length - 1];
-    expect(destination).toBeDefined();
+    // A layout rebuild may already relocate the blocked origin to its floor
+    // destination, so a safe escape does not always require another waypoint.
+    const destination = character.path[character.path.length - 1]
+      ?? { x: character.targetX, y: character.targetY };
+    expect(blocked.has(`${Math.round(character.x)},${Math.round(character.y)}`)).toBe(false);
     expect(character.path.every(({ x, y }) => !blocked.has(`${x},${y}`))).toBe(true);
     expect(blocked.has(`${destination.x},${destination.y}`)).toBe(false);
 
     for (let step = 0; step < 100; step++) {
       engine.update(0.1);
+      expect(blocked.has(`${Math.round(character.x)},${Math.round(character.y)}`)).toBe(false);
       if (
         Math.abs(character.x - destination.x) < 0.05
         && Math.abs(character.y - destination.y) < 0.05
