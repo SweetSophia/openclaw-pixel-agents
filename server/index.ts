@@ -1699,7 +1699,7 @@ function getDefaultLayout(): OfficeLayoutDoc {
     ],
     seats: {
       cybera: { x: 3, y: 4 },
-      shodan: { x: 9, y: 4 },
+      main: { x: 9, y: 4 },
       cyberlogis: { x: 15, y: 4 },
       descartes: { x: 20, y: 4 },
       chi: { x: 3, y: 10 },

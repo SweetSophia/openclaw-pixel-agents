@@ -49,6 +49,35 @@ describe("layout mutation lifecycle", () => {
     expect(existsSync(join(dataDir, "layouts", `${layout.id}.json`))).toBe(false);
   });
 
+  it("serves legacy Shodan seats for main without rewriting or revising the layout, then saves canonical seats", async () => {
+    const legacy = {
+      id: "legacy-seats", name: "Legacy seats", width: 24, height: 16,
+      furniture: [], seats: { shodan: { x: 9, y: 4 }, miku: { x: 20, y: 10 } }, updatedAt: 1,
+    };
+    const canonicalSeats = { main: { x: 9, y: 4 }, miku: { x: 20, y: 10 } };
+    const path = join(dataDir, "layouts", "legacy-seats.json");
+    const original = JSON.stringify(legacy);
+    mkdirSync(join(dataDir, "layouts"), { recursive: true });
+    writeFileSync(path, original);
+
+    const read = await request(app).get("/api/layouts/legacy-seats").expect(200);
+    expect(read.body).toEqual({ ...legacy, seats: canonicalSeats });
+    const list = await request(app).get("/api/layouts").expect(200);
+    expect(list.body.layouts.find((layout: { id: string }) => layout.id === "legacy-seats")).toEqual(read.body);
+    expect(readFileSync(path, "utf8")).toBe(original);
+    const initialDefault = await request(app).get("/api/layouts/default").expect(200);
+    expect(initialDefault.body.seats.main).toEqual({ x: 9, y: 4 });
+    expect(initialDefault.body.seats).not.toHaveProperty("shodan");
+
+    const saved = await request(app).put("/api/layouts/legacy-seats")
+      .send({ name: "Updated seats", baseUpdatedAt: legacy.updatedAt }).expect(200);
+    expect(saved.body.layout).toEqual({ ...legacy, name: "Updated seats", seats: canonicalSeats, updatedAt: expect.any(Number) });
+    expect(saved.body.layout.updatedAt).not.toBe(legacy.updatedAt);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(saved.body.layout);
+    await request(app).put("/api/layouts/legacy-seats")
+      .send({ name: "Stale edit", baseUpdatedAt: legacy.updatedAt }).expect(409);
+  });
+
   it("serves canonical legacy furniture without rewriting the file, then persists canonical edits", async () => {
     const furniture = [
       { id: "old-desk", type: "desk", x: 2, y: 2, rotation: 90 },

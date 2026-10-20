@@ -48,7 +48,7 @@ export const RoomSwitcher: React.FC<Props> = ({ activeRoomId, onRoomChange, agen
             key={room.id}
             className={`room-tab ${isActive ? 'active' : ''}`}
             onClick={() => onRoomChange(room.id)}
-            title={`${room.name} — ${room.primaryTag}`}
+            title={`${room.name} — ${activeInRoom} active / ${roomAgents.length} visible agents (${room.primaryTag})`}
           >
             <span className="room-icon">{room.icon}</span>
             <span className="room-name">{room.name}</span>
