@@ -216,6 +216,8 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
       readonly height: number;
       readonly footprintW: number;
       readonly footprintH: number;
+      readonly isSurface?: boolean;
+      readonly canPlaceOnSurfaces?: boolean;
     }>();
   });
 
