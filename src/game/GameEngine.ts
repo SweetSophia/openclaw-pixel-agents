@@ -20,6 +20,7 @@ import {
 } from './SpriteLoader';
 import { buildObstacleMap, bfsPathfind, reachableFloor, type Point } from './Pathfinder';
 import { resolveSeatPosition } from './seatPosition';
+import { sceneDrawOrder } from './sceneDepth';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
@@ -86,6 +87,8 @@ const AGENT_PALETTES: Record<'cybera' | 'main' | 'shodan' | 'cyberlogis' | 'desc
 };
 
 const DESK_STATES = new Set(['typing', 'reading', 'running_command', 'thinking']);
+const TABLE_TYPES = new Set(['DESK', 'TABLE_FRONT', 'SMALL_TABLE', 'COFFEE_TABLE']);
+const SURFACE_PROP_TYPES = new Set(['PC', 'COFFEE', 'HANGING_PLANT']);
 
 // ── State Transition Visual Effects ────────────────────
 
@@ -942,8 +945,7 @@ export class GameEngine {
 
     this.renderFloor(gridWidth, gridHeight, tileSize);
     this.renderWalls(gridWidth, gridHeight, tileSize);
-    this.renderFurniture(tileSize, zoom);
-    this.renderCharacters(tileSize);
+    this.renderScene(tileSize, zoom);
     this.renderSelectionRing(tileSize);
     this.renderMoveTargets(tileSize);
     this.renderStateEffects(tileSize);
@@ -1029,8 +1031,8 @@ export class GameEngine {
     }
   }
 
-  private renderFurniture(tileSize: number, zoom: number) {
-    const { ctx, assetsLoaded, furniture } = this;
+  private renderScene(tileSize: number, zoom: number) {
+    const { furniture, assetsLoaded } = this;
     if (!this._furnitureDiagLogged && this.placedFurniture.length > 0) {
       this._furnitureDiagLogged = true;
       const types = this.placedFurniture.map(f => f.type);
@@ -1038,47 +1040,65 @@ export class GameEngine {
       console.log(`[GameEngine] renderFurniture: assetsLoaded=${assetsLoaded}, furnitureMapSize=${furniture.size}, placedTypes=[${types}], found=[${found}]`);
     }
 
+    if (this.placedFurniture.length === 0) {
+      this.renderFurniture(tileSize, zoom);
+      this.renderCharacters(tileSize);
+      return;
+    }
+    const scene = sceneDrawOrder(this.placedFurniture.map(item => ({
+      item,
+      rectangle: this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0),
+      isSurface: TABLE_TYPES.has(item.type) || furniture.get(item.type)?.isSurface === true,
+      canPlaceOnSurfaces: SURFACE_PROP_TYPES.has(item.type) || furniture.get(item.type)?.canPlaceOnSurfaces === true,
+    })), this.characters.values());
+    for (const entry of scene) {
+      if (entry.kind === 'furniture') this.renderPlacedFurniture(entry.item, tileSize, zoom);
+      else this.renderCharacter(entry.character, tileSize);
+    }
+  }
+
+  private renderFurniture(tileSize: number, zoom: number) {
     if (this.placedFurniture.length > 0) {
-      for (const item of this.placedFurniture) {
-        const px = item.x * tileSize;
-        const py = item.y * tileSize;
-        const isSelected = this.editor.editorMode && this.editor.selectedFurnitureId === item.id;
-
-        ctx.save();
-        if (item.rotation) {
-          const cx = px + tileSize / 2, cy = py + tileSize / 2;
-          ctx.translate(cx, cy);
-          ctx.rotate((item.rotation * Math.PI) / 180);
-          ctx.translate(-cx, -cy);
-        }
-
-        const spriteItem = furniture.get(item.type);
-        if (assetsLoaded && spriteItem && spriteItem.canvas.width > 0 && spriteItem.canvas.height > 0) {
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(spriteItem.canvas, px, py, spriteItem.width * zoom, spriteItem.height * zoom);
-        } else {
-          const colors: Record<string, string> = {
-            DESK: '#533483', PC: '#0f3460', LARGE_PLANT: '#2d6a4f',
-            COFFEE: '#6f4e37', WHITEBOARD: '#e8e8e8', BOOKSHELF: '#8b4513',
-            LARGE_PAINTING: '#daa520',
-          };
-          ctx.fillStyle = colors[item.type] || '#533483';
-          ctx.fillRect(px, py, tileSize * 2, tileSize);
-        }
-        ctx.restore();
-
-        if (isSelected) {
-          ctx.strokeStyle = '#4ecca3';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([4, 4]);
-          const footprint = this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0);
-          ctx.strokeRect(footprint.x * tileSize - 2, footprint.y * tileSize - 2,
-            footprint.width * tileSize + 4, footprint.height * tileSize + 4);
-          ctx.setLineDash([]);
-        }
-      }
+      for (const item of this.placedFurniture) this.renderPlacedFurniture(item, tileSize, zoom);
     } else {
       this.renderLegacyFurniture(tileSize, zoom);
+    }
+  }
+
+  private renderPlacedFurniture(item: PlacedFurniture, tileSize: number, zoom: number) {
+    const { ctx, assetsLoaded, furniture } = this;
+    const px = item.x * tileSize;
+    const py = item.y * tileSize;
+    const isSelected = this.editor.editorMode && this.editor.selectedFurnitureId === item.id;
+    ctx.save();
+    if (item.rotation) {
+      const cx = px + tileSize / 2, cy = py + tileSize / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((item.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
+    const spriteItem = furniture.get(item.type);
+    if (assetsLoaded && spriteItem && spriteItem.canvas.width > 0 && spriteItem.canvas.height > 0) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(spriteItem.canvas, px, py, spriteItem.width * zoom, spriteItem.height * zoom);
+    } else {
+      const colors: Record<string, string> = {
+        DESK: '#533483', PC: '#0f3460', LARGE_PLANT: '#2d6a4f',
+        COFFEE: '#6f4e37', WHITEBOARD: '#e8e8e8', BOOKSHELF: '#8b4513',
+        LARGE_PAINTING: '#daa520',
+      };
+      ctx.fillStyle = colors[item.type] || '#533483';
+      ctx.fillRect(px, py, tileSize * 2, tileSize);
+    }
+    ctx.restore();
+    if (isSelected) {
+      ctx.strokeStyle = '#4ecca3';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      const footprint = this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0);
+      ctx.strokeRect(footprint.x * tileSize - 2, footprint.y * tileSize - 2,
+        footprint.width * tileSize + 4, footprint.height * tileSize + 4);
+      ctx.setLineDash([]);
     }
   }
 

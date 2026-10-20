@@ -79,6 +79,8 @@ interface LoadedFurnitureItem {
   height: number;
   footprintW: number;
   footprintH: number;
+  isSurface?: boolean;
+  canPlaceOnSurfaces?: boolean;
 }
 
 interface LoadedFloor {
@@ -105,6 +107,8 @@ export interface ReadonlyLoadedFurnitureItem {
   readonly height: number;
   readonly footprintW: number;
   readonly footprintH: number;
+  readonly isSurface?: boolean;
+  readonly canPlaceOnSurfaces?: boolean;
 }
 
 export interface ReadonlyLoadedFloor {
@@ -296,6 +300,8 @@ export async function loadFloors(
 type LeafAsset = ManifestNode & { file: string };
 
 interface ManifestNode {
+  category?: string;
+  canPlaceOnSurfaces?: boolean;
   file?: string;
   width?: number;
   height?: number;
@@ -389,6 +395,8 @@ export async function loadFurniture(
         height: fh,
         footprintW,
         footprintH,
+        isSurface: manifest.category === 'desks',
+        canPlaceOnSurfaces: manifest.canPlaceOnSurfaces === true,
       });
     } catch (err) {
       signal?.throwIfAborted();
