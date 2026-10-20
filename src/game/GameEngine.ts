@@ -20,7 +20,7 @@ import {
 } from './SpriteLoader';
 import { buildObstacleMap, bfsPathfind, reachableFloor, type Point } from './Pathfinder';
 import { resolveSeatPosition } from './seatPosition';
-import { sceneDrawOrder } from './sceneDepth';
+import { furnitureDrawOrder, sceneDrawOrder, type FurnitureSceneEntry } from './sceneDepth';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
@@ -208,6 +208,8 @@ export class GameEngine {
 
   // Layout data
   private placedFurniture: PlacedFurniture[] = [];
+  private sceneFurniture: FurnitureSceneEntry[] | null = null;
+  private sceneFootprints = new Map<string, { sprite: ReadonlyLoadedFurnitureItem | undefined; width: number; height: number; loaded: boolean }>();
   private seats: Map<string, { x: number; y: number }> = new Map();
   private configuredSeats = new Map<string, Point>();
 
@@ -271,6 +273,7 @@ export class GameEngine {
           const item = this.placedFurniture.find(furniture => furniture.id === id);
           if (item && (item.x !== gridX || item.y !== gridY)) {
             item.x = gridX; item.y = gridY;
+            this.sceneFurniture = null;
             this.invalidateFurniturePreviewGeometry();
           }
         },
@@ -278,6 +281,7 @@ export class GameEngine {
           const item = this.findFurnitureAt(gridX, gridY);
           if (!item) return null;
           item.rotation = ((item.rotation || 0) + 90) % 360;
+          this.sceneFurniture = null;
           this.invalidateFurniturePreviewGeometry();
           return { id: item.id, rotation: item.rotation };
         },
@@ -358,6 +362,7 @@ export class GameEngine {
     }
     // Invalidate before refreshPreview: it may move the host furniture and
     // publish synchronously, before init's obstacle rebuild or any render frame.
+    this.sceneFurniture = null;
     this.invalidateFurniturePreviewGeometry();
     // Refresh both fallback geometry/status and any asset-dependent callback
     // target before the first frame, without requiring another pointer event.
@@ -1040,21 +1045,65 @@ export class GameEngine {
       console.log(`[GameEngine] renderFurniture: assetsLoaded=${assetsLoaded}, furnitureMapSize=${furniture.size}, placedTypes=[${types}], found=[${found}]`);
     }
 
-    if (this.placedFurniture.length === 0) {
-      this.renderFurniture(tileSize, zoom);
-      this.renderCharacters(tileSize);
-      return;
-    }
-    const scene = sceneDrawOrder(this.placedFurniture.map(item => ({
-      item,
-      rectangle: this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0),
-      isSurface: TABLE_TYPES.has(item.type) || furniture.get(item.type)?.isSurface === true,
-      canPlaceOnSurfaces: SURFACE_PROP_TYPES.has(item.type) || furniture.get(item.type)?.canPlaceOnSurfaces === true,
-    })), this.characters.values());
+    const legacy = this.placedFurniture.length === 0;
+    const scene = sceneDrawOrder(legacy ? this.legacyFurnitureDrawOrder() : this.placedFurnitureDrawOrder(), this.characters.values());
     for (const entry of scene) {
-      if (entry.kind === 'furniture') this.renderPlacedFurniture(entry.item, tileSize, zoom);
+      if (entry.kind === 'furniture') {
+        if (legacy && entry.item.type === 'DESK') this.renderLegacyDesk(entry.item.id, entry.item, tileSize, zoom);
+        else this.renderPlacedFurniture(entry.item, tileSize, zoom);
+      }
       else this.renderCharacter(entry.character, tileSize);
     }
+  }
+
+  private placedFurnitureDrawOrder(): FurnitureSceneEntry[] {
+    // Loaded sprite canvases are shared capabilities: a canvas becoming unusable
+    // changes its footprint even without a layout event. Check each type once.
+    if (this.sceneFurniture) {
+      for (const [type, previous] of this.sceneFootprints) {
+        const sprite = this.furniture.get(type);
+        const loaded = !!(this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0);
+        if (previous.sprite !== sprite || previous.loaded !== loaded
+          || previous.width !== (loaded ? sprite!.footprintW : 2)
+          || previous.height !== (loaded ? sprite!.footprintH : 1)) {
+          this.sceneFurniture = null;
+          break;
+        }
+      }
+    }
+    if (!this.sceneFurniture) {
+      this.sceneFootprints.clear();
+      this.sceneFurniture = furnitureDrawOrder(this.placedFurniture.map(item => {
+        const sprite = this.furniture.get(item.type);
+        const loaded = !!(this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0);
+        this.sceneFootprints.set(item.type, { sprite, loaded,
+          width: loaded ? sprite!.footprintW : 2, height: loaded ? sprite!.footprintH : 1 });
+        return { item,
+          rectangle: this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0),
+          isSurface: TABLE_TYPES.has(item.type) || sprite?.isSurface === true,
+          canPlaceOnSurfaces: SURFACE_PROP_TYPES.has(item.type) || sprite?.canPlaceOnSurfaces === true,
+        };
+      }));
+    }
+    return this.sceneFurniture;
+  }
+
+  private legacyFurnitureDrawOrder(): FurnitureSceneEntry[] {
+    const furniture = [
+      { id: 'legacy-plant', type: 'LARGE_PLANT', x: 1, y: 1, rotation: 0 },
+      { id: 'legacy-coffee', type: 'COFFEE', x: 22, y: 1, rotation: 0 },
+      { id: 'legacy-whiteboard', type: 'WHITEBOARD', x: 11, y: 0, rotation: 0 },
+      { id: 'legacy-bookshelf', type: 'BOOKSHELF', x: 1, y: 8, rotation: 0 },
+      { id: 'legacy-painting', type: 'LARGE_PAINTING', x: 22, y: 8, rotation: 0 },
+    ].map(item => ({ item, rectangle: this.renderedFootprint(item.type, item.x, item.y, 0),
+      isSurface: false, canPlaceOnSurfaces: false }));
+    for (const [id, seat] of this.seats) {
+      const item = { id, type: 'DESK', x: seat.x, y: seat.y, rotation: 0 };
+      // Legacy desks are drawn above their seat, whose row is the front floor.
+      furniture.push({ item, rectangle: { x: seat.x, y: seat.y - 1, width: 2, height: 1, fallback: false },
+        isSurface: true, canPlaceOnSurfaces: false });
+    }
+    return furnitureDrawOrder(furniture);
   }
 
   private renderFurniture(tileSize: number, zoom: number) {
@@ -1103,7 +1152,7 @@ export class GameEngine {
   }
 
   private renderLegacyFurniture(tileSize: number, zoom: number) {
-    const { ctx, seats, assetsLoaded, furniture } = this;
+    const { seats } = this;
     const officeFurniture = [
       { type: 'LARGE_PLANT', x: 1, y: 1 },
       { type: 'COFFEE', x: 22, y: 1 },
@@ -1115,19 +1164,24 @@ export class GameEngine {
       this.drawFurnitureItem(item.type, item.x * tileSize, item.y * tileSize, tileSize, zoom);
     }
     for (const [agentId, seat] of seats.entries()) {
-      const px = seat.x * tileSize, py = seat.y * tileSize;
-      const deskItem = furniture.get('DESK');
-      const pcItem = furniture.get('PC');
-      const chairItem = furniture.get('CUSHIONED_CHAIR') || furniture.get('WOODEN_CHAIR');
-      const hasDesk = deskItem && deskItem.canvas.width > 0 && deskItem.canvas.height > 0;
-      const hasPc = pcItem && pcItem.canvas.width > 0 && pcItem.canvas.height > 0;
-      if (assetsLoaded && (hasDesk || hasPc)) {
-        if (hasDesk) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
-        if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (hasDesk ? deskItem.height : 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
-        if (chairItem && chairItem.canvas.width > 0 && chairItem.canvas.height > 0) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
-      } else {
-        this.renderFallbackDesk(agentId, px, py, tileSize);
-      }
+      this.renderLegacyDesk(agentId, seat, tileSize, zoom);
+    }
+  }
+
+  private renderLegacyDesk(agentId: string, seat: Point, tileSize: number, zoom: number) {
+    const { ctx, assetsLoaded, furniture } = this;
+    const px = seat.x * tileSize, py = seat.y * tileSize;
+    const deskItem = furniture.get('DESK');
+    const pcItem = furniture.get('PC');
+    const chairItem = furniture.get('CUSHIONED_CHAIR') || furniture.get('WOODEN_CHAIR');
+    const hasDesk = deskItem && deskItem.canvas.width > 0 && deskItem.canvas.height > 0;
+    const hasPc = pcItem && pcItem.canvas.width > 0 && pcItem.canvas.height > 0;
+    if (assetsLoaded && (hasDesk || hasPc)) {
+      if (hasDesk) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
+      if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (hasDesk ? deskItem.height : 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
+      if (chairItem && chairItem.canvas.width > 0 && chairItem.canvas.height > 0) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
+    } else {
+      this.renderFallbackDesk(agentId, px, py, tileSize);
     }
   }
 
@@ -1160,13 +1214,6 @@ export class GameEngine {
     }
     ctx.fillStyle = '#2d6a4f';
     ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
-  }
-
-  private renderCharacters(tileSize: number) {
-    const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
-    for (const char of sorted) {
-      this.renderCharacter(char, tileSize);
-    }
   }
 
   private renderCharacter(char: Character, tileSize: number) {
@@ -2107,6 +2154,7 @@ export class GameEngine {
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
     this.editor.clearPreview();
     this.placedFurniture = furniture.map(item => ({ ...item }));
+    this.sceneFurniture = null;
     this.invalidateFurniturePreviewGeometry();
     this.obstacleDirty = true;
     // Schedule deferred rebuild to avoid blocking during rapid updates

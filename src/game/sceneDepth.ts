@@ -8,33 +8,56 @@ export interface SceneFurniture {
   canPlaceOnSurfaces: boolean;
 }
 
-type SceneEntry<T> = (
-  | { kind: 'furniture'; item: PlacedFurniture }
-  | { kind: 'character'; character: T }
-) & { depth: number; layer: number };
+export type FurnitureSceneEntry = { kind: 'furniture'; item: PlacedFurniture; depth: number; layer: number };
+type SceneEntry<T> = FurnitureSceneEntry | { kind: 'character'; character: T; depth: number; layer: number };
+
+function compareDepth(a: { depth: number; layer: number }, b: { depth: number; layer: number }) {
+  return a.depth - b.depth || a.layer - b.layer;
+}
 
 /** Placement rows control overlap; tables occlude objects until their lower edge. */
-export function sceneDrawOrder<T extends { y: number }>(
+export function furnitureDrawOrder(
   furniture: readonly SceneFurniture[],
-  characters: Iterable<T>,
-): SceneEntry<T>[] {
+): FurnitureSceneEntry[] {
   const surfaces = furniture.filter(entry => entry.isSurface);
-  const entries: SceneEntry<T>[] = furniture.map(entry => {
+  const entries: FurnitureSceneEntry[] = furniture.map(entry => {
     let depth = entry.isSurface ? entry.rectangle.y + entry.rectangle.height : entry.item.y;
+    let supported = false;
     if (entry.canPlaceOnSurfaces) {
       // A computer can start above a desk while its keyboard overlaps the top.
       // Keep it with its support, below characters and floor objects in front.
       for (const support of surfaces) {
         if (rectanglesOverlap(entry.rectangle, support.rectangle)) {
+          supported = true;
           depth = Math.max(depth, support.rectangle.y + support.rectangle.height);
         }
       }
     }
     return { kind: 'furniture', item: entry.item, depth,
-      layer: entry.isSurface ? 0 : entry.canPlaceOnSurfaces ? 1 : 2 };
+      layer: entry.isSurface ? 0 : supported ? 1 : 2 };
   });
-  for (const character of characters) entries.push({ kind: 'character', character, depth: character.y, layer: 3 });
   // Equal-depth tables go behind their supported props and the first floor row.
   // Stable sorting preserves placement order between otherwise equal objects.
-  return entries.sort((a, b) => a.depth - b.depth || a.layer - b.layer);
+  return entries.sort(compareDepth);
+}
+
+/** Merge moving characters with cached furniture without repeating support scans. */
+export function sceneDrawOrder<T extends { y: number }>(
+  furniture: readonly FurnitureSceneEntry[],
+  characters: Iterable<T>,
+): SceneEntry<T>[] {
+  const moving: SceneEntry<T>[] = Array.from(characters, character => ({
+    kind: 'character', character, depth: character.y, layer: 3,
+  }));
+  moving.sort(compareDepth);
+  const entries: SceneEntry<T>[] = [];
+  let next = 0;
+  for (const character of moving) {
+    while (next < furniture.length && compareDepth(furniture[next], character) <= 0) {
+      entries.push(furniture[next++]);
+    }
+    entries.push(character);
+  }
+  while (next < furniture.length) entries.push(furniture[next++]);
+  return entries;
 }

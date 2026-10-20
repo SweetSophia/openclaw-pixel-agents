@@ -87,6 +87,9 @@ describe('GameEngine scene depth with real loaded sprites', () => {
     const paints: Paint[] = [];
     const canvas = document.createElement('canvas');
     vi.spyOn(canvas, 'getContext').mockReturnValue(recordingContext(paints));
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: grid.gridWidth * grid.tileSize, height: grid.gridHeight * grid.tileSize,
+    } as DOMRect);
     const { GameEngine: RealGameEngine } = await import('./GameEngine');
     const engine = new RealGameEngine(canvas, grid);
     currentEngine = engine;
@@ -101,6 +104,7 @@ describe('GameEngine scene depth with real loaded sprites', () => {
     const characterFrames = new Set(character!.down.map(frame => frame.canvas));
     return {
       engine,
+      canvas,
       sprite: (type: string) => internal.furniture.get(type)!.canvas,
       render: () => {
         paints.length = 0;
@@ -258,5 +262,123 @@ describe('GameEngine scene depth with real loaded sprites', () => {
       expect(scene.engine.getPlacedFurniture()).toEqual(original);
       expect(furniture).toEqual(original);
     }
+  });
+
+  it.each([{ y: 7.9, behind: true }, { y: 8, behind: false }])(
+    'paints a character at row $y on the correct side of a legacy seat desk group', async ({ y, behind }) => {
+      const scene = await loadScene();
+      scene.engine.setLayout([], { main: { x: 9, y: 8 } });
+      expect(scene.engine.assignSeat('main')).toEqual({ x: 9, y: 8 });
+      scene.engine.addCharacter({ id: 'main', name: 'Shodan', x: 9, y, state: 'typing' });
+      const paints = scene.render();
+      const characterIndex = lastPaint(paints, scene.characterPaint);
+      for (const type of ['DESK', 'PC', 'CUSHIONED_CHAIR']) {
+        const groupIndex = lastPaint(paints, paint => paint.kind === 'image' && paint.source === scene.sprite(type));
+        expect(characterIndex < groupIndex).toBe(behind);
+      }
+    },
+  );
+
+  it.each([{ y: 7.9, behind: true }, { y: 8, behind: false }])(
+    'preserves the same depth boundary at row $y for a legacy fallback desk', async ({ y, behind }) => {
+      const scene = await loadScene(false, false);
+      scene.engine.setLayout([], { main: { x: 9, y: 8 } });
+      scene.engine.assignSeat('main');
+      scene.engine.addCharacter({ id: 'main', name: 'Shodan', x: 9, y, state: 'typing' });
+      const paints = scene.render();
+      const characterIndex = lastPaint(paints, scene.characterPaint);
+      const deskIndex = lastPaint(paints, paint => paint.kind === 'fill' && paint.style === '#533483'
+        && paint.coordinates.join(',') === [9 * 32 + 2, 8 * 32 - 32 * 0.4, 32 * 1.8, 32 * 0.5].join(','));
+
+      expect(characterIndex < deskIndex).toBe(behind);
+    },
+  );
+
+  it.each([true, false])('preserves saved same-row order for an unsupported PC and chair (PC first: %s)', async pcFirst => {
+    const scene = await loadScene();
+    const pc: PlacedFurniture = { id: 'floor-pc', type: 'PC', x: 10, y: 8, rotation: 0 };
+    const chair: PlacedFurniture = { id: 'floor-chair', type: 'CUSHIONED_CHAIR', x: 10, y: 8, rotation: 0 };
+    scene.engine.setLayout(pcFirst ? [pc, chair] : [chair, pc], {});
+    const paints = scene.render();
+    const pcIndex = lastPaint(paints, paint => paint.kind === 'image' && paint.source === scene.sprite('PC'));
+    const chairIndex = lastPaint(paints, paint => paint.kind === 'image' && paint.source === scene.sprite('CUSHIONED_CHAIR'));
+
+    expect(pcIndex < chairIndex).toBe(pcFirst);
+  });
+
+  it('refreshes depth when a native editor drag moves a plant from behind the desk to the front', async () => {
+    const scene = await loadScene();
+    scene.engine.setLayout([desk, { id: 'plant', type: 'LARGE_PLANT', x: 10, y: 4, rotation: 0 }], {});
+    scene.engine.setEditorMode(true);
+    const isPlant = (paint: Paint) => paint.kind === 'image' && paint.source === scene.sprite('LARGE_PLANT');
+    const isDesk = (paint: Paint) => paint.kind === 'image' && paint.source === scene.sprite('DESK');
+    const before = scene.render();
+    expect(lastPaint(before, isPlant)).toBeLessThan(lastPaint(before, isDesk));
+
+    scene.canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: 10.5 * 32, clientY: 4.5 * 32 }));
+    scene.canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: 10.5 * 32, clientY: 6.5 * 32 }));
+
+    const after = scene.render();
+    expect(scene.engine.getPlacedFurniture().find(item => item.id === 'plant')?.y).toBe(6);
+    expect(lastPaint(after, isPlant)).toBeGreaterThan(lastPaint(after, isDesk));
+  });
+
+  it('refreshes depth when a native editor rotation changes the lower desk edge', async () => {
+    const scene = await loadScene();
+    scene.engine.setLayout([desk], {});
+    scene.engine.addCharacter({ id: 'main', name: 'Shodan', x: 9, y: 6, state: 'typing' });
+    scene.engine.setEditorMode(true);
+    const isDesk = (paint: Paint) => paint.kind === 'image' && paint.source === scene.sprite('DESK');
+    const before = scene.render();
+    expect(lastPaint(before, scene.characterPaint)).toBeGreaterThan(lastPaint(before, isDesk));
+
+    scene.canvas.dispatchEvent(new MouseEvent('contextmenu', { clientX: 9.5 * 32, clientY: 4.5 * 32, cancelable: true }));
+
+    const after = scene.render();
+    expect(scene.engine.getPlacedFurniture()[0].rotation).toBe(90);
+    expect(lastPaint(after, scene.characterPaint)).toBeLessThan(lastPaint(after, isDesk));
+  });
+
+  it('refreshes depth when a loaded desk canvas becomes unavailable and is restored', async () => {
+    const scene = await loadScene();
+    scene.engine.setLayout([desk], {});
+    scene.engine.addCharacter({ id: 'main', name: 'Shodan', x: 9, y: 5.5, state: 'typing' });
+    const deskCanvas = scene.sprite('DESK');
+    const isDesk = (paint: Paint) => paint.kind === 'image' && paint.source === deskCanvas;
+    const loaded = scene.render();
+    expect(lastPaint(loaded, scene.characterPaint)).toBeLessThan(lastPaint(loaded, isDesk));
+
+    deskCanvas.width = 0;
+    deskCanvas.height = 0;
+    const unavailable = scene.render();
+    const fallbackIndex = lastPaint(unavailable, paint => paint.kind === 'fill' && paint.style === '#533483'
+      && paint.coordinates.join(',') === [9 * 32, 4 * 32, 2 * 32, 32].join(','));
+    expect(lastPaint(unavailable, scene.characterPaint)).toBeGreaterThan(fallbackIndex);
+
+    deskCanvas.width = 48;
+    deskCanvas.height = 32;
+    const restored = scene.render();
+    expect(lastPaint(restored, scene.characterPaint)).toBeLessThan(lastPaint(restored, isDesk));
+  });
+
+  it('reuses unchanged furniture support work while moving characters cross the desk edge', async () => {
+    const scene = await loadScene();
+    const geometry = await import('./furnitureGeometry');
+    const overlaps = vi.spyOn(geometry, 'rectanglesOverlap');
+    scene.engine.setLayout([desk, { id: 'pc', type: 'PC', x: 10, y: 4, rotation: 0 }], {});
+    scene.engine.addCharacter({ id: 'main', name: 'Shodan', x: 10, y: 5.9, state: 'typing' });
+    scene.render();
+    const initialSupportWork = overlaps.mock.calls.length;
+    expect(initialSupportWork).toBeGreaterThan(0);
+
+    for (let frame = 0; frame < 20; frame++) {
+      const y = frame % 2 === 0 ? 6.1 : 5.9;
+      scene.engine.updateCharacter('main', { y });
+      const paints = scene.render();
+      const characterIndex = lastPaint(paints, scene.characterPaint);
+      const deskIndex = lastPaint(paints, paint => paint.kind === 'image' && paint.source === scene.sprite('DESK'));
+      expect(characterIndex < deskIndex).toBe(y < 6);
+    }
+    expect(overlaps).toHaveBeenCalledTimes(initialSupportWork);
   });
 });
