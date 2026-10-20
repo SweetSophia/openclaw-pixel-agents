@@ -18,7 +18,7 @@ import {
   type AnimState,
   type Direction,
 } from './SpriteLoader';
-import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
+import { buildObstacleMap, bfsPathfind, reachableFloor, type Point } from './Pathfinder';
 import { resolveSeatPosition } from './seatPosition';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
@@ -424,9 +424,31 @@ export class GameEngine {
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
     this._obstacleRebuildScheduled = false;
-    // Reserve every configured floor position before assigning temporary seats.
-    for (const [id, anchor] of this.configuredSeats) this.seats.set(id, { ...anchor });
-    for (const [id, anchor] of this.configuredSeats) this.seats.set(id, this.resolveSeat(id, anchor));
+    // Furniture edits can cover an agent's current tile. Move only blocked
+    // origins onto floor before resolving destinations in their connected area.
+    for (const char of this.characters.values()) {
+      if (this.obstacleGrid[Math.round(char.y)]?.[Math.round(char.x)] === false) continue;
+      const floor = resolveSeatPosition({ x: Math.round(char.x), y: Math.round(char.y) }, [], this.obstacleGrid, new Set());
+      char.x = floor.x;
+      char.y = floor.y;
+    }
+    // Stage reservations locally: later explicit floor anchors must already be
+    // reserved while earlier desk anchors resolve, without publishing raw seats.
+    const nextSeats = new Map(this.configuredSeats);
+    for (const [id, anchor] of this.configuredSeats) nextSeats.set(id, this.resolveSeat(id, anchor, nextSeats));
+    this.seats = nextSeats;
+    for (const char of this.characters.values()) {
+      if (!char.isSubAgent) {
+        const seat = this.assignSeat(char.id);
+        if (['typing', 'reading', 'running_command', 'thinking'].includes(char.state)) {
+          char.targetX = seat.x;
+          char.targetY = seat.y;
+        }
+      }
+      // A route can become blocked even when its destination has not changed.
+      char.path = this.computePath(char);
+      char.pathIndex = 0;
+    }
   }
 
   private scheduleObstacleRebuild() {
@@ -469,6 +491,7 @@ export class GameEngine {
   // ── Update ───────────────────────────────────────────
 
   private update(dt: number) {
+    this.ensureObstacles();
     for (const char of this.characters.values()) {
       // Sub-agent lifecycle: server status owns dying/removal (issue #102);
       // the planner only advances the fade-out for dying sub-agents.
@@ -1853,6 +1876,7 @@ export class GameEngine {
 
     // When activity changes to a desk activity, route to seat
     if (mut.state && ['typing', 'reading', 'running_command', 'thinking'].includes(mut.state)) {
+      this.ensureObstacles();
       if (this.seats.has(id)) {
         const seat = this.assignSeat(id);
         char.targetX = seat.x;
@@ -1959,7 +1983,7 @@ export class GameEngine {
   // near the room edges before sharing an existing floor position.
   private overflowOffset = 0;
 
-  private resolveSeat(agentId: string, anchor: Point): Point {
+  private resolveSeat(agentId: string, anchor: Point, reservations = this.seats): Point {
     if (!this.obstacleGrid) return { ...anchor };
     const desks = this.placedFurniture.filter(item => item.type === 'DESK').map(item => {
       const sprite = this.furniture.get(item.type);
@@ -1968,21 +1992,41 @@ export class GameEngine {
         rotation: item.rotation || 0,
       };
     });
-    const reserved = new Set([...this.seats.entries()]
+    const reserved = new Set([...reservations.entries()]
       .filter(([id]) => id !== agentId).map(([, point]) => `${point.x},${point.y}`));
-    return resolveSeatPosition(anchor, desks, this.obstacleGrid, reserved);
+    const char = this.characters.get(agentId);
+    // Preserve pathfinding's shortest escape destination for legacy anchors
+    // blocked by other furniture; desk anchors use their rotated front instead.
+    if (char && this.obstacleGrid[anchor.y]?.[anchor.x]
+      && !desks.some(desk => anchor.x >= desk.x && anchor.x < desk.x + desk.width
+        && anchor.y >= desk.y && anchor.y < desk.y + desk.height)) {
+      const path = bfsPathfind(this.obstacleGrid, char, anchor, this.config.gridWidth, this.config.gridHeight);
+      const destination = path[path.length - 1];
+      if (destination && !reserved.has(`${destination.x},${destination.y}`)) return destination;
+    }
+    return resolveSeatPosition(anchor, desks, this.obstacleGrid, reserved, char ? reachableFloor(this.obstacleGrid, char) : undefined);
   }
 
   assignSeat(agentId: string): { x: number; y: number } {
     this.ensureObstacles();
+    const char = this.characters.get(agentId);
+    const reachable = char && this.obstacleGrid ? reachableFloor(this.obstacleGrid, char) : null;
     const existing = this.seats.get(agentId);
-    if (existing) return existing;
+    if (existing) {
+      if (this.obstacleGrid?.[existing.y]?.[existing.x] === false
+        && (!reachable || reachable.has(`${existing.x},${existing.y}`))) return existing;
+      const resolved = this.resolveSeat(agentId, this.configuredSeats.get(agentId) ?? existing);
+      this.seats.set(agentId, resolved);
+      return resolved;
+    }
+    const available = (x: number, y: number) => this.obstacleGrid?.[y]?.[x] === false
+      && (!reachable || reachable.has(`${x},${y}`));
     const used = new Set(Array.from(this.seats.values()).map(p => `${p.x},${p.y}`));
     const inner = { xMin: 3, xMax: this.config.gridWidth - 3 };
     const innerY = { yMin: 3, yMax: this.config.gridHeight - 2 };
     for (let y = innerY.yMin; y < innerY.yMax; y++) {
       for (let x = inner.xMin; x < inner.xMax; x += 2) {
-        if (!this.obstacleGrid?.[y]?.[x] && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+        if (available(x, y) && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
       }
     }
     // Inner rectangle exhausted — spiral outward from center to find the
@@ -1997,14 +2041,14 @@ export class GameEngine {
           const y = cy + dy;
           if (x < inner.xMin || x >= inner.xMax) continue;
           if (y < innerY.yMin || y >= innerY.yMax) continue;
-          if (!this.obstacleGrid?.[y]?.[x] && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+          if (available(x, y) && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
         }
       }
     }
     const sharedFloor: Point[] = [];
     for (let y = 1; y < this.config.gridHeight - 1; y++) {
       for (let x = 1; x < this.config.gridWidth - 1; x++) {
-        if (this.obstacleGrid?.[y]?.[x] !== false) continue;
+        if (!available(x, y)) continue;
         const point = { x, y };
         if (!used.has(`${x},${y}`)) { this.seats.set(agentId, point); return point; }
         sharedFloor.push(point);
@@ -2040,7 +2084,6 @@ export class GameEngine {
     if (seats) {
       this.seats.clear();
       this.configuredSeats = new Map(Object.entries(seats).map(([id, point]) => [id, { ...point }]));
-      for (const [aid, pos] of this.configuredSeats) this.seats.set(aid, { ...pos });
     }
   }
 
