@@ -39,6 +39,13 @@ describe("applyAgentSnapshot", () => {
     expect(current.get("old")?.tags).toEqual(["coding"]);
   });
 
+  it("accepts unchanged successful snapshots so CLI clients keep receiving freshness updates", () => {
+    const current = new Map([["idle", agent("idle")]]);
+
+    expect(applyAgentSnapshot(current, new Map([["idle", agent("idle")]])).applied).toBe(true);
+    expect(applyAgentSnapshot(current, new Map([["idle", agent("idle")]])).applied).toBe(true);
+  });
+
   it("returns deep-cloned snapshots when preserving on source error", () => {
     const current = new Map([["old", { ...agent("old", "typing"), tags: ["coding" as const] }]]);
     const result = applyAgentSnapshot(current, undefined, { sourceError: true });

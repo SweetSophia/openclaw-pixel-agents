@@ -227,6 +227,19 @@ describe('EditorController', () => {
     expect(canvas.style.transformOrigin).toBe('center center');
   });
 
+  it('delegates pinch increments and midpoint to the shared viewport without a second transform', () => {
+    const zoom = vi.fn();
+    controller.setViewportZoomCallback(zoom);
+    controller.attach();
+    canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }, { clientX: 200, clientY: 100 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 50, clientY: 120 }, { clientX: 250, clientY: 120 }]));
+    canvas.dispatchEvent(touchEvent('touchmove', [{ clientX: 50, clientY: 120 }, { clientX: 350, clientY: 120 }]));
+    expect(zoom.mock.calls).toEqual([[2, 150, 120, 0, 20], [1.5, 200, 120, 50, 0]]);
+    expect(canvas.style.transform).toBe('');
+    canvas.dispatchEvent(touchEvent('touchend', []));
+    expect(host.handleTouchGridTap).not.toHaveBeenCalled();
+  });
+
   it('delegates non-editor taps to the GameEngine host', () => {
     controller.attach();
     canvas.dispatchEvent(touchEvent('touchstart', [{ clientX: 7, clientY: 8 }]));

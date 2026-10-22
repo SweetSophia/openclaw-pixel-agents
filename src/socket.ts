@@ -34,17 +34,30 @@ import type { AgentState, TickerMessage } from '../shared/types';
  * payload synchronously. This trades a single extra in-memory copy
  * (bounded by the AgentState[] / TickerMessage[] size) for the
  * guarantee that any mounted consumer sees a recent snapshot
- * regardless of which consumer connected first.
+ * regardless of which consumer connected first. Agent snapshots carry their
+ * original receipt time and are invalidated between connections so a cached
+ * payload cannot make an unverified connection appear fresh.
  */
+interface CachedAgentsSnapshot {
+  agents: AgentState[];
+  receivedAt: number;
+}
+
 let sharedSocket: Socket | null = null;
-let cachedAgentsUpdate: AgentState[] | null = null;
+let cachedAgentsSnapshot: CachedAgentsSnapshot | null = null;
 let cachedTickerMessages: TickerMessage[] | null = null;
 
 export function getSharedSocket(): Socket {
   if (!sharedSocket) {
     sharedSocket = socketIO({ transports: ['websocket', 'polling'] });
+    sharedSocket.on('connect', () => {
+      cachedAgentsSnapshot = null;
+    });
+    sharedSocket.on('disconnect', () => {
+      cachedAgentsSnapshot = null;
+    });
     sharedSocket.on('agents:update', (agents: AgentState[]) => {
-      cachedAgentsUpdate = agents;
+      cachedAgentsSnapshot = { agents, receivedAt: Date.now() };
     });
     sharedSocket.on('ticker:messages', (messages: TickerMessage[]) => {
       cachedTickerMessages = messages;
@@ -55,11 +68,16 @@ export function getSharedSocket(): Socket {
 
 /**
  * Returns the most recent `agents:update` payload observed by the
- * shared socket, or `null` if none has been received yet. Late
+ * current socket connection, or `null` if none has been received yet. Late
  * consumers should call this on mount to seed their state.
  */
 export function getCachedAgentsUpdate(): AgentState[] | null {
-  return cachedAgentsUpdate;
+  return cachedAgentsSnapshot?.agents ?? null;
+}
+
+/** Preserve the original receipt time when a late consumer accepts a snapshot. */
+export function getCachedAgentsSnapshot(): CachedAgentsSnapshot | null {
+  return cachedAgentsSnapshot;
 }
 
 /**
@@ -76,6 +94,6 @@ export function resetSharedSocketForTesting(): void {
     sharedSocket.disconnect();
   }
   sharedSocket = null;
-  cachedAgentsUpdate = null;
+  cachedAgentsSnapshot = null;
   cachedTickerMessages = null;
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getCachedAgentsUpdate, getSharedSocket } from '../socket';
+import { getCachedAgentsSnapshot, getSharedSocket } from '../socket';
 import type { AgentState, CharacterRecipe } from '../../shared/types';
 import { ALL_TAGS, TAG_COLORS, resolveRoomByTags, type AgentTag } from '../../shared/types';
 
@@ -50,6 +50,7 @@ function isRecipeUpdateEvent(value: unknown): value is RecipeUpdateEvent {
 export function useAgentStore() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [connected, setConnected] = useState(false);
+  const [snapshotReceivedAt, setSnapshotReceivedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeRoomId, setActiveRoomId] = useState<string>('office');
   const socketRevisionRef = useRef(0);
@@ -82,6 +83,7 @@ export function useAgentStore() {
         || pendingMutationsRef.current > 0
       ) return;
       updateAgents(() => data.agents || []);
+      setSnapshotReceivedAt(Date.now());
       setError(null);
     } catch (err) {
       if (
@@ -334,6 +336,7 @@ export function useAgentStore() {
     const handleUpdate = (updatedAgents: AgentState[]) => {
       socketRevisionRef.current += 1;
       updateAgents(() => updatedAgents);
+      setSnapshotReceivedAt(Date.now());
       setError(null);
       setConnected(true);
     };
@@ -372,10 +375,13 @@ export function useAgentStore() {
     // has already received an `agents:update` snapshot, this
     // consumer missed it. Seed our state from the cached payload so
     // we don't render an empty list until the next broadcast.
-    const cachedAgents = getCachedAgentsUpdate();
-    if (cachedAgents) {
+    const cachedSnapshot = getCachedAgentsSnapshot();
+    if (socket.connected && cachedSnapshot) {
       socketRevisionRef.current += 1;
-      updateAgents(() => cachedAgents);
+      updateAgents(() => cachedSnapshot.agents);
+      setSnapshotReceivedAt(cachedSnapshot.receivedAt);
+      setError(null);
+      setConnected(true);
     }
 
     return () => {
@@ -397,5 +403,5 @@ export function useAgentStore() {
     return () => clearInterval(pollTimer);
   }, [connected, fetchAgents]);
 
-  return { agents, connected, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
+  return { agents, connected, snapshotReceivedAt, error, toggleAgent, toggleAll, setCharacterSprite, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents, refresh: fetchAgents };
 }

@@ -5,17 +5,18 @@ import { AgentDetailPanel } from './components/AgentDetailPanel';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SoundControls } from './components/SoundControls';
 import { RoomSwitcher } from './components/RoomSwitcher';
-import MessageTicker from './components/MessageTicker';
+import LiveActivity from './components/LiveActivity';
 import { useAgentStore } from './hooks/useAgentStore';
 import { useLayoutStore } from './hooks/useLayoutStore';
 import { useLiveSync } from './hooks/useLiveSync';
 import { sfx } from './audio/SoundFX';
 import { newEntityId } from './util/id';
+import { assetUrl } from './util/assetUrl';
 import { getRoomName, type PlacedFurniture } from '../shared/types';
 import './App.css';
 
 export const App: React.FC = () => {
-  const { agents, connected, toggleAgent, toggleAll, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
+  const { agents, connected, snapshotReceivedAt, toggleAgent, toggleAll, updateTags, updateRecipe, activeRoomId, setActiveRoomId, roomAgents } = useAgentStore();
   const {
     layouts, activeLayout, isDirty, saveStatus, layoutError, catalog,
     clearLayoutError, loadLayoutById, saveActiveLayout, createLayout, deleteLayout, updateFurniture,
@@ -174,7 +175,7 @@ export const App: React.FC = () => {
   }, []);
 
   return (
-    <div className="app">
+    <div className="app" style={{ backgroundImage: `url("${assetUrl('/assets/background.png')}")` }}>
       <header className="app-header" ref={headerRef}>
         <h1 aria-label="OpenClaw Pixel Agents"><span aria-hidden="true">🖥️ </span><span className="brand-text">OpenClaw Pixel Agents</span></h1>
         <RoomSwitcher
@@ -279,7 +280,7 @@ export const App: React.FC = () => {
           onClose={() => setSelectedAgentId(null)}
         />
       )}
-      <MessageTicker />
+      <LiveActivity agents={agents} connected={connected} snapshotReceivedAt={snapshotReceivedAt} onSelectAgent={setSelectedAgentId} />
     </div>
   );
 };

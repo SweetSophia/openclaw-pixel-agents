@@ -10,6 +10,7 @@ import { furnitureRectangle, assessFurniturePreview, type FurnitureRectangle } f
 import {
   loadAllAssets,
   loadCharacters,
+  getAgentCharacter,
   getSpriteFrame,
   type ReadonlyLoadedCharacter,
   type ReadonlyLoadedFloor,
@@ -17,12 +18,14 @@ import {
   type AnimState,
   type Direction,
 } from './SpriteLoader';
-import { buildObstacleMap, bfsPathfind, type Point } from './Pathfinder';
+import { buildObstacleMap, bfsPathfind, reachableFloor, type Point } from './Pathfinder';
+import { resolveSeatPosition } from './seatPosition';
+import { furnitureDrawOrder, sceneDrawOrder, type FurnitureSceneEntry } from './sceneDepth';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
 import { EditorController } from './EditorController';
-import type { EditorCallbacks, FurniturePreviewIntent } from './EditorController';
+import type { EditorCallbacks, FurniturePreviewIntent, ViewportZoomCallback } from './EditorController';
 import { screenToGrid as mapScreenToGrid } from './inputGeometry';
 import { getDayPhase, type InterpolatedDayPhase } from './Schedule';
 
@@ -82,6 +85,10 @@ const AGENT_PALETTES: Record<'cybera' | 'main' | 'shodan' | 'cyberlogis' | 'desc
   cybera: 0, main: 1, shodan: 1, cyberlogis: 2, descartes: 3,
   chi: 4, cylena: 5, sysauxilia: 3, miku: 0,
 };
+
+const DESK_STATES = new Set(['typing', 'reading', 'running_command', 'thinking']);
+const TABLE_TYPES = new Set(['DESK', 'TABLE_FRONT', 'SMALL_TABLE', 'COFFEE_TABLE']);
+const SURFACE_PROP_TYPES = new Set(['PC', 'COFFEE', 'HANGING_PLANT']);
 
 // ── State Transition Visual Effects ────────────────────
 
@@ -201,7 +208,11 @@ export class GameEngine {
 
   // Layout data
   private placedFurniture: PlacedFurniture[] = [];
+  private sceneFurniture: FurnitureSceneEntry[] | null = null;
+  private sceneSeats: Array<Point & { id: string }> = [];
+  private sceneFootprints = new Map<string, { sprite: ReadonlyLoadedFurnitureItem | undefined; width: number; height: number; loaded: boolean }>();
   private seats: Map<string, { x: number; y: number }> = new Map();
+  private configuredSeats = new Map<string, Point>();
 
   // Pathfinding
   private obstacleGrid: boolean[][] | null = null;
@@ -263,6 +274,7 @@ export class GameEngine {
           const item = this.placedFurniture.find(furniture => furniture.id === id);
           if (item && (item.x !== gridX || item.y !== gridY)) {
             item.x = gridX; item.y = gridY;
+            this.sceneFurniture = null;
             this.invalidateFurniturePreviewGeometry();
           }
         },
@@ -270,6 +282,7 @@ export class GameEngine {
           const item = this.findFurnitureAt(gridX, gridY);
           if (!item) return null;
           item.rotation = ((item.rotation || 0) + 90) % 360;
+          this.sceneFurniture = null;
           this.invalidateFurniturePreviewGeometry();
           return { id: item.id, rotation: item.rotation };
         },
@@ -310,7 +323,7 @@ export class GameEngine {
   private spawnDemoAgents() {
     const demoAgents = [
       { id: 'cybera', name: 'Cybera', state: 'typing' },
-      { id: 'shodan', name: 'Shodan', state: 'thinking' },
+      { id: 'main', name: 'Shodan', state: 'thinking' },
       { id: 'cyberlogis', name: 'Cyberlogis', state: 'reading' },
       { id: 'descartes', name: 'Descartes', state: 'idle' },
       { id: 'chi', name: 'Chi', state: 'waiting_input', lastMessage: 'Need input on the deploy config...' },
@@ -323,7 +336,7 @@ export class GameEngine {
       const seat = this.assignSeat(agent.id);
       this.addCharacter({
         id: agent.id, name: agent.name,
-        x: seat.x, y: seat.y + 1,
+        x: seat.x, y: seat.y,
         state: agent.state, spriteId: undefined,
         lastMessage: agent.lastMessage,
       });
@@ -340,6 +353,7 @@ export class GameEngine {
       this.floorCacheValid = false;
       console.log(`[GameEngine] Assets loaded: ${furniture.size} furniture types, ${characters.length} characters, ${floors.length} floors`);
     } catch (err) {
+      if (signal?.aborted) return;
       console.error('[GameEngine] Asset load failed:', err);
       try {
         this.characters_sprites = await loadCharacters(undefined, signal);
@@ -349,6 +363,7 @@ export class GameEngine {
     }
     // Invalidate before refreshPreview: it may move the host furniture and
     // publish synchronously, before init's obstacle rebuild or any render frame.
+    this.sceneFurniture = null;
     this.invalidateFurniturePreviewGeometry();
     // Refresh both fallback geometry/status and any asset-dependent callback
     // target before the first frame, without requiring another pointer event.
@@ -420,6 +435,35 @@ export class GameEngine {
     this.obstacleGrid = buildObstacleMap(this.config.gridWidth, this.config.gridHeight, furnitureRects);
     this.obstacleDirty = false;
     this._obstacleRebuildScheduled = false;
+    // Furniture edits can cover an agent's current tile. Evacuate toward its
+    // intended seat's connected floor, avoiding nearer sealed pockets.
+    const desks = this.deskFootprints();
+    for (const char of this.characters.values()) {
+      if (this.obstacleGrid[Math.round(char.y)]?.[Math.round(char.x)] === false) continue;
+      const origin = { x: Math.round(char.x), y: Math.round(char.y) };
+      const anchor = this.configuredSeats.get(char.id) ?? this.seats.get(char.id) ?? origin;
+      const preferredSeat = resolveSeatPosition(anchor, desks, this.obstacleGrid, new Set());
+      const floor = resolveSeatPosition(origin, [], this.obstacleGrid, new Set(), reachableFloor(this.obstacleGrid, preferredSeat));
+      char.x = floor.x;
+      char.y = floor.y;
+    }
+    // Stage reservations locally: later explicit floor anchors must already be
+    // reserved while earlier desk anchors resolve, without publishing raw seats.
+    const nextSeats = new Map(this.configuredSeats);
+    for (const [id, anchor] of this.configuredSeats) nextSeats.set(id, this.resolveSeat(id, anchor, nextSeats));
+    this.seats = nextSeats;
+    for (const char of this.characters.values()) {
+      if (!char.isSubAgent) {
+        const seat = this.assignSeat(char.id);
+        if (DESK_STATES.has(char.state)) {
+          char.targetX = seat.x;
+          char.targetY = seat.y;
+        }
+      }
+      // A route can become blocked even when its destination has not changed.
+      char.path = this.computePath(char);
+      char.pathIndex = 0;
+    }
   }
 
   private scheduleObstacleRebuild() {
@@ -462,6 +506,7 @@ export class GameEngine {
   // ── Update ───────────────────────────────────────────
 
   private update(dt: number) {
+    this.ensureObstacles();
     for (const char of this.characters.values()) {
       // Sub-agent lifecycle: server status owns dying/removal (issue #102);
       // the planner only advances the fade-out for dying sub-agents.
@@ -906,8 +951,7 @@ export class GameEngine {
 
     this.renderFloor(gridWidth, gridHeight, tileSize);
     this.renderWalls(gridWidth, gridHeight, tileSize);
-    this.renderFurniture(tileSize, zoom);
-    this.renderCharacters(tileSize);
+    this.renderScene(tileSize, zoom);
     this.renderSelectionRing(tileSize);
     this.renderMoveTargets(tileSize);
     this.renderStateEffects(tileSize);
@@ -993,8 +1037,8 @@ export class GameEngine {
     }
   }
 
-  private renderFurniture(tileSize: number, zoom: number) {
-    const { ctx, assetsLoaded, furniture } = this;
+  private renderScene(tileSize: number, zoom: number) {
+    const { furniture, assetsLoaded } = this;
     if (!this._furnitureDiagLogged && this.placedFurniture.length > 0) {
       this._furnitureDiagLogged = true;
       const types = this.placedFurniture.map(f => f.type);
@@ -1002,52 +1046,130 @@ export class GameEngine {
       console.log(`[GameEngine] renderFurniture: assetsLoaded=${assetsLoaded}, furnitureMapSize=${furniture.size}, placedTypes=[${types}], found=[${found}]`);
     }
 
-    if (this.placedFurniture.length > 0) {
-      for (const item of this.placedFurniture) {
-        const px = item.x * tileSize;
-        const py = item.y * tileSize;
-        const isSelected = this.editor.editorMode && this.editor.selectedFurnitureId === item.id;
+    const legacy = this.placedFurniture.length === 0;
+    const scene = sceneDrawOrder(legacy ? this.legacyFurnitureDrawOrder() : this.placedFurnitureDrawOrder(), this.characters.values());
+    for (const entry of scene) {
+      if (entry.kind === 'furniture') {
+        if (legacy && entry.item.type === 'DESK') this.renderLegacyDesk(entry.item.id, entry.item, tileSize, zoom);
+        else this.renderPlacedFurniture(entry.item, tileSize, zoom);
+      }
+      else this.renderCharacter(entry.character, tileSize);
+    }
+  }
 
-        ctx.save();
-        if (item.rotation) {
-          const cx = px + tileSize / 2, cy = py + tileSize / 2;
-          ctx.translate(cx, cy);
-          ctx.rotate((item.rotation * Math.PI) / 180);
-          ctx.translate(-cx, -cy);
-        }
-
-        const spriteItem = furniture.get(item.type);
-        if (assetsLoaded && spriteItem && spriteItem.canvas.width > 0 && spriteItem.canvas.height > 0) {
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(spriteItem.canvas, px, py, spriteItem.width * zoom, spriteItem.height * zoom);
-        } else {
-          const colors: Record<string, string> = {
-            DESK: '#533483', PC: '#0f3460', LARGE_PLANT: '#2d6a4f',
-            COFFEE: '#6f4e37', WHITEBOARD: '#e8e8e8', BOOKSHELF: '#8b4513',
-            LARGE_PAINTING: '#daa520',
-          };
-          ctx.fillStyle = colors[item.type] || '#533483';
-          ctx.fillRect(px, py, tileSize * 2, tileSize);
-        }
-        ctx.restore();
-
-        if (isSelected) {
-          ctx.strokeStyle = '#4ecca3';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([4, 4]);
-          const footprint = this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0);
-          ctx.strokeRect(footprint.x * tileSize - 2, footprint.y * tileSize - 2,
-            footprint.width * tileSize + 4, footprint.height * tileSize + 4);
-          ctx.setLineDash([]);
+  private placedFurnitureDrawOrder(): FurnitureSceneEntry[] {
+    // Loaded sprite canvases are shared capabilities: a canvas becoming unusable
+    // changes its footprint even without a layout event. Check each type once.
+    if (this.sceneFurniture) {
+      for (const [type, previous] of this.sceneFootprints) {
+        const sprite = this.furniture.get(type);
+        const loaded = !!(this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0);
+        if (previous.sprite !== sprite || previous.loaded !== loaded
+          || previous.width !== (loaded ? sprite!.footprintW : 2)
+          || previous.height !== (loaded ? sprite!.footprintH : 1)) {
+          this.sceneFurniture = null;
+          break;
         }
       }
+    }
+    if (!this.sceneFurniture) {
+      this.sceneFootprints.clear();
+      this.sceneFurniture = furnitureDrawOrder(this.placedFurniture.map(item => {
+        const sprite = this.furniture.get(item.type);
+        const loaded = !!(this.assetsLoaded && sprite && sprite.canvas.width > 0 && sprite.canvas.height > 0);
+        this.sceneFootprints.set(item.type, { sprite, loaded,
+          width: loaded ? sprite!.footprintW : 2, height: loaded ? sprite!.footprintH : 1 });
+        return { item,
+          rectangle: this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0),
+          isSurface: TABLE_TYPES.has(item.type) || sprite?.isSurface === true,
+          canPlaceOnSurfaces: SURFACE_PROP_TYPES.has(item.type) || sprite?.canPlaceOnSurfaces === true,
+        };
+      }));
+    }
+    return this.sceneFurniture;
+  }
+
+  private legacyFurnitureDrawOrder(): FurnitureSceneEntry[] {
+    if (this.sceneFurniture && this.sceneSeats.length === this.seats.size) {
+      let index = 0;
+      let unchanged = true;
+      for (const [id, seat] of this.seats) {
+        const previous = this.sceneSeats[index++];
+        // Seat insertion order controls stable ties between overlapping desks.
+        if (previous.id !== id || previous.x !== seat.x || previous.y !== seat.y) {
+          unchanged = false;
+          break;
+        }
+      }
+      if (unchanged) return this.sceneFurniture;
+    }
+    this.sceneSeats = [];
+    const furniture = [
+      { id: 'legacy-plant', type: 'LARGE_PLANT', x: 1, y: 1, rotation: 0 },
+      { id: 'legacy-coffee', type: 'COFFEE', x: 22, y: 1, rotation: 0 },
+      { id: 'legacy-whiteboard', type: 'WHITEBOARD', x: 11, y: 0, rotation: 0 },
+      { id: 'legacy-bookshelf', type: 'BOOKSHELF', x: 1, y: 8, rotation: 0 },
+      { id: 'legacy-painting', type: 'LARGE_PAINTING', x: 22, y: 8, rotation: 0 },
+    ].map(item => ({ item, rectangle: this.renderedFootprint(item.type, item.x, item.y, 0),
+      isSurface: false, canPlaceOnSurfaces: false }));
+    for (const [id, seat] of this.seats) {
+      this.sceneSeats.push({ id, ...seat });
+      const item = { id, type: 'DESK', x: seat.x, y: seat.y, rotation: 0 };
+      // Legacy desks are drawn above their seat, whose row is the front floor.
+      furniture.push({ item, rectangle: { x: seat.x, y: seat.y - 1, width: 2, height: 1, fallback: false },
+        isSurface: true, canPlaceOnSurfaces: false });
+    }
+    this.sceneFurniture = furnitureDrawOrder(furniture);
+    return this.sceneFurniture;
+  }
+
+  private renderFurniture(tileSize: number, zoom: number) {
+    if (this.placedFurniture.length > 0) {
+      for (const item of this.placedFurniture) this.renderPlacedFurniture(item, tileSize, zoom);
     } else {
       this.renderLegacyFurniture(tileSize, zoom);
     }
   }
 
+  private renderPlacedFurniture(item: PlacedFurniture, tileSize: number, zoom: number) {
+    const { ctx, assetsLoaded, furniture } = this;
+    const px = item.x * tileSize;
+    const py = item.y * tileSize;
+    const isSelected = this.editor.editorMode && this.editor.selectedFurnitureId === item.id;
+    ctx.save();
+    if (item.rotation) {
+      const cx = px + tileSize / 2, cy = py + tileSize / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((item.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
+    const spriteItem = furniture.get(item.type);
+    if (assetsLoaded && spriteItem && spriteItem.canvas.width > 0 && spriteItem.canvas.height > 0) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(spriteItem.canvas, px, py, spriteItem.width * zoom, spriteItem.height * zoom);
+    } else {
+      const colors: Record<string, string> = {
+        DESK: '#533483', PC: '#0f3460', LARGE_PLANT: '#2d6a4f',
+        COFFEE: '#6f4e37', WHITEBOARD: '#e8e8e8', BOOKSHELF: '#8b4513',
+        LARGE_PAINTING: '#daa520',
+      };
+      ctx.fillStyle = colors[item.type] || '#533483';
+      ctx.fillRect(px, py, tileSize * 2, tileSize);
+    }
+    ctx.restore();
+    if (isSelected) {
+      ctx.strokeStyle = '#4ecca3';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      const footprint = this.renderedFootprint(item.type, item.x, item.y, item.rotation || 0);
+      ctx.strokeRect(footprint.x * tileSize - 2, footprint.y * tileSize - 2,
+        footprint.width * tileSize + 4, footprint.height * tileSize + 4);
+      ctx.setLineDash([]);
+    }
+  }
+
   private renderLegacyFurniture(tileSize: number, zoom: number) {
-    const { ctx, seats, assetsLoaded, furniture } = this;
+    const { seats } = this;
     const officeFurniture = [
       { type: 'LARGE_PLANT', x: 1, y: 1 },
       { type: 'COFFEE', x: 22, y: 1 },
@@ -1059,19 +1181,24 @@ export class GameEngine {
       this.drawFurnitureItem(item.type, item.x * tileSize, item.y * tileSize, tileSize, zoom);
     }
     for (const [agentId, seat] of seats.entries()) {
-      const px = seat.x * tileSize, py = seat.y * tileSize;
-      const deskItem = furniture.get('DESK');
-      const pcItem = furniture.get('PC');
-      const chairItem = furniture.get('CUSHIONED_CHAIR') || furniture.get('WOODEN_CHAIR');
-      const hasDesk = deskItem && deskItem.canvas.width > 0 && deskItem.canvas.height > 0;
-      const hasPc = pcItem && pcItem.canvas.width > 0 && pcItem.canvas.height > 0;
-      if (assetsLoaded && (hasDesk || hasPc)) {
-        if (hasDesk) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
-        if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (hasDesk ? deskItem.height : 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
-        if (chairItem && chairItem.canvas.width > 0 && chairItem.canvas.height > 0) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
-      } else {
-        this.renderFallbackDesk(agentId, px, py, tileSize);
-      }
+      this.renderLegacyDesk(agentId, seat, tileSize, zoom);
+    }
+  }
+
+  private renderLegacyDesk(agentId: string, seat: Point, tileSize: number, zoom: number) {
+    const { ctx, assetsLoaded, furniture } = this;
+    const px = seat.x * tileSize, py = seat.y * tileSize;
+    const deskItem = furniture.get('DESK');
+    const pcItem = furniture.get('PC');
+    const chairItem = furniture.get('CUSHIONED_CHAIR') || furniture.get('WOODEN_CHAIR');
+    const hasDesk = deskItem && deskItem.canvas.width > 0 && deskItem.canvas.height > 0;
+    const hasPc = pcItem && pcItem.canvas.width > 0 && pcItem.canvas.height > 0;
+    if (assetsLoaded && (hasDesk || hasPc)) {
+      if (hasDesk) { ctx.imageSmoothingEnabled = false; ctx.drawImage(deskItem.canvas, px, py - deskItem.height * zoom, deskItem.width * zoom, deskItem.height * zoom); }
+      if (hasPc) { ctx.imageSmoothingEnabled = false; ctx.drawImage(pcItem.canvas, px + tileSize * 0.3, py - pcItem.height * zoom - (hasDesk ? deskItem.height : 0) * zoom * 0.5, pcItem.width * zoom, pcItem.height * zoom); }
+      if (chairItem && chairItem.canvas.width > 0 && chairItem.canvas.height > 0) { ctx.imageSmoothingEnabled = false; ctx.drawImage(chairItem.canvas, px + tileSize * 0.2, py + tileSize * 0.1, chairItem.width * zoom, chairItem.height * zoom); }
+    } else {
+      this.renderFallbackDesk(agentId, px, py, tileSize);
     }
   }
 
@@ -1104,13 +1231,6 @@ export class GameEngine {
     }
     ctx.fillStyle = '#2d6a4f';
     ctx.fillRect(px + tileSize * 0.2, py + tileSize * 0.1, tileSize * 0.6, tileSize * 0.5);
-  }
-
-  private renderCharacters(tileSize: number) {
-    const sorted = Array.from(this.characters.values()).sort((a, b) => a.y - b.y);
-    for (const char of sorted) {
-      this.renderCharacter(char, tileSize);
-    }
   }
 
   private renderCharacter(char: Character, tileSize: number) {
@@ -1156,7 +1276,7 @@ export class GameEngine {
       this.renderPlaceholderCharacter(char, px, py, tileSize);
     } else {
       const override = this.characterSpriteOverrides.get(char.id);
-      const sprite = override ?? sprites[char.paletteIndex % sprites.length];
+      const sprite = override ?? getAgentCharacter(char.id) ?? sprites[char.paletteIndex % sprites.length];
       if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
       else {
         const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
@@ -1803,7 +1923,8 @@ export class GameEngine {
   removeCharacter(id: string) {
     this.characters.delete(id);
     this.idleBehaviors.delete(id);
-    this.seats.delete(id);
+    // Layout reservations survive room changes; only temporary seats are freed.
+    if (!this.configuredSeats.has(id)) this.seats.delete(id);
     // Issue #165: orphaned state. A removed character's speech bubble
     // would persist (re-apparent if the id is reused for a new
     // `waiting_input` agent), and the bubble's timer would keep running
@@ -1844,9 +1965,10 @@ export class GameEngine {
     }
 
     // When activity changes to a desk activity, route to seat
-    if (mut.state && ['typing', 'reading', 'running_command', 'thinking'].includes(mut.state)) {
-      const seat = this.seats.get(id);
-      if (seat) {
+    if (mut.state && DESK_STATES.has(mut.state)) {
+      this.ensureObstacles();
+      if (this.seats.has(id)) {
+        const seat = this.assignSeat(id);
         char.targetX = seat.x;
         char.targetY = seat.y;
       }
@@ -1947,20 +2069,58 @@ export class GameEngine {
   // all rows are reachable; the column stride of 2 leaves room for
   // adjacent placement. If the entire inner rectangle is occupied,
   // spiral outward from the grid center to find the nearest
-  // unoccupied tile. Only when even the spiral is exhausted do we
-  // fall back to the center — and even then we offset by a per-
-  // engine overflow counter so successive overflow agents don't all
-  // stack on the same tile.
+  // unoccupied tile. If furniture fills that area, use the remaining floor
+  // near the room edges before sharing an existing floor position.
   private overflowOffset = 0;
 
+  private deskFootprints() {
+    return this.placedFurniture.filter(item => item.type === 'DESK').map(item => {
+      const sprite = this.furniture.get(item.type);
+      return {
+        ...furnitureRectangle(item.x, item.y, sprite?.footprintW ?? 2, sprite?.footprintH ?? 1, item.rotation || 0),
+        rotation: item.rotation || 0,
+      };
+    });
+  }
+
+  private resolveSeat(agentId: string, anchor: Point, reservations = this.seats): Point {
+    if (!this.obstacleGrid) return { ...anchor };
+    const desks = this.deskFootprints();
+    const reserved = new Set([...reservations.entries()]
+      .filter(([id]) => id !== agentId).map(([, point]) => `${point.x},${point.y}`));
+    const char = this.characters.get(agentId);
+    // Preserve pathfinding's shortest escape destination for legacy anchors
+    // blocked by other furniture; desk anchors use their rotated front instead.
+    if (char && this.obstacleGrid[anchor.y]?.[anchor.x]
+      && !desks.some(desk => anchor.x >= desk.x && anchor.x < desk.x + desk.width
+        && anchor.y >= desk.y && anchor.y < desk.y + desk.height)) {
+      const path = bfsPathfind(this.obstacleGrid, char, anchor, this.config.gridWidth, this.config.gridHeight);
+      const destination = path[path.length - 1];
+      if (destination && !reserved.has(`${destination.x},${destination.y}`)) return destination;
+    }
+    return resolveSeatPosition(anchor, desks, this.obstacleGrid, reserved, char ? reachableFloor(this.obstacleGrid, char) : undefined);
+  }
+
   assignSeat(agentId: string): { x: number; y: number } {
-    if (this.seats.has(agentId)) return this.seats.get(agentId)!;
+    this.ensureObstacles();
+    const char = this.characters.get(agentId);
+    const reachable = char && this.obstacleGrid ? reachableFloor(this.obstacleGrid, char) : null;
+    const existing = this.seats.get(agentId);
+    if (existing) {
+      if (this.obstacleGrid?.[existing.y]?.[existing.x] === false
+        && (!reachable || reachable.has(`${existing.x},${existing.y}`))) return existing;
+      const resolved = this.resolveSeat(agentId, this.configuredSeats.get(agentId) ?? existing);
+      this.seats.set(agentId, resolved);
+      return resolved;
+    }
+    const available = (x: number, y: number) => this.obstacleGrid?.[y]?.[x] === false
+      && (!reachable || reachable.has(`${x},${y}`));
     const used = new Set(Array.from(this.seats.values()).map(p => `${p.x},${p.y}`));
     const inner = { xMin: 3, xMax: this.config.gridWidth - 3 };
     const innerY = { yMin: 3, yMax: this.config.gridHeight - 2 };
     for (let y = innerY.yMin; y < innerY.yMax; y++) {
       for (let x = inner.xMin; x < inner.xMax; x += 2) {
-        if (!used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+        if (available(x, y) && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
       }
     }
     // Inner rectangle exhausted — spiral outward from center to find the
@@ -1975,18 +2135,23 @@ export class GameEngine {
           const y = cy + dy;
           if (x < inner.xMin || x >= inner.xMax) continue;
           if (y < innerY.yMin || y >= innerY.yMax) continue;
-          if (!used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
+          if (available(x, y) && !used.has(`${x},${y}`)) { this.seats.set(agentId, { x, y }); return { x, y }; }
         }
       }
     }
-    // Truly no tile available — fall back to (cx, cy) but offset by
-    // the per-engine overflow counter so successive overflow agents
-    // don't all stack on the same tile. Bounded by the inner
-    // rectangle dimensions; in practice the office has far fewer
-    // agents than inner-rectangle capacity (99 cells in a 24×16 grid)
-    // so this branch rarely fires.
+    const sharedFloor: Point[] = [];
+    for (let y = 1; y < this.config.gridHeight - 1; y++) {
+      for (let x = 1; x < this.config.gridWidth - 1; x++) {
+        if (!available(x, y)) continue;
+        const point = { x, y };
+        if (!used.has(`${x},${y}`)) { this.seats.set(agentId, point); return point; }
+        sharedFloor.push(point);
+      }
+    }
+    // Share floor when it is all reserved. Retain the legacy fallback only
+    // for layouts with no walkable tile at all.
     const offset = this.overflowOffset++;
-    const fb = { x: cx + (offset % 3), y: cy + (offset % 3) };
+    const fb = sharedFloor[offset % sharedFloor.length] ?? { x: cx + (offset % 3), y: cy + (offset % 3) };
     this.seats.set(agentId, fb);
     return fb;
   }
@@ -1998,6 +2163,7 @@ export class GameEngine {
   }
 
   setEditorCallbacks(cb: EditorCallbacks) { this.editor.setEditorCallbacks(cb); }
+  setViewportZoomCallback(cb: ViewportZoomCallback | null) { this.editor.setViewportZoomCallback(cb); }
   setGameCallbacks(cb: GameCallbacks) { this.gameCallbacks = cb; }
   setDeleteMode(enabled: boolean) { this.editor.setDeleteMode(enabled); }
   setSelectedFurnitureType(type: string | null) { this.editor.setSelectedFurnitureType(type); }
@@ -2006,13 +2172,14 @@ export class GameEngine {
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
     this.editor.clearPreview();
     this.placedFurniture = furniture.map(item => ({ ...item }));
+    this.sceneFurniture = null;
     this.invalidateFurniturePreviewGeometry();
     this.obstacleDirty = true;
     // Schedule deferred rebuild to avoid blocking during rapid updates
     this.scheduleObstacleRebuild();
     if (seats) {
       this.seats.clear();
-      for (const [aid, pos] of Object.entries(seats)) this.seats.set(aid, pos);
+      this.configuredSeats = new Map(Object.entries(seats).map(([id, point]) => [id, { ...point }]));
     }
   }
 
