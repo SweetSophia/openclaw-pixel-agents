@@ -71,6 +71,19 @@ URLs intentionally remain unversioned so edits appear immediately. HTML stays
 revalidatable, and asset requests that reach the server still consume the public
 GET/HEAD rate limit.
 
+For canvas view changes, test at 320, 768, 1024 and 1440px widths. Fit must keep
+the full office clear of the header, desktop sidebar, collapsed activity summary
+and editor chrome. Check both an armed furniture type and a selected item, since
+their hint/info rows change that chrome's height. Also test 640×320 and 320×480:
+keep narrow-screen palette/layout panels open and scroll the workspace to reach
+the panels, view controls and office. The stage must stay at least 120px tall;
+verify the visible canvas receives native pointer hits between header and dock.
+Zoom and pan, then select an agent and place, drag
+and rotate furniture on the intended cells. Verify two-finger zoom with a moving
+midpoint, one-finger Pan, arrow keys, Escape, Fit, resize and room changes. Panning
+must not edit the layout; cancelling a gesture or leaving the window must end
+the drag. Browser geometry and hit testing are not exercised by jsdom.
+
 ## Code Style
 
 - **TypeScript** throughout (strict mode)

@@ -369,6 +369,7 @@ export const LayoutEditor: React.FC<Props> = ({
       <p className="palette-live-feedback" role="status" aria-live="polite"
         aria-label="Furniture search feedback">{showPalette ? paletteFeedback : ''}</p>
       {/* Toolbar */}
+      <div className="editor-chrome">
       <div className="editor-toolbar">
         <button
           className={`toolbar-btn ${showPalette ? 'active' : ''}`}
@@ -444,6 +445,8 @@ export const LayoutEditor: React.FC<Props> = ({
           <button className="action-btn" onClick={onToggleDeleteMode}>✖ Cancel</button>
         </div>
       )}
+
+      </div>
 
       {/* Furniture palette */}
       {showPalette && (

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PixelOffice } from './PixelOffice';
 import { GameEngine } from '../game/GameEngine';
 import { EditorController } from '../game/EditorController';
+import { sfx } from '../audio/SoundFX';
 
 // Real React adapter, engine and controller. Browser asset I/O deliberately
 // stays pending; this exercises the real missing-sprite fallback before load.
@@ -12,6 +13,7 @@ describe('PixelOffice engine lifecycle and furniture preview status', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.spyOn(sfx, 'place').mockImplementation(() => {});
     const ctx = new Proxy({}, { get: () => () => {} });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 768, height: 512 } as DOMRect);
@@ -72,5 +74,36 @@ describe('PixelOffice engine lifecycle and furniture preview status', () => {
     view.rerender(<PixelOffice {...props} activeLayout={null} />); expect(node).toHaveTextContent('');
     expect(view.getByRole('status')).toBe(node);
     const removal = vi.spyOn(GameEngine.prototype, 'setFurniturePreviewCallback'); view.unmount(); expect(removal).toHaveBeenCalledWith(null);
+  });
+
+  it('shares native editor pinch with zoom buttons and Fit through the real engine', () => {
+    const view = render(<PixelOffice agents={[]} editorMode={false} deleteMode={false} activeLayout={null}
+      selectedFurnitureType={null} onPlaceFurniture={vi.fn()} onMoveFurniture={vi.fn()}
+      onSelectFurniture={vi.fn()} onRotateFurniture={vi.fn()} />);
+    const canvas = view.container.querySelector('canvas')!;
+    const touch = (type: string, distance: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'touches', { value: [{ clientX: 100, clientY: 100 }, { clientX: 100 + distance, clientY: 100 }] });
+      fireEvent(canvas, event);
+    };
+    fireEvent.click(view.getByRole('button', { name: 'Zoom in' }));
+    touch('touchstart', 100); touch('touchmove', 200);
+    expect(view.getByTitle('Office zoom relative to Fit')).toHaveTextContent('250%');
+    expect(canvas.style.transform).toBe('');
+    fireEvent.click(view.getByRole('button', { name: 'Fit office' }));
+    expect(view.getByTitle('Office zoom relative to Fit')).toHaveTextContent('100%');
+    view.unmount();
+  });
+
+  it('maps native placement on an offset, zoomed canvas to the intended grid cell', () => {
+    const place = vi.fn();
+    const view = render(<PixelOffice agents={[]} editorMode={true} deleteMode={false} activeLayout={null}
+      selectedFurnitureType="MISSING" onPlaceFurniture={place} onMoveFurniture={vi.fn()}
+      onSelectFurniture={vi.fn()} onRotateFurniture={vi.fn()} />);
+    const canvas = view.container.querySelector('canvas')!;
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({ left: -100, top: 20, width: 1536, height: 1024 } as DOMRect);
+    fireEvent.mouseDown(canvas, { button: 0, clientX: -100 + 12.5 * 64, clientY: 20 + 8.5 * 64 });
+    expect(place).toHaveBeenCalledWith('MISSING', 12, 8);
+    view.unmount();
   });
 });

@@ -56,6 +56,8 @@ npm start                                # production build; build first
 
 - Adapter characterization in `src/game/GameEngine.integration.test.ts` must execute the real `EditorController`, `SubAgentFSM`, `Schedule`, and `inputGeometry` paths. Mock browser boundaries only; do not add production-only test seams.
 - `EditorController` owns canvas mouse/touch listeners. Rotation callbacks carry the exact post-rotation angle so React does not double-increment the shared furniture object.
+- `CanvasViewport` owns local fitted zoom and bounded pan through the canvas CSS rectangle; keep its intrinsic game resolution unchanged. `EditorController` delegates pinch increments and centroid translation through `GameEngine.setViewportZoomCallback`; apply translation and zoom atomically before clamping so moving pinches do not jump. The Pan overlay owns its own pointer gestures and must not forward them into selection/editing. Navigation never persists layout changes.
+- The scrollable workspace reserves the measured `--topbar-h` and collapsed activity summary. Editor chrome and narrow-screen panels take part in normal flow before the office; keep its stage at least 120px tall so short windows scroll instead of collapsing the canvas.
 - Keep both `GameEngine.screenToGrid` overloads; `EditorController` uses the numeric form and `inputGeometry.ts` owns letterbox/pillarbox edge semantics.
 - `stateJustChanged` is consumed once in `GameEngine.update()` for sound/VFX and then reset; add transition effects before that reset.
 - Typing, reading, running-command, and thinking agents route to assigned seats (`GameEngine.updateCharacter`). Animation rendering groups running-command with typing and thinking with reading in `activityToAnimState`.

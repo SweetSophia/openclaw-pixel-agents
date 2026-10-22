@@ -25,7 +25,7 @@ import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
 import { tickSubAgent } from './SubAgentFSM';
 import { EditorController } from './EditorController';
-import type { EditorCallbacks, FurniturePreviewIntent } from './EditorController';
+import type { EditorCallbacks, FurniturePreviewIntent, ViewportZoomCallback } from './EditorController';
 import { screenToGrid as mapScreenToGrid } from './inputGeometry';
 import { getDayPhase, type InterpolatedDayPhase } from './Schedule';
 
@@ -2163,6 +2163,7 @@ export class GameEngine {
   }
 
   setEditorCallbacks(cb: EditorCallbacks) { this.editor.setEditorCallbacks(cb); }
+  setViewportZoomCallback(cb: ViewportZoomCallback | null) { this.editor.setViewportZoomCallback(cb); }
   setGameCallbacks(cb: GameCallbacks) { this.gameCallbacks = cb; }
   setDeleteMode(enabled: boolean) { this.editor.setDeleteMode(enabled); }
   setSelectedFurnitureType(type: string | null) { this.editor.setSelectedFurnitureType(type); }
