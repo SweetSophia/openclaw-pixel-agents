@@ -50,6 +50,7 @@ body {
 .app {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   position: relative; /* All HUD elements float inside here */
   background-size: cover;
   background-position: center;

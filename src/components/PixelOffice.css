@@ -1,7 +1,7 @@
 /* PixelOffice.css - HUD Aesthetic */
 .pixel-office {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -22,8 +22,8 @@
   background: transparent; /* Let background shine through empty spaces */
   
   /* Make canvas scale beautifully */
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 
   /* Prevent browser touch gestures on canvas */
@@ -48,9 +48,9 @@
 .furniture-preview-status {
   position: absolute;
   left: 50%;
-  bottom: 64px;
+  bottom: 8px;
   transform: translateX(-50%);
-  max-width: min(600px, calc(100vw - 32px));
+  max-width: min(600px, calc(100% - 16px));
   width: max-content;
   box-sizing: border-box;
   color: #f5d38b;
@@ -63,11 +63,3 @@
   pointer-events: none;
 }
 .furniture-preview-status:empty { padding: 0; background: transparent; }
-
-@media (min-width: 1025px) {
-  /* The sidebar owns the right-hand HUD lane, including the warning's height. */
-  .furniture-preview-status {
-    left: calc((100% - var(--desktop-agent-sidebar-reserved-width)) / 2);
-    max-width: min(600px, calc(100vw - var(--desktop-agent-sidebar-reserved-width) - 32px));
-  }
-}

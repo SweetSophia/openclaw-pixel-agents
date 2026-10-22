@@ -65,6 +65,12 @@ The right sidebar shows all configured agents with:
 - Toggle button to show/hide in the pixel office
 - Bulk Show All / Hide All controls
 
+### Office View
+
+Use **Fit** to show the complete office between the header, editor toolbar, activity summary and desktop sidebar. **−** and **+** zoom from 100% to 400% of that fitted view. Resize the window to refit the available space automatically.
+
+Toggle **Pan** to drag the view with a mouse or one finger. While Pan is active, arrow keys move the view and **Escape** returns to selection; **Fit** recenters and also exits Pan. Two-finger gestures zoom and move the view in either mode. Turn Pan off to select agents or place, drag and rotate furniture. Changing editor tools exits Pan automatically. View navigation does not change the saved layout.
+
 ### Live Activity
 
 The bottom **Live activity** dock counts working, attention-needed, idle, and inactive agents across every room, including agents hidden from the pixel office. Expand it to filter the roster, see models and rooms, or open an agent's existing details panel.

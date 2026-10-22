@@ -1,0 +1,63 @@
+.canvas-controller {
+  position: absolute;
+  top: calc(var(--topbar-h, 64px) + var(--office-editor-height, 0px) + 8px);
+  bottom: var(--office-bottom, 104px);
+  left: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.canvas-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 4px;
+  border: var(--border-glass);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-main);
+  font: 14px var(--font-pixel);
+}
+.canvas-controls button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.canvas-controls button:hover:not(:disabled), .canvas-controls button[aria-pressed="true"] {
+  color: var(--acc-cyan);
+  background: var(--bg-panel-hover);
+  border-color: var(--acc-cyan);
+}
+.canvas-controls button:disabled { opacity: 0.4; cursor: default; }
+.canvas-zoom { width: 48px; text-align: center; }
+.office-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+.office-world { position: absolute; transform: translate(-50%, -50%); }
+.office-pan-surface { position: absolute; inset: 0; cursor: grab; touch-action: none; user-select: none; }
+.office-pan-surface:active { cursor: grabbing; }
+.pan-instructions {
+  display: block;
+  width: fit-content;
+  max-width: calc(100% - 16px);
+  margin: 8px auto;
+  padding: 8px;
+  background: var(--bg-panel);
+  border-radius: 4px;
+  color: var(--text-main);
+  font: 12px/1.4 var(--font-body);
+  text-align: center;
+  pointer-events: none;
+}
+@media (min-width: 1025px) {
+  .canvas-controller { right: calc(var(--desktop-agent-sidebar-reserved-width) + 12px); }
+}

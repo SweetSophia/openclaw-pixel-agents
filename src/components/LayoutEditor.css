@@ -8,6 +8,8 @@
   pointer-events: none;
 }
 .layout-editor > * { pointer-events: auto; }
+.layout-editor > .editor-chrome { display: flow-root; pointer-events: none; }
+.editor-chrome > * { pointer-events: auto; }
 
 @media (min-width: 1025px) {
   /* Keep editor panels clear of the floating sidebar on desktop. */

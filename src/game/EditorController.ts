@@ -1,5 +1,7 @@
 import { touchDistance } from './inputGeometry';
 
+export type ViewportZoomCallback = (factor: number, clientX: number, clientY: number, dx: number, dy: number) => void;
+
 export interface EditorCallbacks {
   onPlaceFurniture: (type: string, gridX: number, gridY: number) => void;
   onSelectFurniture: (id: string | null) => void;
@@ -84,8 +86,10 @@ export class EditorController {
   private lastTapTime = 0;
   private lastTapFurnitureId: string | null = null;
   private pinchStartDist = 0;
+  private pinchCenter: { x: number; y: number } | null = null;
   private pinchStartZoom = 1;
   private cameraZoom = 1;
+  private viewportZoomCallback: ViewportZoomCallback | null = null;
   private touchDragging: TouchDragState | null = null;
   private touchMoved = false;
   private attached = false;
@@ -191,6 +195,14 @@ export class EditorController {
   }
 
   setEditorCallbacks(callbacks: EditorCallbacks): void { this.callbacks = callbacks; }
+  setViewportZoomCallback(callback: ViewportZoomCallback | null): void {
+    this.viewportZoomCallback = callback;
+    if (callback) {
+      this.canvas.style.transform = '';
+      this.canvas.style.transformOrigin = '';
+      this.cameraZoom = 1;
+    }
+  }
   setDeleteMode(enabled: boolean): void { this.deleteMode = enabled; this.clearPreview(); }
 
   setSelectedFurnitureType(type: string | null): void {
@@ -320,6 +332,8 @@ export class EditorController {
       this.lastTapTime = 0;
       this.lastTapFurnitureId = null;
       this.pinchStartDist = touchDistance(event.touches[0], event.touches[1]);
+      this.pinchCenter = { x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+        y: (event.touches[0].clientY + event.touches[1].clientY) / 2 };
       this.pinchStartZoom = this.cameraZoom;
       return;
     }
@@ -359,12 +373,24 @@ export class EditorController {
     if (event.touches.length === 2) {
       this.clearPreview();
       const distance = touchDistance(event.touches[0], event.touches[1]);
+      const center = { x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+        y: (event.touches[0].clientY + event.touches[1].clientY) / 2 };
       if (!this.pinchStartDist || this.pinchStartDist <= 0) {
         if (distance <= 0) return;
         this.pinchStartDist = distance;
+        this.pinchCenter = center;
         this.pinchStartZoom = this.cameraZoom;
       }
       const scale = distance / this.pinchStartDist;
+      if (this.viewportZoomCallback) {
+        if (distance > 0) {
+          this.viewportZoomCallback(scale, center.x, center.y,
+            this.pinchCenter ? center.x - this.pinchCenter.x : 0, this.pinchCenter ? center.y - this.pinchCenter.y : 0);
+          this.pinchStartDist = distance;
+          this.pinchCenter = center;
+        }
+        return;
+      }
       this.cameraZoom = Math.max(1, Math.min(4, this.pinchStartZoom * scale));
       this.canvas.style.transform = `scale(${this.cameraZoom})`;
       this.canvas.style.transformOrigin = 'center center';

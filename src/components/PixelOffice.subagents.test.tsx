@@ -39,6 +39,7 @@ vi.mock('../game/GameEngine', () => {
     stop = vi.fn();
     setEditorCallbacks = vi.fn();
     setFurniturePreviewCallback = vi.fn();
+    setViewportZoomCallback = vi.fn();
     clearFurniturePreview = vi.fn();
     setGameCallbacks = vi.fn();
     setEditorMode = vi.fn();
