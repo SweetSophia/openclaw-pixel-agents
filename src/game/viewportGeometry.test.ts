@@ -30,6 +30,20 @@ describe('office viewport geometry', () => {
     expect((point.y - view.y) / view.zoom).toBe((point.y - 10) / 2);
   });
 
+  it('preserves the anchor when a pinch reaches the zoom ceiling', () => {
+    const point = { x: 120, y: -80 };
+    const view = zoomView({ zoom: 3.9, x: 40, y: 30 }, 2, point, world, world);
+    expect(view.zoom).toBe(4);
+    expect((point.x - view.x) / view.zoom).toBeCloseTo((point.x - 40) / 3.9);
+    expect((point.y - view.y) / view.zoom).toBeCloseTo((point.y - 30) / 3.9);
+  });
+
+  it('moves the old midpoint content to the translated midpoint in one operation', () => {
+    const view = zoomView({ zoom: 1, x: 0, y: 0 }, 2, { x: 120, y: 80 }, world, world, { x: 100, y: 50 });
+    expect((120 - view.x) / view.zoom).toBe(20);
+    expect((80 - view.y) / view.zoom).toBe(30);
+  });
+
   it('returns to centered Fit at minimum zoom and clamps offsets after resize', () => {
     expect(zoomView({ zoom: 2, x: 100, y: 50 }, 0.1, { x: 50, y: 40 }, world, world)).toEqual({ zoom: 1, x: 0, y: 0 });
     expect(boundView({ zoom: 2, x: 700, y: -500 }, { width: 320, height: 600 }, world)).toEqual({ zoom: 2, x: 160, y: 0 });

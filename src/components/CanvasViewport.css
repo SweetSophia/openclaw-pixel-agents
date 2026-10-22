@@ -1,7 +1,7 @@
 .canvas-controller {
   position: absolute;
-  top: calc(var(--topbar-h, 64px) + var(--office-editor-height, 0px) + 8px);
-  bottom: var(--office-bottom, 104px);
+  top: 8px;
+  bottom: 0;
   left: 12px;
   right: 12px;
   display: flex;
@@ -41,9 +41,9 @@
 }
 .canvas-controls button:disabled { opacity: 0.4; cursor: default; }
 .canvas-zoom { width: 48px; text-align: center; }
-.office-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+.office-viewport { position: relative; flex: 1; min-height: 120px; overflow: hidden; touch-action: none; }
 .office-world { position: absolute; transform: translate(-50%, -50%); }
-.office-pan-surface { position: absolute; inset: 0; cursor: grab; touch-action: none; user-select: none; }
+.office-pan-surface { position: absolute; inset: 0; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .office-pan-surface:active { cursor: grabbing; }
 .pan-instructions {
   display: block;

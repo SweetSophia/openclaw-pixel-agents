@@ -69,6 +69,8 @@ The right sidebar shows all configured agents with:
 
 Use **Fit** to show the complete office between the header, editor toolbar, activity summary and desktop sidebar. **−** and **+** zoom from 100% to 400% of that fitted view. Resize the window to refit the available space automatically.
 
+In short windows, scroll the workspace to reach the editor panels, view controls and office. The map keeps a usable minimum height instead of disappearing when the editor needs more space.
+
 Toggle **Pan** to drag the view with a mouse or one finger. While Pan is active, arrow keys move the view and **Escape** returns to selection; **Fit** recenters and also exits Pan. Two-finger gestures zoom and move the view in either mode. Turn Pan off to select agents or place, drag and rotate furniture. Changing editor tools exits Pan automatically. View navigation does not change the saved layout.
 
 ### Live Activity

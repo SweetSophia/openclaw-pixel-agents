@@ -1,6 +1,7 @@
 /* LayoutEditor.css - HUD Aesthetic */
 .layout-editor {
-  position: absolute;
+  position: relative;
+  flex-shrink: 0;
   top: 0;
   left: 0;
   right: 0;
@@ -24,7 +25,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  margin-top: calc(var(--topbar-h) + 12px); /* Below the fixed top bar */
+  margin-top: 12px; /* Workspace already begins below the measured header. */
   width: fit-content;
   margin-left: auto;
   margin-right: auto;
@@ -461,7 +462,7 @@
 .furniture-palette::-webkit-scrollbar-thumb, .layout-list::-webkit-scrollbar-thumb { background: var(--acc-cyan); border-radius: 4px; }
 
 @media (max-width: 768px) {
-  /* Toolbar sits below the (two-row) top bar via the shared --topbar-h var. */
+  /* Panels take part in the scrollable workspace on narrow screens. */
   .editor-toolbar {
     width: 90%;
   }

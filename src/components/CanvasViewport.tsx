@@ -25,29 +25,27 @@ export const CanvasViewport = forwardRef<CanvasViewportHandle, Props>(function C
     const root = rootRef.current!;
     const stage = stageRef.current!;
     const app = root.closest('.app');
-    const header = app?.querySelector('.app-header');
-    const editor = app?.querySelector('.editor-chrome');
     const summary = app?.querySelector('.activity-toggle');
     const update = () => {
-      if (header) {
-        const chromeBottom = Math.max(header.getBoundingClientRect().bottom, editor?.getBoundingClientRect().bottom ?? 0);
-        const editorHeight = chromeBottom - header.getBoundingClientRect().bottom;
-        root.style.setProperty('--office-editor-height', `${editorHeight}px`);
-      }
-      if (summary) {
+      if (summary && app instanceof HTMLElement) {
         const dock = summary.closest('.activity-dock')!;
         const gap = parseFloat(getComputedStyle(dock).bottom) || 0;
-        root.style.setProperty('--office-bottom', `${summary.getBoundingClientRect().height + gap + 12}px`);
+        const bottom = `${summary.getBoundingClientRect().height + gap + 12}px`;
+        if (app.style.getPropertyValue('--office-bottom') !== bottom) app.style.setProperty('--office-bottom', bottom);
       }
       const rect = stage.getBoundingClientRect();
       setAvailable(old => old.width === rect.width && old.height === rect.height ? old : { width: rect.width, height: rect.height });
     };
     update();
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
-    for (const element of [stage, header, editor, summary]) if (element) observer?.observe(element);
+    for (const element of [stage, summary]) if (element) observer?.observe(element);
+    // The dock's media-query bottom gap can change without a size change.
     window.addEventListener('resize', update);
-    return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
-  }, [interactionKey]);
+    return () => {
+      observer?.disconnect(); window.removeEventListener('resize', update);
+      if (app instanceof HTMLElement) app.style.removeProperty('--office-bottom');
+    };
+  }, []);
 
   useEffect(() => { setPanning(false); pointers.current.clear(); }, [interactionKey]);
   useEffect(() => {
@@ -102,6 +100,7 @@ export const CanvasViewport = forwardRef<CanvasViewportHandle, Props>(function C
         {children}
       </div>
       {panning && <div ref={panRef} className="office-pan-surface" role="region" aria-label="Pan office view" tabIndex={0}
+        onContextMenu={event => event.preventDefault()}
         onPointerDown={event => {
           if (event.button !== 0 || pointers.current.size >= 2) return;
           event.preventDefault();
@@ -109,7 +108,7 @@ export const CanvasViewport = forwardRef<CanvasViewportHandle, Props>(function C
           event.currentTarget.setPointerCapture?.(event.pointerId);
         }} onPointerMove={pointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onLostPointerCapture={endPointer}
         onKeyDown={event => {
-          if (event.key === 'Escape') { setPanning(false); panButtonRef.current?.focus(); }
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setPanning(false); panButtonRef.current?.focus(); return; }
           const directions: Record<string, [number, number]> = { ArrowLeft: [-48, 0], ArrowRight: [48, 0], ArrowUp: [0, -48], ArrowDown: [0, 48] };
           const delta = directions[event.key];
           if (delta) { event.preventDefault(); move(...delta); }

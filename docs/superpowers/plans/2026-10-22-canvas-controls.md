@@ -48,6 +48,7 @@ Files: `PixelOffice.tsx`, `PixelOffice.css`, `GameEngine.ts`, `EditorController.
 ### 3. Evidence and review
 
 - [x] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, and dependency audits.
-- [x] Use a copied-data preview in Chromium at 320, 768, 1024 and 1440px; check HUD bounds, Fit/zoom/pan, touch pinch, keyboard, selection, furniture placement/drag/rotation and resize. Room-switch verification follows before deployment.
-- [ ] Review the complete diff and open a PR with precise verification evidence.
-- [ ] Address valid bot findings; follow the existing merge/deployment authorization only after green checks, backing up current live data first.
+- [x] Use a copied-data preview in Chromium at 320, 768, 1024 and 1440px; check HUD bounds, Fit/zoom/pan, touch pinch, keyboard, selection, furniture placement/drag/rotation and resize. Twelve room switches retain zoom, resolved seats and valid floor positions without changing saved layout data.
+- [x] Review the complete diff and open PR #293 with precise verification evidence.
+- [x] Address valid bot findings: scrollable workspace and minimum stage for short windows, Safari Pan styles, scoped Escape/context-menu handling, guarded CSS writes, and stronger gesture/lifecycle tests. Verify native scrolling and hit-testing at 640×320 and 320×480 with the palette expanded.
+- [ ] Follow the existing merge/deployment authorization after current checks and reviews finish, backing up current live data first.
