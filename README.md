@@ -65,6 +65,22 @@ The right sidebar shows all configured agents with:
 - Toggle button to show/hide in the pixel office
 - Bulk Show All / Hide All controls
 
+### Office View
+
+Use **Fit** to show the complete office between the header, editor toolbar, activity summary and desktop sidebar. **−** and **+** zoom from 100% to 400% of that fitted view. Resize the window to refit the available space automatically.
+
+In short windows, scroll the workspace to reach the editor panels, view controls and office. The map keeps a usable minimum height instead of disappearing when the editor needs more space.
+
+Toggle **Pan** to drag the view with a mouse or one finger. While Pan is active, arrow keys move the view and **Escape** returns to selection; **Fit** recenters and also exits Pan. Two-finger gestures zoom and move the view in either mode. Turn Pan off to select agents or place, drag and rotate furniture. Changing editor tools exits Pan automatically. View navigation does not change the saved layout.
+
+### Live Activity
+
+The bottom **Live activity** dock counts working, attention-needed, idle, and inactive agents across every room, including agents hidden from the pixel office. Expand it to filter the roster, see models and rooms, or open an agent's existing details panel.
+
+Activity labels are estimates based on session recency and token counts; they do not identify the actual task or tool being used. **Observed changes** records up to 50 status changes seen since the page opened, including while the dock is collapsed. Reloading clears that history. Transcript excerpts appear separately under **Messages** when the source supplies them; collector snapshots currently supply session status only.
+
+Freshness is checked every 15 seconds. In ingest mode, the age comes from the last successful collector push, independently of socket connectivity. The HTTP `Date` header supplies the server clock so browser clock differences do not distort the age; proxies must preserve this header. CLI mode shows when the browser last received an agent snapshot. Data older than 90 seconds is marked stale, with unavailable and waiting states shown explicitly.
+
 ### Layout Editor
 
 Click **✏️ Edit** in the header to enter editor mode:
@@ -245,6 +261,8 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `join(__dirname, "data")` | Persistence directory for preferences and layouts. Resolved relative to the compiled module location — dev writes under `server/data/`, standalone compiled startup writes under `dist/server/server/data/`. Set explicitly in production. Docker sets `DATA_DIR=/app/data`. |
+
+`CORS_ORIGIN` must include the browser's scheme, hostname, and port. For Tailscale access, list the MagicDNS hostname separately from the IP address. A missing origin can leave agent data updating through read-only REST polling while blocking Socket.IO and changes such as character designs.
 
 Agent preferences and layouts are written through a flushed same-directory temporary file, atomically renamed into place, and followed by a parent-directory sync on POSIX. A failure before replacement therefore leaves the previous JSON file intact instead of exposing a truncated target.
 

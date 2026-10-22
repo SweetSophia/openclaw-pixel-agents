@@ -132,6 +132,21 @@ describe('useAgentStore REST polling fallback', () => {
     unmount();
   });
 
+  it('tracks accepted snapshots separately from transport events and preference changes', async () => {
+    vi.setSystemTime(1_800_000_000_000);
+    const { snapshots, unmount } = await renderStoreProbe();
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_000_000);
+    vi.setSystemTime(1_800_000_010_000);
+    await emitSocketEvent('agents:update', []);
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_010_000);
+    vi.setSystemTime(1_800_000_020_000);
+    await act(async () => {
+      socketMock.socket.emit('recipe-update', { agentId: 'cybera', recipe: { bodyIndex: 0, hairIndex: 1, outfitIndex: 2 } });
+    });
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_010_000);
+    unmount();
+  });
+
   it('continues polling while WebSocket is disconnected', async () => {
     const { unmount } = await renderStoreProbe();
 
@@ -244,6 +259,8 @@ describe('useAgentStore REST polling fallback', () => {
 
     const { getSharedSocket, getCachedAgentsUpdate } = await import('../socket');
     getSharedSocket(); // initialize singleton, attach cache listener
+    socketMock.socket.connected = true;
+    vi.setSystemTime(1_800_000_000_000);
 
     // We only want the cache listener to run (the store isn't mounted
     // yet, so its update handler isn't registered). Fire only the
@@ -275,14 +292,69 @@ describe('useAgentStore REST polling fallback', () => {
       recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 },
     }]);
 
+    vi.setSystemTime(1_800_000_010_000);
     const { snapshots, unmount } = await renderStoreProbe();
     await flushMicrotasks();
     await flushMicrotasks();
 
     expect(latest(snapshots).agents).toHaveLength(1);
     expect(latest(snapshots).agents[0]?.id).toBe('cached-agent');
+    expect(latest(snapshots).connected).toBe(true);
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_000_000);
+
+    const callsAfterMount = vi.mocked(fetch).mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
+    });
+    expect(fetch).toHaveBeenCalledTimes(callsAfterMount);
 
     unmount();
+    socketMock.socket.connected = false;
+  });
+
+  it('accepts a cached empty snapshot from the current connected socket', async () => {
+    const { getSharedSocket, resetSharedSocketForTesting } = await import('../socket');
+    resetSharedSocketForTesting();
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>(() => {}));
+    getSharedSocket();
+    socketMock.socket.connected = true;
+    vi.setSystemTime(1_800_000_000_000);
+    socketMock.socket.emit('agents:update', []);
+
+    const { snapshots, unmount } = await renderStoreProbe();
+
+    expect(latest(snapshots).agents).toEqual([]);
+    expect(latest(snapshots).connected).toBe(true);
+    expect(latest(snapshots).snapshotReceivedAt).toBe(1_800_000_000_000);
+    unmount();
+    socketMock.socket.connected = false;
+  });
+
+  it.each(['disconnected', 'reconnected'] as const)('keeps polling after a cached snapshot belongs to a %s socket', async state => {
+    const { getSharedSocket, resetSharedSocketForTesting } = await import('../socket');
+    resetSharedSocketForTesting();
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>(() => {}));
+    getSharedSocket();
+    socketMock.socket.connected = true;
+    socketMock.socket.emit('agents:update', []);
+    socketMock.socket.connected = false;
+    socketMock.socket.emit('disconnect');
+    if (state === 'reconnected') {
+      socketMock.socket.connected = true;
+      socketMock.socket.emit('connect');
+    }
+
+    const { snapshots, unmount } = await renderStoreProbe();
+
+    expect(latest(snapshots).connected).toBe(false);
+    expect(latest(snapshots).snapshotReceivedAt).toBeNull();
+    const callsAfterMount = vi.mocked(fetch).mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    });
+    expect(fetch).toHaveBeenCalledTimes(callsAfterMount + 1);
+    unmount();
+    socketMock.socket.connected = false;
   });
 
   it('does not let an in-flight REST response overwrite a newer socket snapshot', async () => {

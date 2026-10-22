@@ -30,6 +30,9 @@ import {
   type CharacterRecipe,
   type ComposedCharacter,
 } from './CharacterComposer';
+import { assetUrl } from '../util/assetUrl';
+import { loadPng } from '../util/loadPng';
+import { FURNITURE_TYPES } from '../../shared/furniture';
 
 // ── Types ──────────────────────────────────────────────────
 //
@@ -46,11 +49,12 @@ import {
 // would impose allocation cost) (issue #132).
 //
 // issue #132: the live loader path (`loadCharacters` / `loadFurniture` /
-// `loadAllAssets` / `recomposeAgent` / `getComposedCharacter`) is the only
+// `loadAllAssets` / `recomposeAgent` / `getComposedCharacter` /
+// `getAgentCharacter`) is the only
 // application path into the cache. The cache itself mixes two storage
 // strategies: `cachedCharacters` and `cachedFloors` are declared with the
 // readonly view types (the loader only assigns a fresh array — never
-// mutates an existing one); `cachedFurniture` and `cachedComposed` are
+// mutates an existing one); the furniture and per-agent character maps are
 // declared with the mutable builder types because the loader writes to them
 // in place (`.set()`). Consumers always see the readonly view; the
 // mutability is contained inside the loader boundary.
@@ -75,6 +79,8 @@ interface LoadedFurnitureItem {
   height: number;
   footprintW: number;
   footprintH: number;
+  isSurface?: boolean;
+  canPlaceOnSurfaces?: boolean;
 }
 
 interface LoadedFloor {
@@ -101,6 +107,8 @@ export interface ReadonlyLoadedFurnitureItem {
   readonly height: number;
   readonly footprintW: number;
   readonly footprintH: number;
+  readonly isSurface?: boolean;
+  readonly canPlaceOnSurfaces?: boolean;
 }
 
 export interface ReadonlyLoadedFloor {
@@ -137,7 +145,7 @@ export interface ReadonlyComposedCharacter {
 // 1. **Public readonly boundary.** Consumers see `Readonly*` view types
 //    from `loadCharacters` / `loadFloors` / `loadFurniture` /
 //    `loadAllAssets` / `recomposeAgent` / `getCachedCharacters` /
-//    `getCachedFurniture` / `getComposedCharacter`. The return types
+//    `getCachedFurniture` / `getComposedCharacter` / `getAgentCharacter`. The return types
 //    expose shared live compile-time readonly views: callers see the
 //    same underlying objects the loader stored, but the readonly view
 //    prevents them from mutating the cache structure through that
@@ -147,7 +155,9 @@ export interface ReadonlyComposedCharacter {
 //    `Map<string, LoadedFurnitureItem>` populated by `loadFurniture`
 //    via `.set()`. `cachedComposed` is a mutable
 //    `Map<string, ComposedCharacter>` cleared and re-populated by
-//    `loadAllAssets` and updated in place by `recomposeAgent`. These
+//    `loadAllAssets` and updated in place by `recomposeAgent`.
+//    `cachedAgentCharacters` holds stable loaded views whose direction frames
+//    are replaced before the previous composed canvases are disposed. These
 //    mutations stay inside the loader boundary; the public return
 //    types expose shared live compile-time readonly views at the
 //    boundary. `cachedCharacters` and `cachedFloors` are themselves
@@ -158,17 +168,10 @@ let cachedCharacters: readonly ReadonlyLoadedCharacter[] = [];
 let cachedFloors: readonly ReadonlyLoadedFloor[] = [];
 const cachedFurniture: Map<string, LoadedFurnitureItem> = new Map();
 const cachedComposed: Map<string, ComposedCharacter> = new Map();
+// Stable loader-owned objects keep asset bundles current after recomposition.
+const cachedAgentCharacters: Map<string, LoadedCharacter> = new Map();
 
 // ── Helpers ────────────────────────────────────────────────
-
-async function loadPng(path: string, signal?: AbortSignal): Promise<ImageBitmap> {
-  if (signal?.aborted) throw new DOMException('Aborted');
-
-  const response = await fetch(path, { signal });
-  if (!response.ok) throw new Error(`Failed to load ${path}: ${response.status}`);
-  const blob = await response.blob();
-  return createImageBitmap(blob);
-}
 
 function sliceFrame(
   bitmap: ImageBitmap,
@@ -283,7 +286,9 @@ export async function loadFloors(
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(bitmap, 0, 0, FLOOR_TILE_SIZE, FLOOR_TILE_SIZE);
       floors.push({ canvas });
-    } catch {
+    } catch (err) {
+      signal?.throwIfAborted();
+      if (err instanceof Error && err.name === 'AbortError') throw err;
       // Skip missing tiles
     }
   }
@@ -295,6 +300,8 @@ export async function loadFloors(
 type LeafAsset = ManifestNode & { file: string };
 
 interface ManifestNode {
+  category?: string;
+  canPlaceOnSurfaces?: boolean;
   file?: string;
   width?: number;
   height?: number;
@@ -332,17 +339,11 @@ export async function loadFurniture(
   basePath = '/assets/furniture/',
   signal?: AbortSignal,
 ): Promise<ReadonlyMap<string, ReadonlyLoadedFurnitureItem>> {
-  const furnitureTypes = [
-    'BIN', 'BOOKSHELF', 'CACTUS', 'CLOCK', 'COFFEE', 'COFFEE_TABLE',
-    'CUSHIONED_BENCH', 'CUSHIONED_CHAIR', 'DESK', 'DOUBLE_BOOKSHELF',
-    'HANGING_PLANT', 'LARGE_PAINTING', 'LARGE_PLANT', 'PC', 'PLANT',
-    'PLANT_2', 'POT', 'SMALL_PAINTING', 'SMALL_PAINTING_2', 'SMALL_TABLE',
-    'SOFA', 'TABLE_FRONT', 'WHITEBOARD', 'WOODEN_BENCH', 'WOODEN_CHAIR',
-  ];
-
-  for (const type of furnitureTypes) {
+  for (const type of FURNITURE_TYPES) {
     try {
-      const manifestRes = await fetch(`${basePath}${type}/manifest.json`, { signal });
+      signal?.throwIfAborted();
+      const manifestRes = await fetch(assetUrl(`${basePath}${type}/manifest.json`), { signal });
+      signal?.throwIfAborted();
       if (!manifestRes.ok) continue;
 
       const manifest = (await manifestRes.json()) as ManifestNode;
@@ -394,8 +395,12 @@ export async function loadFurniture(
         height: fh,
         footprintW,
         footprintH,
+        isSurface: manifest.category === 'desks',
+        canPlaceOnSurfaces: manifest.canPlaceOnSurfaces === true,
       });
-    } catch {
+    } catch (err) {
+      signal?.throwIfAborted();
+      if (err instanceof Error && err.name === 'AbortError') throw err;
       // Skip broken furniture
     }
   }
@@ -420,6 +425,7 @@ function withAssetFallback<T>(promise: Promise<T>, label: string, fallback: T): 
  * (issue #132).
  */
 export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAssets> {
+  signal?.throwIfAborted();
   // Load floors and furniture in parallel
   const [floors, furniture] = await Promise.all([
     withAssetFallback(loadFloors(undefined, signal), 'Floor', [] as readonly ReadonlyLoadedFloor[]),
@@ -429,9 +435,10 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAsset
   // Try paperdoll compositor
   let characters: readonly ReadonlyLoadedCharacter[] = [];
   try {
-    await loadSourceSheets();
-    for (const prev of cachedComposed.values()) disposeComposed(prev);
-    cachedComposed.clear();
+    await loadSourceSheets(undefined, signal);
+    // A discarded mount must never clear canvases already used by its replacement.
+    signal?.throwIfAborted();
+    clearComposedCharacters();
 
     // Compose characters for known agents
     const agentIds = ['main', 'cybera', 'chi', 'descartes', 'cyberlogis', 'cylena', 'sysauxilia', 'miku'];
@@ -439,15 +446,18 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAsset
       const recipe = getRecipe(id);
       const composed = composeCharacter(recipe);
       cachedComposed.set(id, composed);
+      cachedAgentCharacters.set(id, composedToLoaded(composed));
     }
 
-    // Convert first composed character to legacy format for the default character set
-    // (the engine still uses numeric indexing for "which sprite to use")
-    characters = Array.from(cachedComposed.values()).map(composedToLoaded);
+    // Keep numeric sprites for agents without an identity-specific composition.
+    characters = Array.from(cachedAgentCharacters.values());
 
     console.log(`[SpriteLoader] Composed ${cachedComposed.size} characters from source sheets`);
   } catch (err) {
+    signal?.throwIfAborted();
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     console.warn('[SpriteLoader] Compositor failed, falling back to pre-composited sprites:', err);
+    clearComposedCharacters();
     // `loadCharacters` already returns the readonly view; assign
     // directly — no spread, no defensive copy (issue #132). The
     // `cachedCharacters` field is itself declared `readonly
@@ -471,24 +481,12 @@ export async function loadAllAssets(signal?: AbortSignal): Promise<ReadonlyAsset
 }
 
 /**
- * Convert a ComposedCharacter (from CharacterComposer) to the readonly
- * asset format expected by the engine and getSpriteFrame(). Returning a
- * `ReadonlyLoadedCharacter` (rather than the internal mutable builder
- * type) keeps the public readonly boundary intact for `recomposeAgent`:
- * the engine receives a compile-time-locked view, callers cannot mutate
- * the returned object through the engine reference, and the underlying
- * `cachedComposed` entries retain their mutable canvas references for
- * current rendering/portrait access and later disposal
- * (`disposeComposed`) (issue #132).
+ * Convert a ComposedCharacter (from CharacterComposer) to the loader-owned
+ * format expected by the engine and getSpriteFrame(). The
+ * mutable builder stays inside the loader; public getters and recomposeAgent
+ * expose its readonly view (issue #132).
  */
-function composedToLoaded(composed: ComposedCharacter): ReadonlyLoadedCharacter {
-  // Build the character with the internal mutable builder type, then
-  // return it directly. The annotated return type already accepts the
-  // object structurally; returning without a cast preserves stronger
-  // compiler checking if the implementation shape changes. The
-  // freshly-built frames are not aliased anywhere else (issue #132 —
-  // `recomposeAgent` must return `ReadonlyLoadedCharacter`, not the
-  // mutable builder type).
+function composedToLoaded(composed: ComposedCharacter): LoadedCharacter {
   const toFrames = (canvases: HTMLCanvasElement[]): SpriteFrame[] =>
     canvases.map(
       canvas => ({ canvas, width: OUT_FRAME_W, height: OUT_FRAME_H }),
@@ -545,6 +543,17 @@ export function getComposedCharacter(agentId: string): ReadonlyComposedCharacter
   return cachedComposed.get(agentId) ?? null;
 }
 
+/** Get the live readonly sprite view for an agent, independent of palette order. */
+export function getAgentCharacter(agentId: string): ReadonlyLoadedCharacter | null {
+  return cachedAgentCharacters.get(agentId) ?? null;
+}
+
+function clearComposedCharacters(): void {
+  for (const composed of cachedComposed.values()) disposeComposed(composed);
+  cachedComposed.clear();
+  cachedAgentCharacters.clear();
+}
+
 /**
  * Dispose a composed character's canvases to free backing store.
  */
@@ -558,7 +567,9 @@ function disposeComposed(composed: ComposedCharacter): void {
 
 /**
  * Recompose a single agent's character (e.g. after recipe change).
- * Returns the new `ReadonlyLoadedCharacter` view for engine update.
+ * Returns a stable `ReadonlyLoadedCharacter` view for engine update. Existing
+ * asset bundles share that view and receive its replacement frames before the
+ * old canvases are disposed.
  *
  * The return type is the compile-time readonly view (not the internal
  * mutable builder type) so callers cannot mutate the returned object
@@ -584,10 +595,14 @@ export function recomposeAgent(
       disposeComposed(composed);
       return null;
     }
+    const replacement = composedToLoaded(composed);
+    const loaded = cachedAgentCharacters.get(agentId);
+    if (loaded) Object.assign(loaded, replacement);
+    else cachedAgentCharacters.set(agentId, replacement);
     const old = cachedComposed.get(agentId);
     cachedComposed.set(agentId, composed);
     if (old) disposeComposed(old);
-    return composedToLoaded(composed);
+    return loaded ?? replacement;
   } catch (err) {
     console.error(`[SpriteLoader] Failed to recompose ${agentId}:`, err);
     return null;

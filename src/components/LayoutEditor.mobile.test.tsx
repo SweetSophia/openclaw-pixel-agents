@@ -58,8 +58,8 @@ function getRuleDeclarations(css: string, selector: string, mediaQuery?: string)
  *
  * Current architecture: one fixed top bar composes brand, room switcher,
  * and controls in flex flow (collisions structurally impossible), and the
- * editor toolbar offsets from the shared `--topbar-h` variable so it always
- * clears the bar — including the two-row mobile wrap. These pins fail if
+ * workspace offsets from the shared `--topbar-h` variable so the in-flow
+ * editor clears the bar — including the two-row mobile wrap. These pins fail if
  * anyone reintroduces independent absolute positioning.
  */
 describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
@@ -87,14 +87,18 @@ describe('Issue #87 — mobile toolbar / room switcher overlap', () => {
     expect(mobileSwitcher.get('order')).toBe('3');
     expect(mobileSwitcher.get('top')).toBeUndefined();
 
-    // The toolbar clears the whole bar via the shared var, in every mode.
+    // The scrollable workspace clears the whole bar; the toolbar flows inside.
+    const main = getRuleDeclarations(appCss, '.app-main');
+    expect(main.get('top')).toBe('var(--topbar-h)');
+    expect(main.get('overflow-y')).toBe('auto');
     const editorToolbar = getRuleDeclarations(layoutEditorCss, '.editor-toolbar');
     const toolbarOffset = editorToolbar
       .get('margin-top')
       ?.replace(/\s+/g, ' ')
       .replace(/\(\s+/g, '(')
       .replace(/\s+\)/g, ')');
-    expect(toolbarOffset).toBe('calc(var(--topbar-h) + 12px)');
+    expect(toolbarOffset).toBe('12px');
+    expect(getRuleDeclarations(layoutEditorCss, '.layout-editor').get('position')).toBe('relative');
   });
 
   it('reserves the desktop agent sidebar band above drawer width only', () => {

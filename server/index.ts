@@ -43,6 +43,8 @@ import {
 import { isValidLayoutId } from "./layouts";
 import { logger } from "./logger";
 import { atomicWriteFileSync } from "./persistence";
+import { assetCacheHeaders } from "./staticAssets";
+import { FURNITURE_TYPES } from "../shared/furniture";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -240,7 +242,9 @@ const FRONTEND_DIR = process.env.FRONTEND_DIR || resolve(__dirname, "..", "..", 
 // frontend directory already existing at boot (issue #156).
 app.use(publicGetRateLimiter);
 if (existsSync(FRONTEND_DIR)) {
-  app.use(express.static(FRONTEND_DIR));
+  app.use(express.static(FRONTEND_DIR, {
+    setHeaders: assetCacheHeaders(join(FRONTEND_DIR, "assets")),
+  }));
 }
 
 // ---- Configuration ----
@@ -1069,7 +1073,7 @@ async function pollAndBroadcast(): Promise<void> {
     const { applied, snapshot } = applyAgentSnapshot(agentStates, agentMap, { sourceError });
 
     if (applied) {
-      // Broadcast only when the visible agent snapshot actually changes.
+      // Every accepted CLI snapshot refreshes clients, including unchanged data.
       io.emit("agents:update", snapshot);
     }
 
@@ -1695,7 +1699,7 @@ function getDefaultLayout(): OfficeLayoutDoc {
     ],
     seats: {
       cybera: { x: 3, y: 4 },
-      shodan: { x: 9, y: 4 },
+      main: { x: 9, y: 4 },
       cyberlogis: { x: 15, y: 4 },
       descartes: { x: 20, y: 4 },
       chi: { x: 3, y: 10 },
@@ -1816,14 +1820,7 @@ app.delete("/api/layouts/:id", (req, res) => {
 
 // Furniture catalog (what types are available)
 app.get("/api/furniture-catalog", (_req, res) => {
-  const types = [
-    "BIN", "BOOKSHELF", "CACTUS", "CLOCK", "COFFEE", "COFFEE_TABLE",
-    "CUSHIONED_BENCH", "CUSHIONED_CHAIR", "DESK", "DOUBLE_BOOKSHELF",
-    "HANGING_PLANT", "LARGE_PAINTING", "LARGE_PLANT", "PC", "PLANT",
-    "PLANT_2", "POT", "SMALL_PAINTING", "SMALL_PAINTING_2", "SMALL_TABLE",
-    "SOFA", "TABLE_FRONT", "WHITEBOARD", "WOODEN_BENCH", "WOODEN_CHAIR",
-  ];
-  res.json({ types });
+  res.json({ types: FURNITURE_TYPES });
 });
 
 // ---- WebSocket ----

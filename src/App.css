@@ -1,7 +1,8 @@
 /* App.css - Aesthetic Overhaul */
 :root {
   --bg-base: #06080F;
-  --bg-panel: rgba(15, 20, 30, 0.65);
+  --bg-panel: var(--bg-dialog);
+  --bg-dialog: #0F141E;
   --bg-panel-hover: rgba(25, 30, 45, 0.8);
   
   --acc-cyan: #00F0FF;
@@ -11,6 +12,7 @@
   
   --text-main: #E0E5FF;
   --text-muted: #8A93B2;
+  --text-danger: #ff6b91;
   
   /* Fonts */
   --font-body: 'Space Grotesk', system-ui, sans-serif;
@@ -48,9 +50,8 @@ body {
 .app {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   position: relative; /* All HUD elements float inside here */
-  /* Cyber Background inserted here */
-  background-image: url('/assets/background.png');
   background-size: cover;
   background-position: center;
 }
@@ -178,15 +179,19 @@ input:focus-visible,
 /* Background Workspace wraps PixelOffice */
 .app-main {
   width: 100%;
-  height: 100%;
   position: absolute;
-  top: 0;
+  top: var(--topbar-h);
+  bottom: var(--office-bottom, 104px);
   left: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: var(--z-canvas);
 }
 .office-wrapper {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
   position: relative;
 }
 

@@ -23,7 +23,7 @@
     "pino": "^10.3.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.0",
-    "socket.io": "^4.8.3",
+    "socket.io": "^4.8.4",
     "socket.io-client": "^4.8.4"
   },
   "devDependencies": {

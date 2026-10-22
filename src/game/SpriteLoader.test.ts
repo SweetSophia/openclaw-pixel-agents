@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   getComposedCharacter,
+  getAgentCharacter,
   getSpriteFrame,
   loadAllAssets,
   loadCharacters,
@@ -57,6 +58,10 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
     expectTypeOf(recomposeAgent).returns.toEqualTypeOf<
       ReadonlyLoadedCharacter | null
     >();
+  });
+
+  it('getAgentCharacter returns the readonly loaded character view', () => {
+    expectTypeOf(getAgentCharacter).returns.toEqualTypeOf<ReadonlyLoadedCharacter | null>();
   });
 
   it('getComposedCharacter returns a readonly composed view (issue #132)', () => {
@@ -211,6 +216,8 @@ describe('SpriteLoader public API contracts (issue #132)', () => {
       readonly height: number;
       readonly footprintW: number;
       readonly footprintH: number;
+      readonly isSurface?: boolean;
+      readonly canPlaceOnSurfaces?: boolean;
     }>();
   });
 

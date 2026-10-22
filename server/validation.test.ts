@@ -29,6 +29,65 @@ describe("runtime validators", () => {
     expect(parseOfficeLayoutDoc(defaultLayout)).toMatchObject({ id: "default", width: 24, height: 16 });
   });
 
+  it("routes legacy Shodan seats to the live main agent on reads and writes without mutating input", () => {
+    const shodan = Object.freeze({ x: 9, y: 4 });
+    const miku = Object.freeze({ x: 20, y: 10 });
+    const seats = Object.freeze({ shodan, miku });
+    const expected = { main: shodan, miku };
+    const parsed = parseOfficeLayoutDoc({ ...defaultLayout, seats });
+
+    expect(parsed?.seats).toEqual(expected);
+    expect(parsed?.seats.main).not.toBe(shodan);
+    expect(parseLayoutMutationBody({ seats }, { width: 24, height: 16 })).toEqual({
+      ok: true, body: { seats: expected }, baseUpdatedAt: undefined,
+    });
+    expect(seats).toEqual({ shodan: { x: 9, y: 4 }, miku: { x: 20, y: 10 } });
+  });
+
+  it.each([
+    { shodan: { x: 9, y: 4 }, main: { x: 5, y: 6 } },
+    { main: { x: 5, y: 6 }, shodan: { x: 9, y: 4 } },
+  ])("preserves an explicit main seat when a legacy Shodan seat also exists: %j", seats => {
+    const expected = { main: { x: 5, y: 6 } };
+    expect(parseOfficeLayoutDoc({ ...defaultLayout, seats })?.seats).toEqual(expected);
+    expect(parseLayoutMutationBody({ seats }, { width: 24, height: 16 })).toEqual({
+      ok: true, body: { seats: expected }, baseUpdatedAt: undefined,
+    });
+  });
+
+  it.each([
+    { shodan: { x: -1, y: 4 }, main: { x: 5, y: 6 } },
+    { shodan: { x: 9, y: 4, extra: true }, main: { x: 5, y: 6 } },
+    JSON.parse('{"shodan":{"x":9,"y":4},"main":{"x":5,"y":6},"__proto__":{"x":1,"y":1}}'),
+  ])("validates every original seat before resolving the legacy alias: %j", seats => {
+    expect(parseOfficeLayoutDoc({ ...defaultLayout, seats })).toBeNull();
+    expect(parseLayoutMutationBody({ seats }, { width: 24, height: 16 }).ok).toBe(false);
+  });
+
+  it.each([
+    ["desk", "DESK"], ["DeSk", "DESK"], ["large_plant", "LARGE_PLANT"],
+    ["cushioned_chair", "CUSHIONED_CHAIR"], ["chair", "CUSHIONED_CHAIR"],
+    ["CHAIR", "CUSHIONED_CHAIR"], ["monitor", "PC"], ["Monitor", "PC"],
+    ["PC", "PC"], ["vendor.Custom", "vendor.Custom"], ["unknown", "unknown"],
+  ])("resolves known legacy furniture type %s as %s on reads and writes", (type, expected) => {
+    const furniture = Object.freeze({ id: "legacy-instance", type, x: 2, y: 3, rotation: 90, state: "off" });
+    const document = { ...defaultLayout, furniture: [furniture] };
+    expect(parseOfficeLayoutDoc(document)?.furniture).toEqual([{ ...furniture, type: expected }]);
+    expect(parseLayoutMutationBody({ furniture: [furniture] }, { width: 24, height: 16 })).toEqual({
+      ok: true, body: { furniture: [{ ...furniture, type: expected }] }, baseUpdatedAt: undefined,
+    });
+    expect(document.furniture[0]).toBe(furniture);
+    expect(furniture.type).toBe(type);
+  });
+
+  it.each(["../desk", " chair ", "deſk", "chair/../../", "chair?state=on"])(
+    "rejects unsafe furniture identifiers before normalization: %s", type => {
+      const furniture = [{ id: "unsafe", type, x: 1, y: 1, rotation: 0 }];
+      expect(parseOfficeLayoutDoc({ ...defaultLayout, furniture })).toBeNull();
+      expect(parseLayoutMutationBody({ furniture }, { width: 24, height: 16 }).ok).toBe(false);
+    },
+  );
+
   it("rejects malformed layout documents", () => {
     expect(parseOfficeLayoutDoc({ ...defaultLayout, id: "../default" })).toBeNull();
     expect(parseOfficeLayoutDoc({ ...defaultLayout, name: "   " })).toBeNull();

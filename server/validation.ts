@@ -1,4 +1,5 @@
 import { ALL_TAGS, type AgentTag, type CharacterRecipe, type PlacedFurniture } from "../shared/types";
+import { canonicalFurnitureType } from "../shared/furniture";
 import { isValidLayoutId } from "./layouts";
 
 export interface PersistedPrefs {
@@ -116,9 +117,10 @@ function parseFurniture(value: unknown, width: number, height: number): PlacedFu
   if (typeof rotation !== "number" || !VALID_ROTATIONS.has(rotation)) return null;
   if (state !== undefined && (typeof state !== "string" || state.length > 32)) return null;
 
+  const canonicalType = canonicalFurnitureType(type);
   return state === undefined
-    ? { id, type, x, y, rotation }
-    : { id, type, x, y, rotation, state };
+    ? { id, type: canonicalType, x, y, rotation }
+    : { id, type: canonicalType, x, y, rotation, state };
 }
 
 function parseFurnitureArray(value: unknown, width: number, height: number): PlacedFurniture[] | null {
@@ -144,6 +146,11 @@ function parseSeats(value: unknown, width: number, height: number): Record<strin
     const { x, y } = seat;
     if (!isIntInRange(x, 0, width - 1) || !isIntInRange(y, 0, height - 1)) return null;
     seats[agentId] = { x, y };
+  }
+  // Shodan's live agent ID is main; retain positions from legacy layouts.
+  if (seats.shodan) {
+    seats.main ??= seats.shodan;
+    delete seats.shodan;
   }
   return seats;
 }

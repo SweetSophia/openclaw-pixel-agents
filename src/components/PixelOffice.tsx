@@ -4,7 +4,10 @@ import type { LayoutDoc } from '../hooks/useLayoutStore';
 import { GameEngine } from '../game/GameEngine';
 import { recomposeAgent } from '../game/SpriteLoader';
 import type { CharacterRecipe } from '../game/CharacterComposer';
+import { CanvasViewport, type CanvasViewportHandle } from './CanvasViewport';
 import './PixelOffice.css';
+
+const OFFICE_CONFIG = { tileSize: 32, gridWidth: 24, gridHeight: 16 };
 
 interface Props {
   agents: AgentState[];
@@ -26,6 +29,7 @@ export const PixelOffice: React.FC<Props> = ({
   onCharacterClick,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewportRef = useRef<CanvasViewportHandle>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [furniturePreview, setFurniturePreview] = useState('');
@@ -35,11 +39,10 @@ export const PixelOffice: React.FC<Props> = ({
   useEffect(() => {
     if (!canvasRef.current || engineRef.current) return;
     const ac = new AbortController();
-    const engine = new GameEngine(canvasRef.current, {
-      tileSize: 32, gridWidth: 24, gridHeight: 16,
-    });
+    const engine = new GameEngine(canvasRef.current, OFFICE_CONFIG);
     engineRef.current = engine;
     engine.setFurniturePreviewCallback(setFurniturePreview);
+    engine.setViewportZoomCallback((factor, x, y, dx, dy) => viewportRef.current?.zoomAt(factor, x, y, dx, dy));
 
     engine.init(ac.signal, import.meta.env.DEV).then(() => {
       if (ac.signal.aborted) return;
@@ -47,7 +50,7 @@ export const PixelOffice: React.FC<Props> = ({
       setLoaded(true);
     });
 
-    return () => { ac.abort(); engine.setFurniturePreviewCallback(null); engine.stop(); engineRef.current = null; };
+    return () => { ac.abort(); engine.setFurniturePreviewCallback(null); engine.setViewportZoomCallback(null); engine.stop(); engineRef.current = null; };
   }, []);
 
   // Wire editor callbacks (stable ref)
@@ -192,12 +195,15 @@ export const PixelOffice: React.FC<Props> = ({
   }, [agents, loaded]);
 
   return (
-    <div className="pixel-office" style={{ position: 'relative' }}>
-      <canvas ref={canvasRef} className="office-canvas" />
-      {/* Registered while empty, before the first semantic preview update. */}
-      <div className="furniture-preview-status" role="status" aria-live="polite" aria-atomic="true" aria-label="Furniture placement preview">
-        {furniturePreview}
-      </div>
+    <div className="pixel-office">
+      <CanvasViewport ref={viewportRef} width={OFFICE_CONFIG.gridWidth * OFFICE_CONFIG.tileSize}
+        height={OFFICE_CONFIG.gridHeight * OFFICE_CONFIG.tileSize}
+        interactionKey={`${editorMode}:${deleteMode}:${selectedFurnitureType}:${activeLayout?.id}`}
+        overlay={<div className="furniture-preview-status" role="status" aria-live="polite" aria-atomic="true" aria-label="Furniture placement preview">
+          {furniturePreview}
+        </div>}>
+        <canvas ref={canvasRef} className="office-canvas" />
+      </CanvasViewport>
     </div>
   );
 };

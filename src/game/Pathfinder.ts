@@ -157,6 +157,24 @@ export function bfsPathfind(
   return path;
 }
 
+/** Walkable tiles connected to an origin, using the same escape rules as pathfinding. */
+export function reachableFloor(grid: boolean[][], start: Point): Set<string> {
+  const height = grid.length;
+  const width = grid[0]?.length ?? 0;
+  const queue = findNearestFree(grid, Math.round(start.x), Math.round(start.y), width, height);
+  const visited = new Set(queue.map(point => `${point.x},${point.y}`));
+  for (let head = 0; head < queue.length; head++) {
+    const { x, y } = queue[head];
+    for (const point of [{ x, y: y - 1 }, { x, y: y + 1 }, { x: x - 1, y }, { x: x + 1, y }]) {
+      const key = `${point.x},${point.y}`;
+      if (grid[point.y]?.[point.x] !== false || visited.has(key)) continue;
+      visited.add(key);
+      queue.push(point);
+    }
+  }
+  return visited;
+}
+
 /** Find all free tiles on the nearest Chebyshev-distance ring. */
 function findNearestFree(
   grid: boolean[][],

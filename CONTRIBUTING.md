@@ -61,6 +61,29 @@ functions, and 41% lines. Pull requests also receive a dependency review that
 blocks newly introduced high- or critical-severity vulnerabilities. CodeQL
 scans JavaScript and TypeScript changes and runs weekly on the default branch.
 
+For asset-loading changes, also check a local production build (`npm run build`,
+then `npm start` with the required `CORS_ORIGIN`). Leave the browser cache enabled
+and reload several times within a minute: the console should report 8 characters,
+9 floors, and 25 furniture types, with no asset 429s. Sprite, manifest, and
+background URLs include a build revision and are cached for a year; rebuild and
+restart the local server to verify that the revision changes and fresh assets load. Development
+URLs intentionally remain unversioned so edits appear immediately. HTML stays
+revalidatable, and asset requests that reach the server still consume the public
+GET/HEAD rate limit.
+
+For canvas view changes, test at 320, 768, 1024 and 1440px widths. Fit must keep
+the full office clear of the header, desktop sidebar, collapsed activity summary
+and editor chrome. Check both an armed furniture type and a selected item, since
+their hint/info rows change that chrome's height. Also test 640×320 and 320×480:
+keep narrow-screen palette/layout panels open and scroll the workspace to reach
+the panels, view controls and office. The stage must stay at least 120px tall;
+verify the visible canvas receives native pointer hits between header and dock.
+Zoom and pan, then select an agent and place, drag
+and rotate furniture on the intended cells. Verify two-finger zoom with a moving
+midpoint, one-finger Pan, arrow keys, Escape, Fit, resize and room changes. Panning
+must not edit the layout; cancelling a gesture or leaving the window must end
+the drag. Browser geometry and hit testing are not exercised by jsdom.
+
 ## Code Style
 
 - **TypeScript** throughout (strict mode)
@@ -73,7 +96,13 @@ scans JavaScript and TypeScript changes and runs weekly on the default branch.
 
 1. Add sprite PNG(s) to `public/assets/furniture/<TYPE>/`
 2. Create a `manifest.json` describing dimensions and orientations
-3. The furniture type will automatically appear in the catalog API and editor palette
+3. Add the canonical uppercase ID to `FURNITURE_TYPES` in `shared/furniture.ts`.
+   The catalog API, editor palette, and sprite loader use this list.
+
+Layout validation resolves known IDs regardless of case, plus the legacy names
+`chair` (cushioned chair) and `monitor` (PC). Unknown safe IDs keep their placeholder.
+Existing layout files are normalized when read without being rewritten; saving
+an edit stores canonical IDs.
 
 ## Adding Character Sprites
 
