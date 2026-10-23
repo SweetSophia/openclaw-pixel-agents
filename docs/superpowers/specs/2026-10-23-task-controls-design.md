@@ -1,6 +1,6 @@
 # Real task details, then conversation and send controls
 
-Status: design for user review; product implementation has not started.
+Status: user-approved on 2026-10-23; implementation-plan review is next. Product implementation has not started.
 
 ## Intent and agreed order
 
@@ -141,4 +141,4 @@ The builder may settle internal filenames, TypeScript names, the exact list curs
 
 Independent builder review completed on 2026-10-23. Its two material questions (browser transport and initial run selection) are resolved above; the follow-up found nothing important left unanswered.
 
-Next gate: user review of this design, followed by the implementation plan. The browser mockup is illustrative and does not send tasks.
+User approved the presented design/mockup on 2026-10-23 with “this looks awesome!” in response to the implementation-design review. The implementation plan is next. The browser mockup remains illustrative and does not send tasks.
