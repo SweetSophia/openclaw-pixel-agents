@@ -68,6 +68,7 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
         note = selected.sessionKey === context.current.initialSessionKey ? undefined : selected.isChild ? 'Only child sessions are visible. Showing the newest child session.' : 'The roster conversation is not visible. Showing the newest visible conversation.';
         everSelected.current = true;
       }
+      if (selected) selected = value.sessions.find(item => targetIdentity(item) === targetIdentity(selected!)) ?? selected;
       const all = more ? [...data.current.sessions, ...value.sessions] : value.sessions;
       if (selected && !all.some(item => targetIdentity(item) === targetIdentity(selected!))) all.unshift(selected);
       const sessions = [...new Map(all.map(item => [targetIdentity(item), item])).values()];

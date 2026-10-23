@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CONTROL_LIMITS, parseControlConversationEvent, parseControlHistoryPage, parseControlSendReceipt, parseControlTarget, type ControlHistoryPage, type ControlMessage, type ControlSendReceipt, type ControlSendRequest, type ControlTarget } from '../../shared/control';
+import { CONTROL_LIMITS, isControlCommand, parseControlConversationEvent, parseControlHistoryPage, parseControlSendReceipt, parseControlTarget, type ControlHistoryPage, type ControlMessage, type ControlSendReceipt, type ControlSendRequest, type ControlTarget } from '../../shared/control';
 import { newEntityId } from '../util/id';
 import { useControlAccess, useConversationDrafts } from './ControlAccess';
 import { ControlApiError, targetIdentity } from './api';
@@ -34,7 +34,13 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
       }));
       if (!result || targetIdentity(result.target) !== current.targetKey) throw new ControlApiError('invalid-source');
       if (controller.signal.aborted || generation !== readGeneration.current || current.scope !== context.current.scope) return;
-      setPage(previous => earlier && previous ? { ...result, messages: [...new Map([...result.messages, ...previous.messages].map(message => [message.id, message])).values()].slice(-CONTROL_LIMITS.maximumHistory) } : result);
+      setPage(previous => {
+        const sameLeaf = previous && previous.target.activeLeafEntryId === result.target.activeLeafEntryId;
+        if (!previous || (!earlier && !sameLeaf)) return result;
+        const messages = earlier ? [...result.messages, ...previous.messages] : [...previous.messages, ...result.messages];
+        return { ...result, nextCursor: earlier ? result.nextCursor : previous.nextCursor,
+          messages: [...new Map(messages.map(message => [message.id, message])).values()].slice(-CONTROL_LIMITS.maximumHistory) };
+      });
       setError(null);
       reconcile(result.messages, current.draftKey);
     } catch (failure) {
@@ -64,6 +70,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
     mutate(key, value => { value.submission = { input, phase: 'sending' }; });
     try {
       const receipt = parseControlSendReceipt(await current.access.request(`/api/control/agents/${encodeURIComponent(input.agentId)}/send`, { method: 'POST', body: JSON.stringify(input) }));
+      if (current.access.generation !== context.current.access.generation || context.current.access.state !== 'unlocked') return;
       if (!receipt || receipt.idempotencyKey !== input.idempotencyKey || receipt.target.agentId !== input.agentId
         || (input.target && targetIdentity(receipt.target) !== targetIdentity(input.target))) throw new ControlApiError('invalid-source');
       mutate(key, value => { value.submission = { input, phase: receipt.phase, receipt }; if (receipt.phase === 'persisted' && value.text === input.message) value.text = ''; });
@@ -74,6 +81,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
       if (current.scope === context.current.scope) { setError(null); void refresh(); }
     } catch (failure) {
       const problem = failure instanceof ControlApiError ? failure : new ControlApiError();
+      if (['locked', 'scope-required', 'pairing-required'].includes(problem.code) || current.access.generation !== context.current.access.generation) return;
       const unknown = ['unavailable', 'invalid-source', 'outcome-unknown'].includes(problem.code);
       mutate(key, value => { value.submission = { input, phase: unknown ? 'unknown' : 'rejected' }; });
       if (current.scope === context.current.scope) { setError(problem); if (['session-changed', 'invalid-target'].includes(problem.code)) setPage(null); }
@@ -107,10 +115,13 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
   const currentPage = !isNew && page && target && targetIdentity(page.target) === targetKey && access.state === 'unlocked' ? page : null;
   const disabledReason = access.state !== 'unlocked' ? 'Unlock task details to send a message.'
     : !access.status?.canRead ? 'The conversation source is disconnected. Your draft is kept.' : !access.status.canSend ? 'Sending requires an enabled write grant.'
+      : isControlCommand(draft?.text ?? '') ? new ControlApiError('command-not-supported').message
       : !agentId ? 'Choose an agent.' : !isNew && !target ? 'Choose a conversation or start a new one.'
         : !isNew && (!currentPage || currentPage.source.state !== 'current') ? 'Refresh and verify this conversation before sending.' : currentPage?.sendDisabledReason ?? '';
+  const retryDisabledReason = access.state !== 'unlocked' || !access.status?.canRead || !access.status.canSend ? 'Reconnect and unlock with write access before retrying.'
+    : error && ['session-changed', 'invalid-target'].includes(error.code) ? error.message : '';
   return {
-    messages: currentPage?.messages ?? [], draft: draft?.text ?? '', submission, isNew, loading, error, disabledReason,
+    messages: currentPage?.messages ?? [], draft: draft?.text ?? '', submission, isNew, loading, error, disabledReason, retryDisabledReason,
     ready: !disabledReason, pending: !!submission && !['persisted', 'rejected'].includes(submission.phase), stale: currentPage?.source.state === 'stale',
     nextCursor: currentPage?.nextCursor,
     setDraft: (text: string) => mutate(draftKey, value => { value.text = text; }), send: () => submit(false), retryPending: () => submit(true),

@@ -16,6 +16,12 @@ function setup(sessions = [a, b]) {
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
+  it('updates selected metadata when the same conversation starts working', async () => {
+    setup([{ ...a, hasActiveRun: false }]); const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
+    await waitFor(() => expect(result.current.selected?.hasActiveRun).toBe(false));
+    f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page([{ ...a, hasActiveRun: true }]) : task(JSON.parse(String(init?.body))));
+    await act(() => result.current.refresh()); expect(result.current.selected?.hasActiveRun).toBe(true);
+  });
   it('resolves the exact roster conversation even when it is beyond the first page', async () => {
     setup([b]); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page([b], 'more') : path.endsWith('/selection') ? { session: a } : task(JSON.parse(String(init?.body))));
     const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, taskActive: false }));

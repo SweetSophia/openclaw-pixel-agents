@@ -21,6 +21,7 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
   const [generation, setGeneration] = useState(0);
   const clear = useCallback(() => {
     revision.current++; key.current = undefined;
+    drafts.current.clear();
     for (const controller of controllers.current) controller.abort(); controllers.current.clear();
     for (const socket of sockets.current) socket.disconnect(); sockets.current.clear();
   }, []);

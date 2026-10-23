@@ -18,13 +18,13 @@ export function AgentConversation({ target, agentId, active, busy, onCreated }: 
     {state.loading && <p role="status">Loading recorded messages…</p>}
     {state.error && <p role="alert">{state.error.message}</p>}
     {state.submission && <p role="status" className="task-notice">{labels[state.submission.phase]}</p>}
-    {state.submission && ['unknown', 'accepted', 'rejected'].includes(state.submission.phase) && <button type="button" aria-disabled={!!state.disabledReason} onClick={() => { if (!state.disabledReason) void state.retryPending(); }}>Retry original submission</button>}
+    {state.submission && ['unknown', 'accepted', 'rejected'].includes(state.submission.phase) && <button type="button" aria-disabled={!!state.retryDisabledReason} onClick={() => { if (!state.retryDisabledReason) void state.retryPending(); }}>Retry original submission</button>}
     {state.pending && <p className="task-muted">Retry checks the original message and submission ID. Edits below are kept separately until that submission is settled.</p>}
     <label htmlFor={messageId}>Message</label>
     <textarea id={messageId} rows={5} maxLength={CONTROL_LIMITS.prompt} value={state.draft} aria-describedby={hintId} onChange={event => state.setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } }} />
     <p id={hintId} className="task-muted">{state.draft.length.toLocaleString()} / 8,000 · Enter adds a line. Ctrl/Cmd+Enter sends.</p>
     {state.disabledReason && <p role="status">{state.disabledReason}</p>}
     <button type="button" className="conversation-send" aria-disabled={blocked} onClick={send}>{busy && !state.isNew ? 'Send follow-up' : 'Send'}</button>
-    <p className="task-muted">Messages stay in this conversation. Sending a follow-up does not interrupt current work. Drafts and retry identities stay in this tab until reload.</p>
+    <p className="task-muted">Messages stay in this conversation. Sending a follow-up does not interrupt current work. Lock and reload clear private drafts and retry identities.</p>
   </section>;
 }

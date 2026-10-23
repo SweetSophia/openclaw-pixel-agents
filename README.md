@@ -110,7 +110,8 @@ record. A disconnect may leave **Outcome unknown**. Use **Retry original submiss
 to reconcile that same ID and immutable message. Never replace it with a new send
 to work around uncertainty. Recovery drafts are kept until persistence; edits made
 while waiting remain separate from the original submission. Drafts survive panel
-and conversation switches in tab memory, and disappear on reload. A reset or branch
+and conversation switches in tab memory. Lock, authentication rejection and reload
+clear private drafts and retry identities. A reset or branch
 change keeps the old draft separate; select the current conversation explicitly.
 
 ### Layout Editor
@@ -338,6 +339,10 @@ environment after provisioning its scoped device token. No Stop, Steer, command,
 attachment or generic RPC interface is exposed. An office restart can make an
 uncertain new-conversation outcome unrecoverable automatically; the office fails
 closed instead of adopting an unverified conversation or replaying a prompt.
+
+The composer rejects slash/shell command prefixes and OpenClaw's bare stop phrases.
+The Gateway reserves literal command suppression for admin clients; the office
+does not request that privilege. Write an ordinary task message instead.
 
 The browser normally needs HTTPS, or loopback HTTP during local development.
 Direct-IP Tailscale deployments may explicitly set `CONTROL_ALLOW_TAILNET_HTTP=true`

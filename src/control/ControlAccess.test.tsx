@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ControlAccessProvider, useControlAccess } from './ControlAccess';
+import { ControlAccessProvider, useControlAccess, useConversationDrafts } from './ControlAccess';
 import { controlFetch } from './api';
 
 const status = { configured: true, state: 'ready', canRead: true, canSend: false };
@@ -9,6 +9,12 @@ const json = (value: unknown, code = 200) => new Response(JSON.stringify(value),
 const wrapper = ({ children }: React.PropsWithChildren) => <ControlAccessProvider>{children}</ControlAccessProvider>;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('clears private draft and submission caches on lock', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(status)));
+    const { result } = renderHook(() => ({ access: useControlAccess(), drafts: useConversationDrafts()! }), { wrapper });
+    await act(() => result.current.access.unlock('fixture-key')); result.current.drafts.set('target', { text: 'private draft' });
+    act(() => result.current.access.lock()); expect(result.current.drafts.size).toBe(0);
+  });
   it('attaches the key only to same-origin control paths and prevents redirects', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => json(status)); vi.stubGlobal('fetch', fetch);
     for (const path of ['https://other.test/api/control/status', '//other.test/api/control/status', '/api/agents', '/api/control/../../other']) await expect(controlFetch(path, 'fixture-key')).rejects.toThrow();

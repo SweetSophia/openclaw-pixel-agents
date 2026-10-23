@@ -16,6 +16,24 @@ function setup() {
 }
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('manual conversation submissions', () => {
+  it('retains explicitly loaded pages across automatic refresh of the same leaf', async () => {
+    setup(); f.request.mockImplementation(async (_path: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)); return { target: a, messages: [{ id: body.cursor ? 'old' : 'latest', role: 'user', text: body.cursor ? 'older' : 'newer', truncated: false }], source: { state: 'current', observedAt: 10 }, ...(body.cursor ? {} : { nextCursor: 'older-cursor' }) };
+    });
+    const { result } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.messages).toHaveLength(1));
+    await act(() => result.current.loadEarlier()); expect(result.current.messages).toHaveLength(2);
+    await act(() => result.current.refresh()); expect(result.current.messages.map(m => m.id)).toEqual(['old', 'latest']);
+  });
+  it('drops a late submission response after a credential generation changes', async () => {
+    setup(); let resolve: (value: unknown) => void = () => {};
+    const original = f.request.getMockImplementation()!; f.request.mockImplementation((path, init) => path.endsWith('/send') ? new Promise(done => { resolve = done; }) : original(path, init));
+    const { result, rerender } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.ready).toBe(true)); act(() => result.current.setDraft('private draft'));
+    let pending: Promise<void>; act(() => { pending = result.current.send(); });
+    const call = f.request.mock.calls.find(([p]) => String(p).endsWith('/send'))!; const input = JSON.parse(String(call[1].body));
+    f.generation++; f.state = 'locked'; rerender();
+    await act(async () => { resolve({ target: a, idempotencyKey: input.idempotencyKey, phase: 'accepted' }); await pending; });
+    expect(result.current.submission?.phase).not.toBe('accepted');
+  });
   it('retains drafts across exact target switches and fences replacements', async () => {
     setup(); const { result, rerender } = renderHook(({ target }) => useConversation(target, true), { initialProps: { target: a } });
     await waitFor(() => expect(result.current.loading).toBe(false)); act(() => result.current.setDraft('draft A'));

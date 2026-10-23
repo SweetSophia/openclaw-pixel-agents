@@ -7,7 +7,7 @@ import { parseSendRequest } from './validation';
 import { createSendService } from './sendService';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 's1', lifecycleRevision: 'life-1', activeLeafEntryId: 'leaf-1' };
-const input: ControlSendRequest = { agentId: 'cylena', target, newConversation: false, message: '/literal hello', idempotencyKey: 'send-nonsecure123' };
+const input: ControlSendRequest = { agentId: 'cylena', target, newConversation: false, message: 'Ordinary hello', idempotencyKey: 'send-nonsecure123' };
 const cleanups: (() => void)[] = [];
 afterEach(() => { cleanups.splice(0).forEach(close => close()); vi.useRealTimers(); });
 function fixture() {
@@ -22,7 +22,7 @@ function fixture() {
       return { key: p.key, sessionId: 's1', entry: { lifecycleRevision: 'life-1' } };
     }
     if (method === 'chat.history') return { sessionKey: p.sessionKey, sessionId: 's1', inputReceipts: [], sessionInfo: { activeLeafEntryId: p.sessionKey === target.sessionKey ? 'leaf-1' : null }, messages: persisted && admitted.has(input.idempotencyKey) ? [{ role: 'user', content: 'hello', __openclaw: { id: 'u1', seq: 1, runId: input.idempotencyKey } }] : [] };
-    if (method === 'chat.send') { admitted.add(String(p.idempotencyKey)); if (loseSend) { loseSend = false; throw Error('lost send ack'); } return { runId: p.idempotencyKey, status: 'started' }; }
+    if (method === 'chat.send') { if ('suppressCommandInterpretation' in p) throw Error('system provenance fields require admin scope'); admitted.add(String(p.idempotencyKey)); if (loseSend) { loseSend = false; throw Error('lost send ack'); } return { runId: p.idempotencyKey, status: 'started' }; }
     return {};
   });
   const gateway: ControlGateway = { start() {}, close() {}, request, onEvent: () => () => {}, status: () => ({ configured: true, state: 'ready', canRead: true, canSend }) };
@@ -37,8 +37,11 @@ describe('explicit send admission', () => {
   });
   it('pins follow-ups with branch guards and suppresses commands and channel delivery', async () => {
     const f = fixture(); expect(await f.sends.send(input)).toMatchObject({ phase: 'accepted', idempotencyKey: input.idempotencyKey });
-    expect(f.request).toHaveBeenCalledWith('chat.send', { agentId: 'cylena', sessionKey: target.sessionKey, sessionId: 's1', message: input.message, idempotencyKey: input.idempotencyKey, queueMode: 'followup', deliver: false, suppressCommandInterpretation: true, expectedLeafEntryId: 'leaf-1' }, expect.any(AbortSignal));
+    expect(f.request).toHaveBeenCalledWith('chat.send', { agentId: 'cylena', sessionKey: target.sessionKey, sessionId: 's1', message: input.message, idempotencyKey: input.idempotencyKey, queueMode: 'followup', deliver: false, expectedLeafEntryId: 'leaf-1' }, expect.any(AbortSignal));
     expect(f.admitted.size).toBe(1);
+  });
+  it.each(['/stop', '\n /new', '!rm -f anything', 'please stop!', 'СТОП…', 'STOP don’t do anything', '\u0001/stop', '停止。'])('rejects command-shaped or bare abort text before any source write: %s', async message => {
+    const f = fixture(); await expect(f.sends.send({ ...input, message })).rejects.toMatchObject({ code: 'command-not-supported' }); expect(f.admitted.size).toBe(0);
   });
   it.each(['canSend', 'policy', 'replaced'] as const)('rejects authority, policy or lifecycle changes before admission: %s', async flag => {
     const f = fixture(); f.set({ [flag]: flag === 'canSend' ? false : true });

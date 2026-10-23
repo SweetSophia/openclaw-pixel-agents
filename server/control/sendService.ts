@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { controlRecord, parseControlTarget, type ControlSendReceipt, type ControlSendRequest, type ControlTarget } from '../../shared/control';
+import { controlRecord, isControlCommand, parseControlTarget, type ControlSendReceipt, type ControlSendRequest, type ControlTarget } from '../../shared/control';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import { ControlError, type TaskService } from './taskService';
 import { parseSendRequest } from './validation';
@@ -38,7 +38,8 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     if (custody && ['pending', 'consumed'].includes(String(custody.state))) return { target, idempotencyKey: input.idempotencyKey, phase: 'accepted', runId: input.idempotencyKey };
   }
   async function perform(input: ControlSendRequest, entry: Submission, signal: AbortSignal): Promise<ControlSendReceipt> {
-    if (closed || !gateway.status().canSend) throw new ControlError('scope-required');
+    if (closed || !gateway.status().canRead) throw new ControlError('unavailable');
+    if (!gateway.status().canSend) throw new ControlError('scope-required');
     if (!entry.target) {
       const key = `agent:${input.agentId}:pixel-${hash(input.idempotencyKey)}`;
       // An unknown pre-existing key may be a submission from an earlier server process.
@@ -74,7 +75,7 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     try {
       const result = controlRecord(await gateway.request('chat.send', {
         agentId: target.agentId, sessionKey: target.sessionKey, sessionId: target.sessionId, message: input.message,
-        idempotencyKey: input.idempotencyKey, queueMode: 'followup', deliver: false, suppressCommandInterpretation: true,
+        idempotencyKey: input.idempotencyKey, queueMode: 'followup', deliver: false,
         expectedLeafEntryId: target.activeLeafEntryId ?? null,
       }, signal));
       if (!result || result.runId !== input.idempotencyKey) throw Error('Unconfirmed admission');
@@ -93,6 +94,7 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     send(input, signal) {
       const parsed = parseSendRequest(input.agentId, input);
       if (!parsed) return Promise.reject(new ControlError('invalid-request'));
+      if (isControlCommand(parsed.message)) return Promise.reject(new ControlError('command-not-supported'));
       if (signal?.aborted || closed) return Promise.reject(new ControlError('unavailable'));
       const digest = hash(JSON.stringify(parsed)); const now = Date.now();
       for (const [id, item] of submissions) if (!item.flight && now - item.at > 3600000) submissions.delete(id);
