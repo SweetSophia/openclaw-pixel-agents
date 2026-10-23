@@ -143,7 +143,7 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
     target, source: { state: 'current', observedAt: input.observedAt }, hasActiveRun,
     activeRunIds: exactRuns(session.activeRunIds), runId, runState,
     request: request?.value, requestAssociation: matchedRequest ? 'run' : request ? 'latest-recorded' : 'unknown',
-    requestState: request ? 'found' : input.loadedRecords >= CONTROL_LIMITS.maximumHistory ? 'limit-reached'
+    requestState: matchedRequest || (!runId && request) ? 'found' : input.loadedRecords >= CONTROL_LIMITS.maximumHistory ? 'limit-reached'
       : history.hasMore === false ? 'unavailable' : 'not-loaded',
     startedAt: runId ? timestamp(hasActiveRun === true ? inFlight?.startedAt : session.startedAt) : undefined,
     endedAt: runId && hasActiveRun === false ? timestamp(session.endedAt) : undefined,

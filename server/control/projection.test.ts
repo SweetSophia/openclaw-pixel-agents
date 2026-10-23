@@ -91,6 +91,10 @@ describe('source-backed task projection', () => {
     expect(result.activity[0].outcome).toBe('pending');
     expect(projectTask({ ...base({}, { messages }), loadedRecords: 2000 }).requestState).toBe('limit-reached');
   });
+  it('labels earlier-run context separately from an unloaded current request', () => {
+    const result = projectTask(base({ hasActiveRun: true }, { inFlightRun: { runId: 'run-1' }, messages: [user('Older context', 'run-0')], hasMore: true }));
+    expect(result.requestAssociation).toBe('latest-recorded'); expect(result.requestState).toBe('not-loaded');
+  });
 
   it('clips display text explicitly and stays below the total UTF-8 byte budget', () => {
     const result = projectTask(base({ hasActiveRun: true }, {

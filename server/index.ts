@@ -45,6 +45,10 @@ import { logger } from "./logger";
 import { atomicWriteFileSync } from "./persistence";
 import { assetCacheHeaders } from "./staticAssets";
 import { FURNITURE_TYPES } from "../shared/furniture";
+import { loadControlConfig } from "./control/config";
+import { createControlGateway } from "./control/gatewayClient";
+import { createTaskService } from "./control/taskService";
+import { createControlRouter } from "./control/routes";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -1836,6 +1840,13 @@ io.on("connection", (socket) => {
     logger.info({ socketId: socket.id, subsystem: "ws" }, "client disconnected");
   });
 });
+
+const controlConfig = loadControlConfig(process.env, DATA_DIR);
+const controlGateway = createControlGateway(controlConfig);
+const controlTasks = createTaskService(controlGateway, () => new Set(AGENT_REGISTRY.keys()));
+app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig }));
+server.on("listening", () => controlGateway.start());
+server.on("close", () => { controlTasks.close(); controlGateway.close(); });
 
 // Unmatched requests that reach the end of the API route chain keep the API
 // representation/status contract. In particular, an unknown GET must not fall

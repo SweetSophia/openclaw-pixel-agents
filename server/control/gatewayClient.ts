@@ -6,6 +6,9 @@ import { loadOrCreateDeviceIdentity, readDeviceGrant, writeDeviceGrant } from '.
 const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'] as const;
 export type ControlMethod = typeof READ_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
+export class GatewayRequestError extends Error {
+  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable') { super('Task source request rejected'); }
+}
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
   request(method: ControlMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
@@ -102,7 +105,11 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       }
       const item = pending.get(frame.id); if (!item) return;
       pending.delete(frame.id); clearTimeout(item.timer); item.cleanup();
-      if (frame.ok) item.resolve(frame.payload); else item.reject(Error('Task source request rejected'));
+      if (frame.ok) item.resolve(frame.payload);
+      else {
+        const error = controlRecord(frame.error);
+        item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST' ? 'invalid-source' : 'unavailable'));
+      }
     });
   }
   return {
