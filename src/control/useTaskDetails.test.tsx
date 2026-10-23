@@ -4,14 +4,14 @@ import { useTaskDetails } from './useTaskDetails';
 import type { ControlSession, ControlTaskSnapshot } from '../../shared/control';
 import { ControlApiError } from './api';
 
-const f = vi.hoisted(() => ({ request: vi.fn(), generation: 1, state: 'unlocked' }));
-vi.mock('./ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: 'ready', canRead: true, canSend: false } }) }));
+const f = vi.hoisted(() => ({ request: vi.fn(), generation: 1, state: 'unlocked', sourceState: 'ready' }));
+vi.mock('./ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: f.sourceState, canRead: f.sourceState === 'ready', canSend: false } }) }));
 const session = (key: string, changes = {}): ControlSession => ({ agentId: 'cylena', sessionKey: `agent:cylena:${key}`, sessionId: `id-${key}`, name: key, isChild: false, hasActiveRun: true, updatedAt: 10, ...changes });
 const a = session('a'); const b = session('b', { updatedAt: 20 });
 const task = (target = a, at = 100): ControlTaskSnapshot => ({ target, source: { state: 'current', observedAt: at }, hasActiveRun: true, runId: 'run-1', runState: 'running', requestAssociation: 'unknown', requestState: 'not-loaded', activity: [], children: [], childrenComplete: true, loadedRecords: 200 });
 const page = (sessions = [a, b], nextCursor?: string) => ({ sessions, source: { state: 'current', observedAt: 100 }, nextCursor });
 function setup(sessions = [a, b]) {
-  f.state = 'unlocked'; f.generation = 1;
+  f.state = 'unlocked'; f.generation = 1; f.sourceState = 'ready';
   f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page(sessions) : task(JSON.parse(String(init?.body))));
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
@@ -70,6 +70,13 @@ describe('task selection and refresh lifecycle', () => {
     await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/task'))).toHaveLength(1);
     rerender({ active: false }); expect(signal?.aborted).toBe(true);
+  });
+  it('clears private facts on confirmed Gateway auth rejection and requires a fresh choice on recovery', async () => {
+    setup(); const { result, rerender } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
+    await waitFor(() => expect(result.current.task).toBeTruthy()); f.sourceState = 'auth-error'; rerender();
+    expect(result.current.task).toBeNull(); expect(result.current.sessions).toEqual([]);
+    f.sourceState = 'ready'; rerender(); await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+    expect(result.current.selected).toBeNull(); expect(result.current.task).toBeNull();
   });
   it('drops old-selection responses and does not regress a newer sampling timestamp', async () => {
     setup(); let resolveOld: (value: unknown) => void = () => {};

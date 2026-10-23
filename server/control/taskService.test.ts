@@ -5,6 +5,7 @@ import { createTaskService } from './taskService';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 'lifecycle-1' };
 function fixture() {
+  let gatewayState: 'ready' | 'auth-error' | 'pairing-required' = 'ready';
   let row = { ...target, key: target.sessionKey, hasActiveRun: true, activeLeafEntryId: 'leaf-1', snapshotAt: 100 } as Record<string, unknown>;
   let listener: (event: GatewayEvent) => void = () => {};
   const history = vi.fn(async (offset: number) => ({
@@ -19,10 +20,10 @@ function fixture() {
     if (method === 'chat.history') return history(Number(params.offset ?? 0));
     return {};
   });
-  const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: true, state: 'ready', canRead: true, canSend: false }), request: rpc,
+  const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: true, state: gatewayState, canRead: gatewayState === 'ready', canSend: false }), request: rpc,
     onEvent(callback) { listener = callback; return () => { listener = () => {}; }; } };
   const tasks = createTaskService(gateway, () => new Set(['cylena']));
-  return { tasks, rpc, history, setRow: (next: Record<string, unknown>) => { row = { ...row, ...next }; }, event: (event: GatewayEvent) => listener(event) };
+  return { tasks, rpc, history, setStatus: (state: typeof gatewayState) => { gatewayState = state; }, setRow: (next: Record<string, unknown>) => { row = { ...row, ...next }; }, event: (event: GatewayEvent) => listener(event) };
 }
 afterEach(() => vi.useRealTimers());
 describe('verified task reads', () => {
@@ -111,6 +112,11 @@ describe('verified task reads', () => {
   it('drops cached private data if the source revokes read permission', async () => {
     const f = fixture(); await f.tasks.getTask(target);
     f.event({ event: 'sessions.changed', payload: {} }); f.rpc.mockRejectedValue(new GatewayRequestError('scope-required'));
+    await expect(f.tasks.getTask(target)).rejects.toMatchObject({ code: 'scope-required' }); f.tasks.close();
+  });
+  it('does not use outage fallback after a reconnect confirms revoked Gateway authority', async () => {
+    const f = fixture(); await f.tasks.getTask(target);
+    f.setStatus('auth-error'); f.event({ event: 'source.invalidated', payload: null }); f.rpc.mockRejectedValue(Error('Disconnected'));
     await expect(f.tasks.getTask(target)).rejects.toMatchObject({ code: 'scope-required' }); f.tasks.close();
   });
   it('bounds session pagination and evicts old cached snapshots beyond 100', async () => {

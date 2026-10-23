@@ -42,6 +42,10 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   function registered(agentId: string): void {
     if (closed || !registeredAgentIds().has(agentId) || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(agentId)) throw new ControlError('invalid-target');
   }
+  function deniedAuthority(): 'scope-required' | 'pairing-required' | undefined {
+    const state = gateway.status().state;
+    return state === 'auth-error' ? 'scope-required' : state === 'pairing-required' ? 'pairing-required' : undefined;
+  }
   function owned(value: unknown, agentId: string): Record<string, unknown> {
     const row = controlRecord(value); if (!row || typeof row.key !== 'string') throw new ControlError('invalid-target');
     const qualifiedOwner = /^agent:([^:]+):.+$/.exec(row.key)?.[1];
@@ -55,6 +59,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   }
   async function verifyTarget(target: ControlTarget, signal?: AbortSignal): Promise<Record<string, unknown>> {
     registered(target.agentId); if (!parseControlTarget(target)) throw new ControlError('invalid-target');
+    const denied = deniedAuthority(); if (denied) throw new ControlError(denied);
     const response = controlRecord(await gateway.request('sessions.describe', { key: target.sessionKey, agentId: target.agentId }, signal));
     const row = decorate(owned(response?.session, target.agentId), target.agentId); lifecycle(target, row); return row;
   }
@@ -75,6 +80,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   }
   async function listSessions(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ControlSessionPage> {
     registered(agentId); const offset = listOffset(agentId, cursor);
+    const denied = deniedAuthority(); if (denied) throw new ControlError(denied);
     const response = controlRecord(await gateway.request('sessions.list', { agentId, limit: 25, offset, includeGlobal: true, includeUnknown: false }, signal));
     if (!response || !Array.isArray(response.sessions) || response.sessions.length > 25) throw new ControlError('invalid-source');
     const sessions: ControlSession[] = [];
@@ -154,6 +160,8 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
       }
       return result;
     } catch (error) {
+      const denied = deniedAuthority();
+      if (denied) { cache.delete(key); for (const [token, item] of earlier) if (identity(item.target) === key) earlier.delete(token); throw new ControlError(denied); }
       if (myDestructiveEpoch !== destructiveEpoch) throw new ControlError('session-changed');
       if (error instanceof GatewayRequestError && error.code !== 'unavailable') {
         cache.delete(key); for (const [token, item] of earlier) if (identity(item.target) === key) earlier.delete(token);
@@ -168,6 +176,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   const unsubscribe = gateway.onEvent(event => {
     if (event.event === 'source.ready') { void gateway.request('sessions.subscribe', {}).catch(() => {}); }
     if (event.event === 'source.invalidated' || event.event === 'sessions.changed') {
+      if (deniedAuthority()) { clear(); return; }
       epoch++;
       const payload = controlRecord(event.payload);
       if (payload && ['reset', 'delete', 'branch', 'branch-switch', 'rewind'].includes(String(payload.reason))) {

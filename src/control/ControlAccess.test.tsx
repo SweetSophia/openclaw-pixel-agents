@@ -39,8 +39,8 @@ describe('tab-memory task access', () => {
     const pending = result.current.unlock('old-key').catch(error => error); act(() => result.current.lock()); resolve(json(status));
     await act(async () => { expect(await pending).toBeInstanceOf(Error); }); expect(result.current.state).toBe('locked');
   });
-  it('locks and clears private capability data after rejected access', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(status)).mockResolvedValueOnce(json({ code: 'locked' }, 401)));
+  it.each([['locked', 401], ['scope-required', 403], ['pairing-required', 503]])('locks and clears private capability data after %s', async (code, httpStatus) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(status)).mockResolvedValueOnce(json({ code }, httpStatus as number)));
     const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
     await act(async () => { await expect(result.current.request('/api/control/status')).rejects.toThrow(); });
     expect(result.current.state).toBe('locked'); expect(result.current.status).toBeNull();

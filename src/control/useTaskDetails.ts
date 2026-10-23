@@ -10,6 +10,7 @@ export interface TaskDetailsState {
 }
 export function useTaskDetails(options: { agentId: string; initialSessionKey: string; active: boolean }): TaskDetailsState {
   const access = useControlAccess();
+  const sourceDenied = access.status?.state === 'auth-error' || access.status?.state === 'pairing-required' || access.status?.configured === false;
   type View = Omit<TaskDetailsState, 'selectSession' | 'refresh' | 'loadMoreSessions' | 'loadEarlier'>;
   const [view, setRendered] = useState<View>({ sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null });
   const data = useRef(view);
@@ -85,6 +86,11 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     data.current = empty; setView(empty);
   }, [scope, stop]);
   useEffect(() => {
+    if (!sourceDenied) return;
+    stop(); everSelected.current = true;
+    setView({ sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null });
+  }, [sourceDenied, stop, setView]);
+  useEffect(() => {
     const change = () => { setVisible(document.visibilityState !== 'hidden'); if (document.visibilityState === 'hidden') stop(); };
     document.addEventListener('visibilitychange', change); return () => document.removeEventListener('visibilitychange', change);
   }, [stop]);
@@ -93,6 +99,6 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     void refresh(); const timer = setInterval(() => { void refresh(); }, 5000);
     return () => { clearInterval(timer); stop(); };
   }, [scope, options.active, visible, access.state, access.status?.canRead, refresh, stop]);
-  const privateView = access.state !== 'unlocked' || scope !== scopeRef.current ? { sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null } : view;
+  const privateView = access.state !== 'unlocked' || sourceDenied || scope !== scopeRef.current ? { sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null } : view;
   return { ...privateView, selectSession, refresh, loadMoreSessions: () => loadSessions(true), loadEarlier: async () => { const current = data.current; if (current.selected && current.task?.nextCursor) await readTask(current.selected, current.task.nextCursor); } };
 }

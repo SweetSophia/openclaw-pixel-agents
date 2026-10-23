@@ -49,7 +49,7 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
       }
       return value;
     } catch (error) {
-      if (current === revision.current && error instanceof ControlApiError && ['locked', 'scope-required'].includes(error.code)) lock();
+      if (current === revision.current && error instanceof ControlApiError && ['locked', 'scope-required', 'pairing-required'].includes(error.code)) lock();
       throw error;
     }
   }, [lock, perform]);
