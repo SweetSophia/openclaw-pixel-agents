@@ -31,6 +31,13 @@ function fixture() {
   return { sends, request, admitted, sessions, set: (v: { canSend?: boolean; policy?: boolean; replaced?: boolean; persisted?: boolean; loseCreate?: boolean; loseSend?: boolean }) => { canSend = v.canSend ?? canSend; policy = v.policy ?? policy; replaced = v.replaced ?? replaced; persisted = v.persisted ?? persisted; loseCreate = v.loseCreate ?? loseCreate; loseSend = v.loseSend ?? loseSend; } };
 }
 describe('explicit send admission', () => {
+  it('retains a regularly retried uncertain creation across the original one-hour age', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0); const f = fixture(); const fresh = { ...input, target: undefined, newConversation: true };
+    f.set({ loseCreate: true }); await expect(f.sends.send(fresh)).rejects.toMatchObject({ code: 'outcome-unknown' });
+    vi.setSystemTime(40 * 60000); f.set({ loseCreate: true }); await expect(f.sends.send(fresh)).rejects.toMatchObject({ code: 'outcome-unknown' });
+    vi.setSystemTime(70 * 60000); await f.sends.send({ ...input, idempotencyKey: 'send-other' });
+    await expect(f.sends.send(fresh)).resolves.toMatchObject({ phase: 'accepted' }); expect(f.sessions.size).toBe(2);
+  });
   it('rejects malformed text, unknown fields, wrong agent and UUID-only assumptions', () => {
     expect(parseSendRequest('cylena', input)).toEqual(input);
     for (const value of [{ ...input, message: '' }, { ...input, message: ' '.repeat(3) }, { ...input, message: 'x'.repeat(8001) }, { ...input, method: 'chat.inject' }, { ...input, target: { ...target, url: 'http://other' } }, { ...input, agentId: 'other' }, { ...input, newConversation: true }]) expect(parseSendRequest('cylena', value)).toBeNull();
