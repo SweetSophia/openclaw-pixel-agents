@@ -169,8 +169,9 @@ export function parseControlHistoryPage(value: unknown): ControlHistoryPage | nu
   });
 }
 export function parseControlSendReceipt(value: unknown): ControlSendReceipt | null {
-  return object(value, {
+  const receipt = object<ControlSendReceipt>(value, {
     target: child(parseControlTarget), idempotencyKey: text(128, true), phase: oneOf(['accepted', 'persisted', 'unknown']),
     runId: optional(text(256, true)), messageId: optional(text(256, true)), messageSeq: optional(integer),
   });
+  return receipt && (receipt.phase !== 'persisted' || (receipt.messageId && receipt.messageSeq && receipt.messageSeq > 0)) ? receipt : null;
 }

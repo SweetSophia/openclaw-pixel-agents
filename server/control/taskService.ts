@@ -14,6 +14,7 @@ export interface TaskService {
   listSessions(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ControlSessionPage>;
   getTask(input: ControlTaskRequest, signal?: AbortSignal): Promise<ControlTaskSnapshot>;
   verifyTarget(target: ControlTarget, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  resolveSession(agentId: string, key: string, signal?: AbortSignal): Promise<ControlSession | null>;
   clear(): void; close(): void;
 }
 const identity = (target: ControlTarget) => JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
@@ -29,7 +30,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     const observed = branches.get(JSON.stringify([agentId, key]));
     return observed || globalBranch ? `observed-${createHash('sha256').update(JSON.stringify([source ?? null, globalBranch ?? null, observed ?? null])).digest('hex')}` : source;
   }
-  const decorate = (row: Record<string, unknown>, agentId: string) => ({ ...row, branchId: branchIdentity(agentId, String(row.key), row.branchId) });
+  const decorate = (row: Record<string, unknown>, agentId: string): Record<string, unknown> => ({ ...row, branchId: branchIdentity(agentId, String(row.key), row.branchId) });
   function trim(): void {
     const now = Date.now();
     for (const [key, entry] of cache) if (now - entry.at >= 60000) cache.delete(key);
@@ -206,6 +207,14 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   if (gateway.status().canRead) void gateway.request('sessions.subscribe', {}).catch(() => {});
   return {
     listSessions, verifyTarget,
+    async resolveSession(agentId, key, signal) {
+      registered(agentId); const denied = deniedAuthority(); if (denied) throw new ControlError(denied);
+      const response = controlRecord(await gateway.request('sessions.describe', { key, agentId }, signal));
+      if (!response?.session) return null;
+      const row = decorate(owned(response.session, agentId), agentId);
+      if (row.key !== key) throw new ControlError('invalid-target');
+      return projectSession(row, agentId);
+    },
     getTask(input, signal) {
       registered(input.agentId); if (signal?.aborted) return Promise.reject(new ControlError('unavailable'));
       const key = JSON.stringify([identity(input), input.cursor ?? null]); let flight = flights.get(key);

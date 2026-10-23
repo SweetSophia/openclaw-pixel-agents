@@ -62,14 +62,29 @@ async function fixture(onFrame?: (frame: Frame, socket: Duplex) => void, challen
   cleanups.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
   return { url: `ws://127.0.0.1:${address.port}`, frames, sockets };
 }
-function client(url?: string): ControlGateway {
+function client(url?: string, sendEnabled = false): ControlGateway {
   const dir = mkdtempSync(join(tmpdir(), 'pixel-gateway-')); cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const config = loadControlConfig(url ? { OPENCLAW_GATEWAY_URL: url, PIXEL_CONTROL_TOKEN: 'fixture-control-key', OPENCLAW_GATEWAY_TOKEN: 'fixture-bootstrap-token' } : {}, dir);
+  config.sendEnabled = sendEnabled;
   const gateway = createControlGateway(config); cleanups.push(() => gateway.close()); return gateway;
 }
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 
 describe('scoped task Gateway client', () => {
+  it.each([true, false])('requires explicit opt-in and negotiated write scope: %s', async grant => {
+    const host = await fixture((frame, socket) => {
+      socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+        auth: { role: 'operator', scopes: grant ? ['operator.read', 'operator.write'] : ['operator.read'] },
+        features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.send', 'sessions.create'], events: [] },
+      }) : { type: 'res', id: frame.id, ok: true, payload: { runId: 'send-fixture' } }));
+    });
+    const gateway = client(host.url, true); await ready(gateway);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read', 'operator.write']);
+    expect(gateway.status()).toMatchObject({ canRead: true, canSend: grant });
+    if (grant) await expect(gateway.request('chat.send', {})).resolves.toEqual({ runId: 'send-fixture' });
+    else { await expect(gateway.request('chat.send', {})).rejects.toMatchObject({ code: 'scope-required' }); expect(host.frames).toHaveLength(1); }
+    await expect(gateway.request('chat.inject' as never, {})).rejects.toThrow();
+  });
   it('does not connect when task configuration is disabled', () => {
     const gateway = client(); gateway.start();
     expect(gateway.status()).toEqual({ configured: false, state: 'disabled', canRead: false, canSend: false });

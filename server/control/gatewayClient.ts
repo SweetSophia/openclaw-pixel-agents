@@ -4,10 +4,11 @@ import type { ControlConfig } from './config';
 import { loadOrCreateDeviceIdentity, readDeviceGrant, writeDeviceGrant } from './deviceIdentity';
 
 const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'] as const;
-export type ControlMethod = typeof READ_METHODS[number];
+const WRITE_METHODS = ['chat.send', 'sessions.create'] as const;
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable' | 'session-changed') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -21,7 +22,7 @@ export function gatewayReconnectDelay(attempt: number, random: () => number = Ma
 }
 export function createControlGateway(config: ControlConfig): ControlGateway {
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';
-  let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined;
+  let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined; let writeGranted = false;
   let reconnect: ReturnType<typeof setTimeout> | undefined; let handshake: ReturnType<typeof setTimeout> | undefined;
   const pending = new Map<string, Pending>(); const listeners = new Set<(event: GatewayEvent) => void>();
   const emit = (event: GatewayEvent) => { for (const listener of listeners) listener(event); };
@@ -30,7 +31,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     pending.clear();
   }
   function fail(next: ControlGatewayState, retryable = false): void {
-    generation++; state = next; clearTimeout(handshake); handshake = undefined;
+    generation++; state = next; writeGranted = false; clearTimeout(handshake); handshake = undefined;
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
     rejectPending('Task source connection changed'); emit({ event: 'source.invalidated', payload: null });
@@ -47,7 +48,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     state = 'connecting'; sequence = undefined;
     const current = ++generation; const ws = new WebSocket(config.url!); socket = ws;
     let connectId: string | undefined;
-    const scopes = ['operator.read'];
+    const scopes = config.sendEnabled ? ['operator.read', 'operator.write'] : ['operator.read'];
     const storedToken = readDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, scopes);
     const signatureToken = config.token || (!config.password ? storedToken : undefined);
     handshake = setTimeout(() => { if (generation === current) fail('unavailable', true); }, 5000); handshake.unref?.();
@@ -97,9 +98,10 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
           || policy.tickIntervalMs <= 0 || typeof policy.maxPayload !== 'number' || typeof policy.maxBufferedBytes !== 'number'
           || !features || !Array.isArray(methods) || !READ_METHODS.every(method => methods.includes(method))
           || !Array.isArray(features.events)) { fail('unsupported'); return; }
-        if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !scopes.every(scope => grants.includes(scope))) { fail('auth-error'); return; }
+        if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !grants.includes('operator.read')) { fail('auth-error'); return; }
+        writeGranted = config.sendEnabled && grants.includes('operator.write') && WRITE_METHODS.every(method => methods.includes(method));
         if (typeof auth.deviceToken === 'string' && auth.deviceToken.length > 0 && auth.deviceToken.length <= 16384) {
-          try { writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, auth.deviceToken, scopes); } catch { fail('auth-error'); return; }
+          try { writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, auth.deviceToken, scopes.filter(scope => grants.includes(scope))); } catch { fail('auth-error'); return; }
         }
         clearTimeout(handshake); handshake = undefined; retry = 0; state = 'ready'; emit({ event: 'source.ready', payload: null }); return;
       }
@@ -114,9 +116,9 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
   }
   return {
     start() { if (stopped || !config.enabled || socket || reconnect) return; connect(); },
-    status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: false }),
+    status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: state === 'ready' && writeGranted }),
     request(method, params, signal) {
-      if (!READ_METHODS.includes(method)) return Promise.reject(Error('Unsupported task method'));
+      if (!(READ_METHODS as readonly string[]).includes(method) && (!(WRITE_METHODS as readonly string[]).includes(method) || !writeGranted)) return Promise.reject(new GatewayRequestError('scope-required'));
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(Error('Task source unavailable'));
       if (signal?.aborted) return Promise.reject(Error('Task request cancelled'));
       if (pending.size >= 8) return Promise.reject(Error('Too many pending task requests'));
