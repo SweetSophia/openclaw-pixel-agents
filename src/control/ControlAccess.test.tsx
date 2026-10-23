@@ -16,7 +16,7 @@ describe('tab-memory task access', () => {
     const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
     const socket = result.current.openSocket?.();
     expect(socketFixture.io).toHaveBeenCalledWith('/control', expect.objectContaining({ forceNew: true, autoConnect: false, transports: ['websocket', 'polling'], auth: { token: 'fixture-key' } }));
-    expect(socketFixture.io.mock.calls.at(-1)?.[1]).not.toHaveProperty('query'); act(() => result.current.lock()); expect(socketFixture.disconnect).toHaveBeenCalled(); expect(socket).toBeTruthy();
+    expect(socketFixture.io.mock.calls[socketFixture.io.mock.calls.length - 1]?.[1]).not.toHaveProperty('query'); act(() => result.current.lock()); expect(socketFixture.disconnect).toHaveBeenCalled(); expect(socket).toBeTruthy();
   });
   it('normalizes a late network failure to locked for an obsolete access generation', async () => {
     let reject: (error: Error) => void = () => {};
