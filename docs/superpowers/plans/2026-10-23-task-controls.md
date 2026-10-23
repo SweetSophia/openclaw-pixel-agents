@@ -135,8 +135,8 @@ interface ControlErrorBody { error: string; code: ControlErrorCode }
 
 - [x] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate` and `git diff --check`; require successful exits and repository coverage floors. Do not add tests merely for plan/mockup documentation.
 - [x] Use an isolated fixture preview at 320/390/768/1024/1440px and short landscape. Exercise native unlock, conversation selection, refresh, history loading, tabs, modal focus and all unavailable/stale states. Check 44px targets, one reachable scroll area, no horizontal overflow, no public-socket private events and no browser errors.
-- [ ] Conduct a live read-only Gateway check with its distinct approved read device; never issue a real task. Check returned text/run identity against the selected conversation without committing private fixtures. Confirm collector/room/canvas behavior and persisted layout/preferences remain intact.
-- [ ] Follow the selected execution method's independent review gate and existing bot-review policy. Address valid findings, require green current-head checks and no new valid comments, then merge Delivery 1 in dependency order. Take a fresh backup, deploy the tested artifacts and opt-in read configuration, and verify actual live behavior before proceeding to Delivery 2.
+- [x] Conduct a live read-only Gateway check with its distinct approved read device; never issue a real task. Check returned text/run identity against the selected conversation without committing private fixtures. Confirm collector/room/canvas behavior and persisted layout/preferences remain intact.
+- [x] Follow the selected execution method's independent review gate and existing bot-review policy. Address valid findings, require green current-head checks and no new valid comments, then merge Delivery 1 in dependency order. Take a fresh backup, deploy the tested artifacts and opt-in read configuration, and verify actual live behavior before proceeding to Delivery 2.
 
 ## Delivery 2
 
