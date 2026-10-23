@@ -27,6 +27,41 @@ function fixture(registeredIds = ['cylena']) {
 }
 afterEach(() => vi.useRealTimers());
 describe('verified task reads', () => {
+  it('keeps cursor discovery at least as fresh as the latest verified tail', async () => {
+    const f = fixture(); const original = f.history.getMockImplementation()!; let text = 'original tail';
+    f.history.mockImplementation(async offset => ({ ...await original(offset), ...(offset === 0 ? { messages: [{ role: 'assistant', content: text, __openclaw: { id: 'tail', runId: 'run-1' } }] } : {}) } as never));
+    const initial = await f.tasks.getTask(target); text = 'latest verified tail'; f.setRow({ snapshotAt: 200 });
+    f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey } }); const refreshed = await f.tasks.getTask(target);
+    const expanded = await f.tasks.getTask({ ...target, cursor: initial.nextCursor });
+    expect(expanded.source.observedAt).toBeGreaterThanOrEqual(refreshed.source.observedAt); expect(expanded.latestResponse?.text).toBe('latest verified tail'); f.tasks.close();
+  });
+  it.each([target.sessionKey, 'agent:other:unrelated'])('does not cancel a pending read for routine activity in %s', async key => {
+    const f = fixture(); const original = f.rpc.getMockImplementation()!; let release: () => void = () => {}; let waiting = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    f.rpc.mockImplementation(async (method, params, signal) => { if (method === 'chat.history' && !waiting) { waiting = true; await gate; } return original(method, params, signal); });
+    const result = f.tasks.getTask(target); await vi.waitFor(() => expect(waiting).toBe(true));
+    f.event({ event: 'sessions.changed', payload: { sessionKey: key, reason: 'activity' } }); release();
+    await expect(result).resolves.toMatchObject({ source: { state: 'current' } }); f.tasks.close();
+  });
+  it('does not attach a new reader to a shared flight whose final consumer already aborted', async () => {
+    const f = fixture(); const original = f.rpc.getMockImplementation()!; let first = true;
+    f.rpc.mockImplementation((method, params, signal) => { if (method === 'sessions.describe' && first) { first = false; return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(Error('cancelled')))); } return original(method, params, signal); });
+    const controller = new AbortController(); const abandoned = f.tasks.getTask(target, controller.signal).catch(error => error);
+    controller.abort(); const current = f.tasks.getTask(target); await abandoned; await expect(current).resolves.toMatchObject({ target }); f.tasks.close();
+  });
+  it('uses the source nextOffset and otherwise counts raw source rows before owner filtering', async () => {
+    const f = fixture(); const seen: number[] = [];
+    f.rpc.mockImplementation(async (method, params) => { if (method !== 'sessions.list') return {};
+      seen.push(Number(params.offset)); return { sessions: [{ ...target, key: target.sessionKey }, { ...target, key: 'agent:other:hidden' }], hasMore: true, ...(Number(params.offset) === 0 ? { nextOffset: 7 } : {}) };
+    });
+    const first = await f.tasks.listSessions('cylena'); const second = await f.tasks.listSessions('cylena', first.nextCursor); await f.tasks.listSessions('cylena', second.nextCursor);
+    expect(seen).toEqual([0, 7, 9]); expect(first.sessions).toHaveLength(1); f.tasks.close();
+  });
+  it('counts received history records while bounding automatic source requests independently', async () => {
+    const f = fixture(); f.history.mockImplementation(async offset => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: {}, messages: [{ role: 'toolResult', content: 'one record' }], inFlightRun: { runId: 'run-1' }, nextOffset: offset + 50, hasMore: true } as never));
+    const task = await f.tasks.getTask(target); expect(task.loadedRecords).toBe(4); expect(f.history).toHaveBeenCalledTimes(4);
+    const more = await f.tasks.getTask({ ...target, cursor: task.nextCursor }); expect(more.loadedRecords).toBe(5); f.tasks.close();
+  });
   it('lists only canonically owned registered sessions and keeps list cursors agent-bound', async () => {
     const f = fixture(); expect((await f.tasks.listSessions('cylena')).sessions[0]).toMatchObject(target);
     await expect(f.tasks.listSessions('other')).rejects.toMatchObject({ code: 'invalid-target' });
@@ -52,11 +87,11 @@ describe('verified task reads', () => {
   it('seeks fifty records at a time up to 200, keeping actual recent activity', async () => {
     const f = fixture(); const task = await f.tasks.getTask(target);
     expect(f.history.mock.calls.map(args => args[0])).toEqual([0, 50, 100, 150]);
-    expect(task).toMatchObject({ loadedRecords: 200, requestAssociation: 'run', runId: 'run-1' });
+    expect(task).toMatchObject({ loadedRecords: 151, requestAssociation: 'run', runId: 'run-1' });
     expect(task.request?.text).toBe('Please check the fixture'); expect(task.activity).toHaveLength(50); f.tasks.close();
   });
   it('continues through bounded opaque cursors, refusing a cross-target or expired cursor', async () => {
-    const f = fixture(); f.history.mockImplementation(async offset => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: {}, messages: [], inFlightRun: { runId: 'run-1' }, offset, nextOffset: offset + 50, hasMore: true, totalMessages: 3000 }));
+    const f = fixture(); f.history.mockImplementation(async offset => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: {}, messages: Array.from({ length: 50 }, () => ({ role: 'toolResult', content: 'record' })), inFlightRun: { runId: 'run-1' }, offset, nextOffset: offset + 50, hasMore: true, totalMessages: 3000 } as never));
     let task = await f.tasks.getTask(target); expect(task).toMatchObject({ loadedRecords: 200, requestState: 'not-loaded' });
     expect(task.nextCursor).toBeTruthy();
     const calls = f.history.mock.calls.length; task = await f.tasks.getTask({ ...target, cursor: task.nextCursor });
@@ -81,7 +116,7 @@ describe('verified task reads', () => {
     await expect(f.tasks.getTask(target)).rejects.toMatchObject({ code: 'session-changed' }); f.tasks.close();
   });
   it('caps explicit discovery at 2000 records without manufacturing a request', async () => {
-    const f = fixture(); f.history.mockImplementation(async offset => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: {}, messages: [], inFlightRun: { runId: 'run-1' }, offset, nextOffset: offset + 50, hasMore: true, totalMessages: 3000 }));
+    const f = fixture(); f.history.mockImplementation(async offset => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: {}, messages: Array.from({ length: 50 }, () => ({ role: 'toolResult', content: 'record' })), inFlightRun: { runId: 'run-1' }, offset, nextOffset: offset + 50, hasMore: true, totalMessages: 3000 } as never));
     let task = await f.tasks.getTask(target);
     while (task.nextCursor) task = await f.tasks.getTask({ ...target, cursor: task.nextCursor });
     expect(task.loadedRecords).toBe(2000); expect(task.requestState).toBe('limit-reached'); expect(task.request).toBeUndefined(); f.tasks.close();
@@ -164,20 +199,20 @@ describe('verified task reads', () => {
       const result = value as { session: Record<string, unknown> }; return { ...result, session: { ...result.session, activeLeafEntryId: undefined } };
     });
     const initial = await f.tasks.getTask(target);
-    expect((await f.tasks.getTask({ ...target, cursor: initial.nextCursor })).loadedRecords).toBe(250); f.tasks.close();
+    expect((await f.tasks.getTask({ ...target, cursor: initial.nextCursor })).loadedRecords).toBe(152); f.tasks.close();
   });
   it('renders a genuine empty transcript whose authoritative active leaf is null', async () => {
     const f = fixture(); f.setRow({ activeLeafEntryId: undefined, hasActiveRun: false });
     f.history.mockImplementation(async () => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: { activeLeafEntryId: null }, messages: [], inFlightRun: undefined, hasMore: false } as never));
     const task = await f.tasks.getTask(target); expect(task.request).toBeUndefined(); expect(task.requestState).toBe('unavailable'); expect(task.target.activeLeafEntryId).toBeUndefined(); f.tasks.close();
   });
-  it('keeps a request discovered beyond 200 records through the next tail refresh', async () => {
+  it('keeps a request discovered in an earlier source window through the next tail refresh', async () => {
     const f = fixture(); const original = f.history.getMockImplementation()!;
     f.history.mockImplementation(async offset => offset === 150 ? { ...(await original(offset)), messages: [] } : original(offset));
     const initial = await f.tasks.getTask(target); expect(initial.request).toBeUndefined();
     const expanded = await f.tasks.getTask({ ...target, cursor: initial.nextCursor }); expect(expanded.requestAssociation).toBe('run');
     f.event({ event: 'sessions.changed', payload: {} });
-    const refreshed = await f.tasks.getTask(target); expect(refreshed.request?.id).toBe(expanded.request?.id); expect(refreshed.loadedRecords).toBeGreaterThanOrEqual(250); f.tasks.close();
+    const refreshed = await f.tasks.getTask(target); expect(refreshed.request?.id).toBe(expanded.request?.id); expect(refreshed.loadedRecords).toBeGreaterThanOrEqual(151); f.tasks.close();
   });
   it('fences the old target and its cursors after the actual branch-switch event', async () => {
     const f = fixture(); const initial = await f.tasks.getTask(target);

@@ -3,13 +3,10 @@ import {
   CONTROL_LIMITS, controlByteSize, controlRecord, parseControlTarget,
   type ControlSession, type ControlSessionPage, type ControlTarget, type ControlTaskRequest, type ControlTaskSnapshot,
 } from '../../shared/control';
-import type { ControlErrorCode } from '../../shared/control';
 import { projectSession, projectTask } from './projection';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
-
-export class ControlError extends Error {
-  constructor(public readonly code: ControlErrorCode) { super(code); }
-}
+import { ControlError } from './errors';
+export { ControlError } from './errors';
 export interface TaskService {
   listSessions(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ControlSessionPage>;
   getTask(input: ControlTaskRequest, signal?: AbortSignal): Promise<ControlTaskSnapshot>;
@@ -20,7 +17,7 @@ export interface TaskService {
 const identity = (target: ControlTarget) => JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
 interface Cached { snapshot: ControlTaskSnapshot; at: number; valid: boolean; order: number; offset: number; total?: number }
 interface Earlier { target: ControlTarget; snapshot: ControlTaskSnapshot; offset: number; loaded: number; expires: number; leaf?: unknown }
-interface Flight { promise: Promise<ControlTaskSnapshot>; controller: AbortController; users: number }
+interface Flight { promise: Promise<ControlTaskSnapshot>; controller: AbortController; users: number; target: ControlTarget; observation: { dirty: boolean } }
 export function createTaskService(gateway: ControlGateway, registeredAgentIds: () => ReadonlySet<string>): TaskService {
   const cache = new Map<string, Cached>(); const earlier = new Map<string, Earlier>(); const flights = new Map<string, Flight>();
   const cursorSecret = randomBytes(32); let closed = false; let epoch = 0; let destructiveEpoch = 0; let order = 0;
@@ -82,20 +79,22 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   async function listSessions(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ControlSessionPage> {
     registered(agentId); const offset = listOffset(agentId, cursor);
     const denied = deniedAuthority(); if (denied) throw new ControlError(denied);
-    const response = controlRecord(await gateway.request('sessions.list', { agentId, limit: 25, offset, includeGlobal: true, includeUnknown: false }, signal));
-    if (!response || !Array.isArray(response.sessions) || response.sessions.length > 25) throw new ControlError('invalid-source');
+    const response = controlRecord(await gateway.request('sessions.list', { agentId, limit: CONTROL_LIMITS.sessions, offset, includeGlobal: true, includeUnknown: false }, signal));
+    if (!response || !Array.isArray(response.sessions) || response.sessions.length > CONTROL_LIMITS.sessions) throw new ControlError('invalid-source');
     const sessions: ControlSession[] = [];
     for (const value of response.sessions) {
       try { const projected = projectSession(decorate(owned(value, agentId), agentId), agentId); if (projected) sessions.push(projected); } catch { /* Do not expose another owner's row. */ }
     }
-    const hasMore = response.hasMore === true || (response.hasMore !== false && response.sessions.length === 25);
+    const hasMore = response.hasMore === true || (response.hasMore !== false && response.sessions.length === CONTROL_LIMITS.sessions);
+    const nextOffset = response.nextOffset === undefined ? offset + response.sessions.length : response.nextOffset;
+    if (hasMore && (!Number.isSafeInteger(nextOffset) || (nextOffset as number) <= offset || (nextOffset as number) > 100000)) throw new ControlError('invalid-source');
     const observedAt = typeof response.ts === 'number' && Number.isFinite(response.ts) && response.ts >= 0 ? response.ts : Date.now();
-    return { sessions, source: { state: 'current', observedAt }, ...(hasMore ? { nextCursor: listCursor(agentId, offset + 25) } : {}) };
+    return { sessions, source: { state: 'current', observedAt }, ...(hasMore ? { nextCursor: listCursor(agentId, nextOffset as number) } : {}) };
   }
   function continuation(target: ControlTarget, snapshot: ControlTaskSnapshot, offset: number, leaf?: unknown): string {
     const token = randomUUID(); earlier.set(token, { target, snapshot: structuredClone(snapshot), offset, loaded: snapshot.loadedRecords, expires: Date.now() + 60000, leaf }); trim(); return token;
   }
-  async function read(input: ControlTaskRequest, signal: AbortSignal): Promise<ControlTaskSnapshot> {
+  async function read(input: ControlTaskRequest, signal: AbortSignal, observation: { dirty: boolean }): Promise<ControlTaskSnapshot> {
     trim(); const key = identity(input); const previous = cache.get(key); const myEpoch = epoch; const myDestructiveEpoch = destructiveEpoch; const myOrder = ++order;
     const cursor = input.cursor ? earlier.get(input.cursor) : undefined;
     if (input.cursor && (!cursor || cursor.expires <= Date.now() || identity(cursor.target) !== key)) throw new ControlError('invalid-request');
@@ -104,13 +103,14 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
       if (!input.cursor && previous?.valid && Date.now() - previous.at < 2000) return structuredClone(previous.snapshot);
       if (cursor && cursor.leaf !== undefined && row.activeLeafEntryId !== undefined && row.activeLeafEntryId !== cursor.leaf) throw new ControlError('invalid-request');
       let offset = cursor?.offset ?? 0; let loaded = cursor?.loaded ?? 0;
-      const budget = cursor ? Math.min(50, 2000 - loaded) : 200;
+      const budget = cursor ? Math.min(CONTROL_LIMITS.historyPage, CONTROL_LIMITS.maximumHistory - loaded) : CONTROL_LIMITS.automaticHistory;
       if (budget <= 0) throw new ControlError('invalid-request');
       let messages: unknown[] = []; let newest: Record<string, unknown> | undefined; let more = false; let total: unknown;
-      for (let used = 0; used < budget; used += 50) {
-        const page = controlRecord(await gateway.request('chat.history', { sessionKey: input.sessionKey, agentId: input.agentId, limit: 50, maxBytes: 256 * 1024, offset }, signal));
+      for (let used = 0; used < budget; used += CONTROL_LIMITS.historyPage) {
+        const limit = Math.min(CONTROL_LIMITS.historyPage, budget - used, CONTROL_LIMITS.maximumHistory - loaded);
+        const page = controlRecord(await gateway.request('chat.history', { sessionKey: input.sessionKey, agentId: input.agentId, limit, maxBytes: CONTROL_LIMITS.responseBytes, offset }, signal));
         if (!page || page.sessionKey !== input.sessionKey || page.sessionId !== input.sessionId || !Array.isArray(page.messages)
-          || page.messages.length > 200 || page.windowReset === true || (total !== undefined && total !== page.totalMessages)) throw new ControlError('invalid-source');
+          || page.messages.length > limit || page.windowReset === true || (total !== undefined && total !== page.totalMessages)) throw new ControlError('invalid-source');
         total = page.totalMessages;
         const info = controlRecord(page.sessionInfo);
         if (info && Object.keys(info).length) {
@@ -120,7 +120,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
           lifecycle(input, updated); row = updated;
         }
         if (!newest) newest = page;
-        messages = [...page.messages, ...messages]; loaded += 50;
+        messages = [...page.messages, ...messages]; loaded += page.messages.length;
         more = page.hasMore === true;
         const next = page.nextOffset;
         if (more && (!Number.isSafeInteger(next) || (next as number) <= offset)) throw new ControlError('invalid-source');
@@ -149,24 +149,28 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
         childrenComplete: qualifiedParent && validChildPage && children.length === childRows.length
           && (childResponse?.hasMore === false || (childResponse?.hasMore !== true && childRows.length < 25)), loadedRecords: loaded, observedAt: sourceAt });
       if (cursor) {
-        const old = cursor.snapshot;
+        const old = previous && previous.snapshot.source.observedAt >= cursor.snapshot.source.observedAt ? previous.snapshot : cursor.snapshot;
+        if (old.runId !== result.runId) throw new ControlError('invalid-request');
         // Earlier discovery supplies request context; recent response/activity stay at the observed tail.
-        result = { ...old, target, loadedRecords: loaded, nextCursor: undefined,
+        result = { ...old, target, source: result.source, hasActiveRun: result.hasActiveRun, activeRunIds: result.activeRunIds,
+          runState: result.runState, startedAt: result.startedAt, endedAt: result.endedAt, model: result.model,
+          children: result.children, childrenComplete: result.childrenComplete, result: result.runState === 'completed' ? old.result : undefined,
+          loadedRecords: loaded, nextCursor: undefined,
           request: result.requestAssociation === 'run' ? result.request : old.request ?? result.request,
           requestAssociation: result.requestAssociation === 'run' ? 'run' : old.requestAssociation === 'run' ? 'run' : result.request ? 'latest-recorded' : old.requestAssociation,
-          requestState: result.requestAssociation === 'run' || old.requestAssociation === 'run' || (!result.runId && (result.request || old.request)) ? 'found' : loaded >= 2000 ? 'limit-reached' : more ? 'not-loaded' : 'unavailable' };
+          requestState: result.requestAssociation === 'run' || old.requestAssociation === 'run' || (!result.runId && (result.request || old.request)) ? 'found' : loaded >= CONTROL_LIMITS.maximumHistory ? 'limit-reached' : more ? 'not-loaded' : 'unavailable' };
       }
       if (!cursor && result.runId && result.runId === previous?.snapshot.runId && typeof total === 'number' && previous.total !== undefined && total >= previous.total) {
         const old = previous.snapshot;
         if (result.requestAssociation !== 'run' && old.requestAssociation === 'run') result = { ...result, request: old.request, requestAssociation: 'run', requestState: 'found' };
         if (old.loadedRecords > result.loadedRecords) { loaded = old.loadedRecords; result.loadedRecords = loaded; offset = previous.offset + total - previous.total; }
       }
-      if (more && loaded < 2000) result.nextCursor = continuation(target, result, offset, row.activeLeafEntryId);
+      if (more && loaded < CONTROL_LIMITS.maximumHistory) result.nextCursor = continuation(target, result, offset, row.activeLeafEntryId);
       if (controlByteSize(result) > CONTROL_LIMITS.responseBytes) throw new ControlError('invalid-source');
       if (closed || signal.aborted || myEpoch !== epoch) throw new ControlError('unavailable');
       const latest = cache.get(key);
       if (!latest || (result.source.observedAt >= latest.snapshot.source.observedAt && myOrder >= latest.order)) {
-        cache.delete(key); cache.set(key, { snapshot: structuredClone(result), at: Date.now(), valid: true, order: myOrder, offset, total: typeof total === 'number' ? total : undefined }); trim();
+        cache.delete(key); cache.set(key, { snapshot: structuredClone(result), at: Date.now(), valid: !observation.dirty, order: myOrder, offset, total: typeof total === 'number' ? total : undefined }); trim();
       }
       return result;
     } catch (error) {
@@ -187,9 +191,9 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     if (event.event === 'source.ready') { void gateway.request('sessions.subscribe', {}).catch(() => {}); }
     if (event.event === 'source.invalidated' || event.event === 'sessions.changed') {
       if (deniedAuthority()) { clear(); return; }
-      epoch++;
       const payload = controlRecord(event.payload);
       if (payload && ['reset', 'delete', 'branch', 'branch-switch', 'rewind'].includes(String(payload.reason))) {
+        epoch++;
         destructiveEpoch++; cache.clear(); earlier.clear();
         if (payload.reason === 'branch-switch' || payload.reason === 'branch' || payload.reason === 'rewind') {
           const nested = controlRecord(payload.session); const sessionKey = payload.sessionKey ?? nested?.key;
@@ -201,7 +205,15 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
         }
         for (const flight of flights.values()) flight.controller.abort();
       }
-      else for (const entry of cache.values()) entry.valid = false;
+      else {
+        if (event.event === 'source.invalidated') epoch++;
+        const nested = controlRecord(payload?.session);
+        const sessionKey = typeof (payload?.sessionKey ?? nested?.key) === 'string' ? String(payload?.sessionKey ?? nested?.key) : undefined;
+        const agentId = payload?.agentId ?? nested?.agentId ?? (sessionKey ? /^agent:([^:]+):/.exec(sessionKey)?.[1] : undefined);
+        const affected = (target: ControlTarget) => (sessionKey === undefined || target.sessionKey === sessionKey) && (typeof agentId !== 'string' || target.agentId === agentId);
+        for (const entry of cache.values()) if (event.event === 'source.invalidated' || affected(entry.snapshot.target)) entry.valid = false;
+        for (const flight of flights.values()) if (event.event === 'source.invalidated' || affected(flight.target)) flight.observation.dirty = true;
+      }
     }
   });
   if (gateway.status().canRead) void gateway.request('sessions.subscribe', {}).catch(() => {});
@@ -219,14 +231,15 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
       registered(input.agentId); if (signal?.aborted) return Promise.reject(new ControlError('unavailable'));
       const key = JSON.stringify([identity(input), input.cursor ?? null]); let flight = flights.get(key);
       if (!flight) {
-        const controller = new AbortController(); flight = { controller, users: 0, promise: read(input, controller.signal) };
+        const controller = new AbortController(); const observation = { dirty: false };
+        flight = { controller, users: 0, target: input, observation, promise: read(input, controller.signal, observation) };
         flights.set(key, flight); const current = flight;
         void current.promise.finally(() => { if (flights.get(key) === current) flights.delete(key); }).catch(() => {});
       }
       const current = flight; current.users++;
       return new Promise((resolve, reject) => {
         let settled = false;
-        const finish = () => { if (settled) return false; settled = true; signal?.removeEventListener('abort', abort); current.users--; if (!current.users) current.controller.abort(); return true; };
+        const finish = () => { if (settled) return false; settled = true; signal?.removeEventListener('abort', abort); current.users--; if (!current.users) { if (flights.get(key) === current) flights.delete(key); current.controller.abort(); } return true; };
         const abort = () => { if (finish()) reject(new ControlError('unavailable')); };
         signal?.addEventListener('abort', abort, { once: true });
         current.promise.then(value => { if (finish()) resolve(structuredClone(value)); }, error => { if (finish()) reject(error); });
