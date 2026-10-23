@@ -1161,6 +1161,46 @@ describe('GameEngine integration: render fault tolerance (issue #172)', () => {
     expect(pendingFrames).toHaveLength(1);
   });
 
+  it('restores full scene opacity after one fading sub-agent frame fails', () => {
+    const spriteCanvas = document.createElement('canvas');
+    spriteCanvas.width = 16;
+    spriteCanvas.height = 32;
+    const frameFailure = new DOMException('Transient sprite draw failure', 'InvalidStateError');
+    let failOnce = true;
+    let floorSource: unknown;
+    const floorOpacity: number[] = [];
+    const made = makeCanvasWithStubbedContext(source => {
+      floorSource ??= source;
+      if (source === floorSource) floorOpacity.push(made.recorded.ctx.globalAlpha);
+      if (source === spriteCanvas && made.recorded.ctx.globalAlpha < 1 && failOnce) {
+        failOnce = false;
+        throw frameFailure;
+      }
+    });
+    const { ctx } = made.recorded;
+    // Model the native canvas state stack at the browser boundary.
+    const opacityStack: number[] = [];
+    ctx.save = () => { opacityStack.push(ctx.globalAlpha); };
+    ctx.restore = () => { ctx.globalAlpha = opacityStack.pop() ?? ctx.globalAlpha; };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    engine = new GameEngine(made.canvas, GRID) as unknown as TestGameEngine;
+    engine.characters_sprites = [makeCharacterSprite(spriteCanvas)];
+    engine.addCharacter({ id: 'parent', name: 'Parent', x: 2, y: 2, state: 'typing' });
+    engine.spawnSubAgent('parent', 'sub-fading', 'Fading child');
+    engine.killSubAgent('sub-fading');
+    engine.update(1); // Halfway through the real two-second fade.
+
+    engine.start();
+    expect(errorSpy).toHaveBeenCalledWith('[GameEngine] render error', frameFailure);
+    pendingFrames.shift()!(performance.now());
+    pendingFrames.shift()!(performance.now());
+
+    expect(floorOpacity).toEqual([1, 1, 1]);
+    expect(ctx.globalAlpha).toBe(1);
+    expect(opacityStack).toHaveLength(0);
+  });
+
   it('skips the render but keeps the loop alive when update throws, then recovers', () => {
     const made = makeCanvasWithStubbedContext();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(made.recorded.ctx);

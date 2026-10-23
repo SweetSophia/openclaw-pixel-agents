@@ -1249,82 +1249,85 @@ export class GameEngine {
     const totalDy = (breathOffset + idleOff.dy * tileSize);
 
     ctx.save();
+    try {
 
-    // Apply idle scaleX for stretch (inside save/restore so it can't leak)
-    if (idleOff.scaleX !== 1) {
-      ctx.translate(px + tileSize / 2, 0);
-      ctx.scale(idleOff.scaleX, 1);
-      ctx.translate(-(px + tileSize / 2), 0);
-    }
+      // Apply idle scaleX for stretch (inside save/restore so it can't leak)
+      if (idleOff.scaleX !== 1) {
+        ctx.translate(px + tileSize / 2, 0);
+        ctx.scale(idleOff.scaleX, 1);
+        ctx.translate(-(px + tileSize / 2), 0);
+      }
 
-    // Sub-agent transparency
-    if (char.isSubAgent && char.fadeAlpha < 1) {
-      ctx.globalAlpha = char.fadeAlpha;
-    }
+      // Sub-agent transparency
+      if (char.isSubAgent && char.fadeAlpha < 1) {
+        ctx.globalAlpha = char.fadeAlpha;
+      }
 
-    // Spawn glow effect for new sub-agents
-    if (char.isSubAgent && (this.nowMs - char.spawnTime) < 1000) {
-      const glowAlpha = 1 - (this.nowMs - char.spawnTime) / 1000;
-      ctx.fillStyle = `rgba(78, 204, 163, ${glowAlpha * 0.4})`;
-      ctx.beginPath();
-      ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize, 0, Math.PI * 2);
-      ctx.fill();
-    }
+      // Spawn glow effect for new sub-agents
+      if (char.isSubAgent && (this.nowMs - char.spawnTime) < 1000) {
+        const glowAlpha = 1 - (this.nowMs - char.spawnTime) / 1000;
+        ctx.fillStyle = `rgba(78, 204, 163, ${glowAlpha * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-    const sprites = this.characters_sprites;
-    if (sprites == null || sprites.length === 0) {
-      this.renderPlaceholderCharacter(char, px, py, tileSize);
-    } else {
-      const override = this.characterSpriteOverrides.get(char.id);
-      const sprite = override ?? getAgentCharacter(char.id) ?? sprites[char.paletteIndex % sprites.length];
-      if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
-      else {
-        const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
-        // getSpriteFrame nulls zero-size canvases centrally — trust that contract here.
-        if (!frameCanvas) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
+      const sprites = this.characters_sprites;
+      if (sprites == null || sprites.length === 0) {
+        this.renderPlaceholderCharacter(char, px, py, tileSize);
+      } else {
+        const override = this.characterSpriteOverrides.get(char.id);
+        const sprite = override ?? getAgentCharacter(char.id) ?? sprites[char.paletteIndex % sprites.length];
+        if (!sprite) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
         else {
-          const scale = char.isSubAgent ? 1.5 : 2;
-          const spriteW = 16 * scale, spriteH = 32 * scale;
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(frameCanvas, px + (tileSize - spriteW) / 2 + totalDx, py + tileSize - spriteH + totalDy, spriteW, spriteH);
+          const frameCanvas = getSpriteFrame(sprite, animState, char.direction, char.animFrame);
+          // getSpriteFrame nulls zero-size canvases centrally — trust that contract here.
+          if (!frameCanvas) { this.renderPlaceholderCharacter(char, px, py, tileSize); }
+          else {
+            const scale = char.isSubAgent ? 1.5 : 2;
+            const spriteW = 16 * scale, spriteH = 32 * scale;
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(frameCanvas, px + (tileSize - spriteW) / 2 + totalDx, py + tileSize - spriteH + totalDy, spriteW, spriteH);
+          }
         }
       }
-    }
 
-    // Name label
-    const fontSize = char.isSubAgent
-      ? Math.max(6, tileSize * 0.2)
-      : Math.max(8, tileSize * 0.28);
-    ctx.font = `bold ${fontSize}px monospace`;
-    ctx.fillStyle = char.isSubAgent ? '#4ecca3' : '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.fillText(char.name, px + tileSize / 2, py + tileSize + tileSize * 0.35);
-    ctx.textAlign = 'left';
+      // Name label
+      const fontSize = char.isSubAgent
+        ? Math.max(6, tileSize * 0.2)
+        : Math.max(8, tileSize * 0.28);
+      ctx.font = `bold ${fontSize}px monospace`;
+      ctx.fillStyle = char.isSubAgent ? '#4ecca3' : '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(char.name, px + tileSize / 2, py + tileSize + tileSize * 0.35);
+      ctx.textAlign = 'left';
 
-    // Activity icon (animated)
-    if (!char.isSubAgent) {
-      this.renderActivityIcon(char, px + totalDx, py + totalDy, tileSize);
-    }
+      // Activity icon (animated)
+      if (!char.isSubAgent) {
+        this.renderActivityIcon(char, px + totalDx, py + totalDy, tileSize);
+      }
 
-    // Idle behavior indicator
-    if (!char.isSubAgent) {
-      const behavior = this.idleBehaviors.get(char.id);
-      if (behavior && behavior.current !== 'none') {
-        const icons: Record<IdleAction, string> = {
-          stretch: '🫸', lookAround: '👀', fidget: '💫', sip: '☕', none: '',
-        };
-        const icon = icons[behavior.current];
-        if (icon) {
-          ctx.save();
-          ctx.globalAlpha = 0.7 * (1 - Math.abs(behavior.phase - 0.5) * 0.4); // fade in/out
-          ctx.font = `${tileSize * 0.3}px sans-serif`;
-          ctx.fillText(icon, px + totalDx + tileSize * 0.7, py + totalDy - tileSize * 0.3);
-          ctx.restore();
+      // Idle behavior indicator
+      if (!char.isSubAgent) {
+        const behavior = this.idleBehaviors.get(char.id);
+        if (behavior && behavior.current !== 'none') {
+          const icons: Record<IdleAction, string> = {
+            stretch: '🫸', lookAround: '👀', fidget: '💫', sip: '☕', none: '',
+          };
+          const icon = icons[behavior.current];
+          if (icon) {
+            ctx.save();
+            ctx.globalAlpha = 0.7 * (1 - Math.abs(behavior.phase - 0.5) * 0.4); // fade in/out
+            ctx.font = `${tileSize * 0.3}px sans-serif`;
+            ctx.fillText(icon, px + totalDx + tileSize * 0.7, py + totalDy - tileSize * 0.3);
+            ctx.restore();
+          }
         }
       }
-    }
 
-    ctx.restore();
+    } finally {
+      ctx.restore();
+    }
   }
 
   /** Render animated activity icon above character */
