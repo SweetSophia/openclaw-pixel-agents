@@ -1403,6 +1403,9 @@ function apiMutationGuard(req: express.Request, res: express.Response, next: exp
     return;
   }
 
+  // Private control endpoints retain origin validation and own their access/read/send budgets.
+  if (req.path === "/control" || req.path.startsWith("/control/")) return next();
+
   const ip = req.ip || "unknown";
   const isLayoutWrite = req.path === "/layouts" || req.path.startsWith("/layouts/");
   const scope = isLayoutWrite ? "layouts" : "prefs";

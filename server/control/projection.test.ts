@@ -106,7 +106,7 @@ describe('source-backed task projection', () => {
   });
 
   it('rejects mismatched source generations and poisoned records', () => {
-    expect(() => projectTask(base({}, { sessionId: 'replacement-session' }))).toThrow();
+    expect(() => projectTask(base({}, { sessionId: 'replacement-session' }))).toThrow(expect.objectContaining({ code: 'invalid-source' }));
     expect(() => projectTask({ ...base(), session: JSON.parse('{"__proto__":{},"sessionId":"session-1"}') })).toThrow();
   });
 

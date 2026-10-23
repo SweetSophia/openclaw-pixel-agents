@@ -10,9 +10,15 @@ const ABORT_TEXT = new Set(['stop', 'esc', 'abort', 'exit', 'interrupt', 'detent
   'halt', 'anhalten', 'aufhören', 'hoer auf', 'stopp', 'pare', 'stop openclaw', 'openclaw stop', 'stop action',
   'stop current action', 'stop run', 'stop current run', 'stop agent', 'stop the agent', "stop don't do anything",
   'stop dont do anything', 'stop do not do anything', 'stop doing anything', 'do not do that', 'please stop', 'stop please']);
+const ABORT_PUNCTUATION = new Set('.!?！？…,，。;；:：\'"’”)]}');
 export function isControlCommand(text: string): boolean {
+  // Match Gateway sanitization: formatting and compatibility characters remain ordinary text.
   const normalized = text.normalize('NFC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
-  return /^[\/!]/.test(normalized) || ABORT_TEXT.has(normalized.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, ' ').replace(/[.!?！？…,，。;；:：'"’”)\]}]+$/u, '').trim());
+  if (/^[\/!]/.test(normalized)) return true;
+  const abortText = normalized.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, ' ');
+  let end = abortText.length;
+  while (end > 0 && ABORT_PUNCTUATION.has(abortText[end - 1])) end--;
+  return ABORT_TEXT.has(abortText.slice(0, end).trim());
 }
 
 export type ControlRunState = 'running' | 'completed' | 'failed' | 'aborted' | 'not-running' | 'unknown';

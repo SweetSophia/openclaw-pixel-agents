@@ -16,7 +16,8 @@ interface ModalFocusOptions {
 }
 
 function getFocusableElements(overlay: HTMLElement): HTMLElement[] {
-  return Array.from(overlay.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+  return Array.from(overlay.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter(element => element.tabIndex >= 0 && !element.closest('[hidden], [inert]'));
 }
 
 function isDisabledFormControl(element: Element | null): boolean {

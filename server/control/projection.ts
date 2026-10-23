@@ -2,6 +2,7 @@ import {
   CONTROL_LIMITS, controlByteSize, controlRecord, parseControlSession, parseControlTarget, parseControlTaskSnapshot,
   type ControlActivity, type ControlMessage, type ControlRunState, type ControlSession, type ControlTarget, type ControlTaskSnapshot,
 } from '../../shared/control';
+import { ControlError } from './errors';
 
 function opaque(value: unknown, max = 256): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= max
@@ -124,10 +125,10 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
     || history.sessionId !== target.sessionId || history.sessionKey !== target.sessionKey
     || !Array.isArray(history.messages) || sequence(input.loadedRecords) === undefined
     || input.loadedRecords > CONTROL_LIMITS.maximumHistory || timestamp(input.observedAt) === undefined) {
-    throw new Error('Invalid task source');
+    throw new ControlError('invalid-source');
   }
   for (const key of ['lifecycleRevision', 'branchId'] as const) {
-    if (target[key] !== undefined && session[key] !== undefined && target[key] !== session[key]) throw new Error('Task generation changed');
+    if (target[key] !== undefined && session[key] !== undefined && target[key] !== session[key]) throw new ControlError('session-changed');
   }
   const hasActiveRun = typeof session.hasActiveRun === 'boolean' ? session.hasActiveRun : null;
   const inFlight = controlRecord(history.inFlightRun);
@@ -166,11 +167,11 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
   };
   while (controlByteSize(projected) > CONTROL_LIMITS.responseBytes) {
     const text = [projected.request, projected.latestResponse, projected.result].find(item => item && item.text.length > 128);
-    if (!text) throw new Error('Task source exceeds display limit');
+    if (!text) throw new ControlError('invalid-source');
     text.text = clipped(text.text, Math.floor(text.text.length / 2));
     text.truncated = true;
   }
   const checked = parseControlTaskSnapshot(projected);
-  if (!checked) throw new Error('Invalid projected task');
+  if (!checked) throw new ControlError('invalid-source');
   return checked;
 }

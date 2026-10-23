@@ -32,7 +32,7 @@ export function createControlAccess(config: ControlConfig): RequestHandler {
     const now = Date.now();
     for (const [key, value] of map) if (now - value.start >= 60000) map.delete(key);
     let row = map.get(ip);
-    if (!row) { if (map.size >= 1000) return false; if (consume) { row = { start: now, count: 0 }; map.set(ip, row); } }
+    if (!row) { if (map.size >= 1000) map.delete(map.keys().next().value!); if (consume) { row = { start: now, count: 0 }; map.set(ip, row); } }
     if (!row) return true;
     if (row.count >= maximum) return false;
     if (consume) row.count++;

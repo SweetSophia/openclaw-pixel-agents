@@ -1,6 +1,7 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { chmodSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, closeSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeviceStorageError } from './errors';
 
 export interface DeviceIdentity { version: 1; deviceId: string; publicKeyPem: string; privateKeyPem: string }
 function ensureDirectory(directory: string): void {
@@ -45,19 +46,23 @@ export function loadOrCreateDeviceIdentity(directory: string): DeviceIdentity {
       || !createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).equals(raw)
       || value.deviceId !== createHash('sha256').update(raw.subarray(-32)).digest('hex')) throw Error();
     return { version: 1, deviceId: value.deviceId, publicKeyPem: value.publicKeyPem, privateKeyPem: value.privateKeyPem };
-  } catch { throw Error('Invalid stored task device identity'); }
+  } catch (error) { if (isDeviceStorageError(error)) throw error; throw Error('Invalid stored task device identity'); }
 }
-interface DeviceGrant { deviceId: string; endpoint: string; token: string; scopes: string[] }
+export interface DeviceGrant { deviceId: string; endpoint: string; token: string; scopes: string[] }
 function grantPath(directory: string, endpoint: string): string {
   return join(directory, `grant-${createHash('sha256').update(endpoint).digest('hex')}.json`);
 }
-export function readDeviceGrant(directory: string, endpoint: string, deviceId: string, scopes: string[]): string | undefined {
+export function readDeviceGrantDetails(directory: string, endpoint: string, deviceId: string): DeviceGrant | undefined {
   try {
     const value: DeviceGrant = JSON.parse(privateRead(grantPath(directory, endpoint)));
     if (value.deviceId === deviceId && value.endpoint === endpoint && typeof value.token === 'string'
-      && value.token.length > 0 && value.token.length <= 16384 && Array.isArray(value.scopes)
-      && value.scopes.length === scopes.length && scopes.every(scope => value.scopes.includes(scope))) return value.token;
-  } catch { /* Missing or invalid grants require fresh authentication, never broader scopes. */ }
+      && value.token.length > 0 && value.token.length <= 16384 && Array.isArray(value.scopes) && value.scopes.length <= 16
+      && value.scopes.every(scope => typeof scope === 'string' && scope.length > 0 && scope.length <= 128)) return { deviceId, endpoint, token: value.token, scopes: [...value.scopes] };
+  } catch (error) { if (isDeviceStorageError(error)) throw error; /* Missing or invalid grants require fresh authentication. */ }
+}
+export function readDeviceGrant(directory: string, endpoint: string, deviceId: string, scopes: string[]): string | undefined {
+  const value = readDeviceGrantDetails(directory, endpoint, deviceId);
+  return value && scopes.every(scope => value.scopes.includes(scope)) ? value.token : undefined;
 }
 export function writeDeviceGrant(directory: string, endpoint: string, deviceId: string, token: string, scopes: string[]): void {
   atomicWrite(grantPath(directory, endpoint), { deviceId, endpoint, token, scopes });

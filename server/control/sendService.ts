@@ -97,9 +97,10 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
       if (isControlCommand(parsed.message)) return Promise.reject(new ControlError('command-not-supported'));
       if (signal?.aborted || closed) return Promise.reject(new ControlError('unavailable'));
       const digest = hash(JSON.stringify(parsed)); const now = Date.now();
-      for (const [id, item] of submissions) if (!item.flight && now - item.at > 3600000) submissions.delete(id);
       let entry = submissions.get(input.idempotencyKey);
       if (entry && entry.digest !== digest) return Promise.reject(new ControlError('invalid-request'));
+      if (entry) entry.at = now;
+      for (const [id, item] of submissions) if (!item.flight && now - item.at > 3600000) submissions.delete(id);
       if (!entry) {
         recent = recent.filter(at => now - at < 60000);
         if (recent.length >= 10 || submissions.size >= 1000) return Promise.reject(new ControlError('rate-limited'));

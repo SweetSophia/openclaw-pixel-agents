@@ -334,11 +334,18 @@ identity fails closed and must be repaired by the operator.
 For reviewed send controls, set `CONTROL_SEND_ENABLED=true` and approve the same
 office device for `operator.read` plus `operator.write`. Restart it to negotiate
 the new scopes. Missing write authority keeps history readable and sending
-disabled. Do not leave Gateway master credentials in the long-running office
+disabled. A cached read-only token reconnects with read-only scopes. To upgrade it,
+temporarily provide the server-only bootstrap credential for device approval,
+then remove that credential and restart after the scoped token has been stored.
+Do not leave Gateway master credentials in the long-running office
 environment after provisioning its scoped device token. No Stop, Steer, command,
 attachment or generic RPC interface is exposed. An office restart can make an
 uncertain new-conversation outcome unrecoverable automatically; the office fails
 closed instead of adopting an unverified conversation or replaying a prompt.
+
+Active retries refresh their receipt metadata. Abandoned entries may be removed
+after an hour without a retry; such eviction can also prevent automatic recovery
+of an uncertain new-conversation outcome.
 
 The composer rejects slash/shell command prefixes and OpenClaw's bare stop phrases.
 The Gateway reserves literal command suppression for admin clients; the office

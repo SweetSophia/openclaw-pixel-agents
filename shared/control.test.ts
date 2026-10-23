@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseControlSessionPage, parseControlStatus, parseControlTaskSnapshot } from './control';
+import { isControlCommand, parseControlSessionPage, parseControlStatus, parseControlTaskSnapshot } from './control';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:test', sessionId: 'session-1' };
 const snapshot = () => ({
@@ -9,6 +9,10 @@ const snapshot = () => ({
 });
 
 describe('private control response boundaries', () => {
+  it('matches Gateway command text without inventing compatibility or formatting normalization', () => {
+    for (const message of ['\u200b/stop', '\u200bstop', 'ｓｔｏｐ', 'می‌خواهم', '.'.repeat(7999)+'x']) expect(isControlCommand(message)).toBe(false);
+    for (const message of ['\u0001/stop', ' STOP... ', 'stop '+'.'.repeat(7900), 'СТОП…', '停止。']) expect(isControlCommand(message)).toBe(true);
+  });
   it('accepts supported status and copies only public capability fields', () => {
     expect(parseControlStatus({ configured: true, state: 'ready', canRead: true, canSend: false, token: 'fixture-secret' }))
       .toEqual({ configured: true, state: 'ready', canRead: true, canSend: false });

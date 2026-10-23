@@ -10,6 +10,15 @@ vi.mock('../control/useTaskDetails', () => ({ useTaskDetails: () => ({ selected:
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:test', sessionId: 'session-1' };
 afterEach(() => { cleanup(); vi.clearAllMocks(); f.accessState = 'unlocked'; f.task = null; f.status = null; f.loading = false; });
 describe('task drawer presentation', () => {
+  it('shows explicit feedback when an entered access key is rejected', async () => {
+    f.accessState = 'locked'; f.status = null;
+    f.request.mockRejectedValue(new ControlApiError('locked')); f.unlock.mockRejectedValueOnce(new ControlApiError('locked'));
+    render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
+    await screen.findByLabelText('Task access key');
+    fireEvent.change(screen.getByLabelText('Task access key'), { target: { value: 'wrong-fixture-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock task details' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/unlock failed/i)); expect(screen.getByLabelText('Task access key')).toHaveValue('');
+  });
   it('displays source facts and a failed tool without changing the proven run result', () => {
     f.task = { target, source: { state: 'current', observedAt: 100 }, hasActiveRun: false, runState: 'completed', runId: 'run-1',
       requestAssociation: 'run', requestState: 'found', request: { text: '<script>fixture</script>', truncated: false }, result: { text: 'Review complete.', truncated: false },

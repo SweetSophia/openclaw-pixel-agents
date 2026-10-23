@@ -22,6 +22,7 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
   const context = useRef({ ...options, access }); context.current = { ...options, access };
   const scope = `${options.agentId}:${access.generation}`; const scopeRef = useRef(scope);
   const selection = useRef(0); const everSelected = useRef(false);
+  const pagedSessions = useRef(false);
   const taskRead = useRef<AbortController | null>(null); const sessionRead = useRef<AbortController | null>(null);
   const [visible, setVisible] = useState(document.visibilityState !== 'hidden');
   const permitted = () => context.current.active && context.current.access.state === 'unlocked' && context.current.access.status?.canRead && document.visibilityState !== 'hidden';
@@ -69,13 +70,18 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
         everSelected.current = true;
       }
       if (selected) selected = value.sessions.find(item => targetIdentity(item) === targetIdentity(selected!)) ?? selected;
-      const all = more ? [...data.current.sessions, ...value.sessions] : value.sessions;
+      const headIds = new Set(value.sessions.map(targetIdentity));
+      const all = more ? [...data.current.sessions, ...value.sessions] : pagedSessions.current
+        ? [...value.sessions, ...data.current.sessions.filter(item => !headIds.has(targetIdentity(item)))] : value.sessions;
+      const nextCursor = more || !pagedSessions.current ? value.nextCursor : data.current.nextSessionsCursor;
+      if (more) pagedSessions.current = true;
       if (selected && !all.some(item => targetIdentity(item) === targetIdentity(selected!))) all.unshift(selected);
       const sessions = [...new Map(all.map(item => [targetIdentity(item), item])).values()];
-      const next = { ...data.current, sessions, selected, selectionNote: note, nextSessionsCursor: value.nextCursor, sessionsLoading: false };
+      const next = { ...data.current, sessions, selected, selectionNote: note, nextSessionsCursor: nextCursor, sessionsLoading: false };
       data.current = next; setView(next);
       if (selected && !data.current.task) await readTask(selected);
     } catch (error) {
+      if (more && error instanceof ControlApiError && error.code === 'invalid-request') pagedSessions.current = false;
       if (!controller.signal.aborted && currentScope === scopeRef.current) setView(old => ({ ...old, sessionsLoading: false, error: error instanceof ControlApiError ? error : new ControlApiError() }));
     } finally { if (sessionRead.current === controller) sessionRead.current = null; }
   }, [readTask]);
@@ -91,13 +97,13 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     void readTask(selected);
   }, [readTask]);
   useEffect(() => {
-    stop(); scopeRef.current = scope; everSelected.current = false;
+    stop(); scopeRef.current = scope; everSelected.current = false; pagedSessions.current = false;
     const empty = { sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null };
     data.current = empty; setView(empty);
   }, [scope, stop]);
   useEffect(() => {
     if (!sourceDenied) return;
-    stop(); everSelected.current = true;
+    stop(); everSelected.current = true; pagedSessions.current = false;
     setView({ sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null });
   }, [sourceDenied, stop, setView]);
   useEffect(() => {
@@ -111,8 +117,8 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
   }, [scope, options.active, options.taskActive, visible, access.state, access.status?.canRead, refresh, stop]);
   const privateView = access.state !== 'unlocked' || sourceDenied || scope !== scopeRef.current ? { sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null } : view;
   return { ...privateView, selectSession, selectCreatedSession: target => {
-    if (target.agentId !== options.agentId || !parseControlTarget(target)) return;
-    const selected: ControlSession = { ...target, name: 'Office conversation', isChild: false, hasActiveRun: null };
+    const parsed = parseControlTarget(target); if (!parsed || parsed.agentId !== options.agentId) return;
+    const selected: ControlSession = { ...parsed, name: 'Office conversation', isChild: false, hasActiveRun: null };
     if (!data.current.sessions.some(item => targetIdentity(item) === targetIdentity(selected))) setView(old => ({ ...old, sessions: [selected, ...old.sessions] }));
     selectSession(selected);
   }, refresh, loadMoreSessions: () => loadSessions(true), loadEarlier: async () => { const current = data.current; if (current.selected && current.task?.nextCursor) await readTask(current.selected, current.task.nextCursor); } };

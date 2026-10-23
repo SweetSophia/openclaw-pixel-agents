@@ -16,6 +16,18 @@ function setup() {
 }
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('manual conversation submissions', () => {
+  it('settles loading immediately if a private invalidation aborts a pending history read', async () => {
+    setup(); const listeners = new Map<string, (...args: any[]) => void>();
+    f.openSocket.mockReturnValue({ on: (name: string, fn: (...args: any[]) => void) => listeners.set(name, fn), emit: vi.fn(), connect: vi.fn(), disconnect: vi.fn() });
+    f.request.mockImplementation(() => new Promise(() => {})); const { result } = renderHook(() => useConversation(a, true));
+    await waitFor(() => expect(result.current.loading).toBe(true)); act(() => listeners.get('conversation')?.({ target: a, kind: 'invalidated', source: { state: 'stale', observedAt: 20 } }));
+    expect(result.current.loading).toBe(false); expect(result.current.error?.code).toBe('session-changed');
+  });
+  it('does not create a conversation without a handler that can adopt its exact target', async () => {
+    setup(); const { result } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.newConversation()); expect(result.current.isNew).toBe(false); expect(result.current.error?.code).toBe('unsupported');
+    expect(f.request.mock.calls.some(([path]) => String(path).endsWith('/send'))).toBe(false);
+  });
   it('retains explicitly loaded pages across automatic refresh of the same leaf', async () => {
     setup(); f.request.mockImplementation(async (_path: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)); return { target: a, messages: [{ id: body.cursor ? 'old' : 'latest', role: 'user', text: body.cursor ? 'older' : 'newer', truncated: false }], source: { state: 'current', observedAt: 10 }, ...(body.cursor ? {} : { nextCursor: 'older-cursor' }) };

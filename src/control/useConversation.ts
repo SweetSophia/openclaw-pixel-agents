@@ -106,7 +106,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
     socket?.on('conversation', value => {
       if (disposed) return; const event = parseControlConversationEvent(value);
       if (!event || targetIdentity(event.target) !== targetKey) return;
-      if (event.kind === 'invalidated') { readGeneration.current++; read.current?.abort(); read.current = null; setPage(null); setError(new ControlApiError('session-changed')); }
+      if (event.kind === 'invalidated') { readGeneration.current++; read.current?.abort(); read.current = null; setLoading(false); setPage(null); setError(new ControlApiError('session-changed')); }
       else if (event.kind === 'unavailable') { setPage(previous => previous ? { ...previous, source: { ...previous.source, state: 'stale' } } : null); }
       else { reconcile(event.messages ?? [], targetKey); void refresh(); }
     });
@@ -128,6 +128,6 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
     ready: !disabledReason, pending: !!submission && !['persisted', 'rejected'].includes(submission.phase), stale: !!currentPage && (currentPage.source.state === 'stale' || !access.status?.canRead),
     nextCursor: currentPage?.nextCursor,
     setDraft: (text: string) => mutate(draftKey, value => { value.text = text; }), send: () => submit(false), retryPending: () => submit(true),
-    newConversation: () => { setNew(true); setError(null); }, returnToConversation: () => setNew(false), refresh: () => refresh(), loadEarlier: () => refresh(true),
+    newConversation: () => { if (!context.current.onCreated) { setError(new ControlApiError('unsupported')); return; } setNew(true); setError(null); }, returnToConversation: () => setNew(false), refresh: () => refresh(), loadEarlier: () => refresh(true),
   };
 }

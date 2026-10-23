@@ -1,5 +1,5 @@
 // @vitest-environment node
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createControlAccess, controlTransportAllowed, matchesControlToken } from './access';
@@ -7,6 +7,22 @@ import { loadControlConfig } from './config';
 
 const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: 'ws://localhost:18789', PIXEL_CONTROL_TOKEN: 'fixture-key' }, '/tmp/fixture');
 describe('private task access', () => {
+  it('does not lock a new legitimate operator out when the bounded attempt table is full', () => {
+    const middleware = createControlAccess(config);
+    function attempt(ip: string, key: string) {
+      let status = 200; const response = { setHeader() {}, status(value: number) { status = value; return response; }, json() {} };
+      middleware({ secure: true, ip, socket: { remoteAddress: ip }, headers: { authorization: `Bearer ${key}` } } as Request, response as unknown as Response, () => {});
+      return status;
+    }
+    for(let n=0;n<1000;n++) expect(attempt(`2001:db8::${n.toString(16)}`, 'wrong')).toBe(401);
+    expect(attempt('2001:db8:1::1', 'fixture-key')).toBe(200);
+  });
+  it('accepts forwarded TLS only from an explicitly trusted peer', async () => {
+    for (const [trusted, expected] of [['10.0.0.0/8', 403], ['loopback', 200]] as const) {
+      const app = express(); app.set('trust proxy', trusted); app.use(createControlAccess(config)); app.get('/', (_req, res) => res.json({ private: true }));
+      expect((await request(app).get('/').set('X-Forwarded-Proto', 'https').set('X-Forwarded-For', '203.0.113.7').auth('fixture-key', { type: 'bearer' })).status).toBe(expected);
+    }
+  });
   it('compares fixed-size token digests for equal and unequal lengths', () => {
     expect(matchesControlToken('fixture-key', 'fixture-key')).toBe(true);
     for (const key of ['', 'fixture-kex', 'x'.repeat(200), 'x'.repeat(20000)]) expect(matchesControlToken(key, 'fixture-key')).toBe(false);

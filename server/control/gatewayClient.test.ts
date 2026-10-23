@@ -8,10 +8,11 @@ import type { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadControlConfig } from './config';
 import { createControlGateway, gatewayReconnectDelay, type ControlGateway } from './gatewayClient';
+import * as devices from './deviceIdentity';
 
 type Frame = { type: string; id: string; method: string; params: Record<string, any> };
 const cleanups: (() => void | Promise<void>)[] = [];
-afterEach(async () => { vi.useRealTimers(); for (const close of cleanups.splice(0).reverse()) await close(); });
+afterEach(async () => { vi.useRealTimers(); for (const close of cleanups.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 function encode(value: unknown): Buffer {
   const text = Buffer.from(JSON.stringify(value));
   const header = Buffer.alloc(text.length < 126 ? 2 : text.length <= 65535 ? 4 : 10); header[0] = 0x81;
@@ -62,15 +63,62 @@ async function fixture(onFrame?: (frame: Frame, socket: Duplex) => void, challen
   cleanups.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
   return { url: `ws://127.0.0.1:${address.port}`, frames, sockets };
 }
-function client(url?: string, sendEnabled = false): ControlGateway {
-  const dir = mkdtempSync(join(tmpdir(), 'pixel-gateway-')); cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+function client(url?: string, sendEnabled = false, options?: { directory: string; deviceOnly: boolean }): ControlGateway {
+  const dir = options?.directory ?? mkdtempSync(join(tmpdir(), 'pixel-gateway-')); cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const config = loadControlConfig(url ? { OPENCLAW_GATEWAY_URL: url, PIXEL_CONTROL_TOKEN: 'fixture-control-key', OPENCLAW_GATEWAY_TOKEN: 'fixture-bootstrap-token' } : {}, dir);
   config.sendEnabled = sendEnabled;
+  if (options?.deviceOnly) { config.token = undefined; config.password = undefined; }
   const gateway = createControlGateway(config); cleanups.push(() => gateway.close()); return gateway;
 }
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 
 describe('scoped task Gateway client', () => {
+  it('reports disconnected writes as unavailable rather than revoked authority', async () => {
+    const host = await fixture(); const gateway = client(host.url, true);
+    await expect(gateway.request('chat.send', {})).rejects.toMatchObject({ code: 'unavailable' });
+  });
+  it('reconnects with read authority when a partial grant cannot support configured writes', async () => {
+    let connections = 0; const token = 'synthetic-scoped-read-token';
+    const host = await fixture((frame, socket) => {
+      if (frame.method !== 'connect') return;
+      connections++;
+      if (connections > 1 && (frame.params.auth.deviceToken !== token || frame.params.scopes.join() !== 'operator.read')) {
+        socket.write(encode({ type: 'res', id: frame.id, ok: false, error: { details: { code: 'AUTH_SCOPE_MISMATCH' } } })); return;
+      }
+      socket.write(encode(hello(frame.id, { auth: { role: 'operator', scopes: ['operator.read'], deviceToken: token } })));
+    });
+    const directory = mkdtempSync(join(tmpdir(), 'pixel-partial-grant-')); const first = client(host.url, true, { directory, deviceOnly: false }); await ready(first); first.close();
+    const second = client(host.url, true, { directory, deviceOnly: true }); await ready(second); expect(second.status()).toMatchObject({ canRead: true, canSend: false });
+  });
+  it('reuses a broader token for read-only connections without overwriting its known grant', async () => {
+    const token = 'synthetic-own-scoped-token'; let connections = 0;
+    const host = await fixture((frame, socket) => {
+      if (frame.method !== 'connect') return; connections++;
+      if (connections > 1 && frame.params.auth.deviceToken !== token) { socket.write(encode({ type: 'res', id: frame.id, ok: false, error: { details: { code: 'AUTH_TOKEN_MISMATCH' } } })); return; }
+      socket.write(encode(hello(frame.id, { auth: { role: 'operator', scopes: frame.params.scopes, deviceToken: token }, features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.send', 'sessions.create'], events: [] } })));
+    });
+    const directory = mkdtempSync(join(tmpdir(), 'pixel-scope-downgrade-'));
+    const first = client(host.url, true, { directory, deviceOnly: false }); await ready(first); first.close();
+    const second = client(host.url, false, { directory, deviceOnly: true }); await ready(second); expect(second.status().canSend).toBe(false); second.close();
+    const third = client(host.url, true, { directory, deviceOnly: true }); await ready(third); expect(third.status().canSend).toBe(true);
+  });
+  it('keeps a freshly rotated token in memory when persistence fails and retries storage without old-token auth', async () => {
+    const token = 'synthetic-rotated-device-token'; let connections = 0;
+    const host = await fixture((frame, socket) => {
+      if (frame.method !== 'connect') return; connections++;
+      if (connections > 1 && frame.params.auth.deviceToken !== token) { socket.write(encode({ type: 'res', id: frame.id, ok: false, error: { details: { code: 'AUTH_TOKEN_MISMATCH' } } })); return; }
+      socket.write(encode(hello(frame.id, { auth: { role: 'operator', scopes: ['operator.read'], deviceToken: token } })));
+    });
+    const directory = mkdtempSync(join(tmpdir(), 'pixel-device-io-')); const identity = devices.loadOrCreateDeviceIdentity(join(directory, 'control'));
+    devices.writeDeviceGrant(join(directory, 'control'), host.url+'/', identity.deviceId, 'synthetic-old-token', ['operator.read']);
+    vi.spyOn(devices, 'writeDeviceGrant').mockImplementationOnce(() => { throw Object.assign(Error('synthetic storage full'), { code: 'ENOSPC' }); });
+    const gateway = client(host.url, false, { directory, deviceOnly: true }); await ready(gateway); expect(connections).toBe(2);
+  });
+  it('retries transient identity I/O but keeps malformed identities terminal', async () => {
+    const host = await fixture(); const original = devices.loadOrCreateDeviceIdentity;
+    vi.spyOn(devices, 'loadOrCreateDeviceIdentity').mockImplementationOnce(() => { throw Object.assign(Error('synthetic I/O failure'), { code: 'EIO' }); }).mockImplementation(original);
+    const gateway = client(host.url); await ready(gateway); expect(gateway.status().canRead).toBe(true);
+  });
   it.each([true, false])('requires explicit opt-in and negotiated write scope: %s', async grant => {
     const host = await fixture((frame, socket) => {
       socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
