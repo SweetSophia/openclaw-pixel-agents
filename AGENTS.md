@@ -43,6 +43,10 @@ npm start                                # production build; build first
 
 ## Persistence and Layouts
 
+- Private task controls live in `server/control/` and `src/control/`, with their network contract in `shared/control.ts`. The collector and public agent store/socket never carry private task payloads. `ControlAccessProvider` retains its access key in tab memory only and clears private reads on lock or credential-generation changes.
+- Task access is opt-in through `OPENCLAW_GATEWAY_URL` plus a separate `PIXEL_CONTROL_TOKEN`. Preserve signed protocol-4 device authentication, scoped `operator.read` authority, private identity/token permissions, closed RPC method allowlists and transport checks before authentication. A direct Tailnet HTTP exception requires actual accepted socket addresses and `tailscale0`; forwarded headers do not qualify it.
+- Verify canonical agent ownership, session ID and source lifecycle/branch markers before history reads. Active-leaf appends do not replace stable target identity, but invalidate offset-history cursors. Keep history discovery bounded at 50 records per page, 200 automatic and 2,000 cumulative; only source-correlated run facts establish a result. Last-known snapshots retain their original verification time. Closing the HTTP server disposes the control connection even when tests never call `startServer()`.
+
 - `DATA_DIR` defaults to `join(__dirname, "data")`, so dev writes under `server/data/` and standalone compiled startup writes under `dist/server/server/data/`; do not assume repo-root `data/`. Docker sets `DATA_DIR=/app/data`.
 - Use `OPENCLAW_BIN` for the CLI path; the collector requires it to be absolute (`collector/README.md`).
 - Layout IDs must pass `/^[a-zA-Z0-9_-]+$/` and pass `isSafePersistedFilename` (so `${id}.json` is not a Windows reserved device basename like `con`/`nul`/`com1`/`aux`); max 64 chars; `default` cannot be deleted.

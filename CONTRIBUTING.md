@@ -84,6 +84,18 @@ midpoint, one-finger Pan, arrow keys, Escape, Fit, resize and room changes. Pann
 must not edit the layout; cancelling a gesture or leaving the window must end
 the drag. Browser geometry and hit testing are not exercised by jsdom.
 
+For task-detail changes, configure a dedicated read-only task device or use a
+synthetic Gateway fixture. Check 320/390/768/1024/1440px widths and short landscape:
+unlock, choose a conversation, refresh, load earlier records and more conversations,
+switch Task/Agent tabs with arrows/Home/End, then close with Escape and verify focus
+returns to the office trigger. All controls must have reachable 44px targets, long
+text must wrap, and the drawer must have one vertical scrolling area. Verify initial
+unavailable, pairing, empty, unknown-run, limited-history and stale states. Lock must
+remove private content and abort reads; closing, hiding the page or leaving Task
+must stop its refresh. Inspect browser errors/network traffic and confirm no private
+payload appears on the public socket or in browser storage. Use synthetic text in
+screenshots and committed fixtures. Never send a real task as an automated check.
+
 ## Code Style
 
 - **TypeScript** throughout (strict mode)

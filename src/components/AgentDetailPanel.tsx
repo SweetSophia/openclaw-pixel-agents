@@ -1,7 +1,8 @@
-import React, { useId, useRef } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentState, AgentActivity, SubAgentInfo } from '../../shared/types';
 import { useModalFocus } from '../hooks/useModalFocus';
+import { TaskDetails } from './TaskDetails';
 import './AgentDetailPanel.css';
 
 interface Props {
@@ -35,6 +36,8 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const headingId = useId();
+  const [tab, setTab] = useState<'task' | 'agent'>('task');
+  const tabsId = useId();
 
   useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
 
@@ -79,6 +82,19 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           </div>
         </div>
 
+        <div className="detail-tabs" role="tablist" aria-label="Agent details">
+          {(['task', 'agent'] as const).map((name, index) => <button key={name} type="button" role="tab" id={`${tabsId}-${name}-tab`}
+            aria-selected={tab === name} aria-controls={`${tabsId}-${name}-panel`} tabIndex={tab === name ? 0 : -1}
+            onClick={() => setTab(name)} onKeyDown={event => {
+              const position = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : event.key === 'ArrowRight' ? (index + 1) % 2 : event.key === 'ArrowLeft' ? (index + 1) % 2 : -1;
+              if (position < 0) return; event.preventDefault(); const next = position === 0 ? 'task' : 'agent'; setTab(next); document.getElementById(`${tabsId}-${next}-tab`)?.focus();
+            }}>{name === 'task' ? 'Task' : 'Agent'}</button>)}
+        </div>
+        <div role="tabpanel" id={`${tabsId}-task-panel`} aria-labelledby={`${tabsId}-task-tab`} hidden={tab !== 'task'}>
+          <TaskDetails key={agent.id} agentId={agent.id} initialSessionKey={agent.sessionKey} active={tab === 'task'} />
+        </div>
+        <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
+        <p className="detail-subvalue">Office roster summary</p>
         {/* Activity */}
         <div className="detail-section">
           <div className="detail-label">Activity</div>
@@ -168,6 +184,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           <div className={`detail-pixel-status ${agent.pixelEnabled ? 'enabled' : 'disabled'}`}>
             {agent.pixelEnabled ? '👁️ Visible in office' : '🚫 Hidden from office'}
           </div>
+        </div>
         </div>
       </div>
     </div>,
