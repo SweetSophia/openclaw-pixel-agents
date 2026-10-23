@@ -37,7 +37,7 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
     catch (error) { setAccessError(error instanceof ControlApiError ? error : new ControlApiError()); }
   };
   if (access.state === 'locked') {
-    if (!access.status && !accessError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
+    if (!access.status && !accessError && !unlockError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
     const setup = access.status?.configured === false;
     const transport = accessError?.code === 'transport-required';
     return <section className="task-details task-access" aria-label="Task access">

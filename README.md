@@ -342,6 +342,7 @@ environment after provisioning its scoped device token. No Stop, Steer, command,
 attachment or generic RPC interface is exposed. An office restart can make an
 uncertain new-conversation outcome unrecoverable automatically; the office fails
 closed instead of adopting an unverified conversation or replaying a prompt.
+
 Active retries refresh their receipt metadata. Abandoned entries may be removed
 after an hour without a retry; such eviction can also prevent automatic recovery
 of an uncertain new-conversation outcome.

@@ -58,6 +58,12 @@ describe('explicit send admission', () => {
   it('does not claim an empty existing transcript can atomically fence an in-place reset', async () => {
     const f = fixture(); await expect(f.sends.send({ ...input, target: { ...target, activeLeafEntryId: undefined } })).rejects.toMatchObject({ code: 'unsupported' }); expect(f.admitted.size).toBe(0);
   });
+  it('does not infer an empty new transcript from a missing authoritative leaf', async () => {
+    const f = fixture(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, signal) => { const value = await original(method, params, signal); return method === 'chat.history' ? { ...(value as Record<string, unknown>), sessionInfo: {} } : value; });
+    await expect(f.sends.send({ ...input, target: undefined, newConversation: true })).rejects.toMatchObject({ code: 'outcome-unknown' });
+    expect(f.admitted.size).toBe(0);
+  });
   it('coalesces duplicate clicks and reconciles persistence by exact input identity', async () => {
     const f = fixture(); const [a,b] = await Promise.all([f.sends.send(input), f.sends.send(input)]); expect(a).toEqual(b);
     expect(f.request.mock.calls.filter(([m]) => m === 'chat.send')).toHaveLength(1);

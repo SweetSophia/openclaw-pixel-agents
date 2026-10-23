@@ -11,9 +11,10 @@ const target = { agentId: 'cylena', sessionKey: 'agent:cylena:test', sessionId: 
 afterEach(() => { cleanup(); vi.clearAllMocks(); f.accessState = 'unlocked'; f.task = null; f.status = null; f.loading = false; });
 describe('task drawer presentation', () => {
   it('shows explicit feedback when an entered access key is rejected', async () => {
-    f.accessState = 'locked'; f.status = { configured: true, state: 'ready', canRead: true, canSend: false };
-    f.request.mockResolvedValue(f.status); f.unlock.mockRejectedValueOnce(new ControlApiError('locked'));
+    f.accessState = 'locked'; f.status = null;
+    f.request.mockRejectedValue(new ControlApiError('locked')); f.unlock.mockRejectedValueOnce(new ControlApiError('locked'));
     render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
+    await screen.findByLabelText('Task access key');
     fireEvent.change(screen.getByLabelText('Task access key'), { target: { value: 'wrong-fixture-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'Unlock task details' }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/unlock failed/i)); expect(screen.getByLabelText('Task access key')).toHaveValue('');
