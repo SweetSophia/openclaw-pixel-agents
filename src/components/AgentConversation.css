@@ -1,0 +1,10 @@
+.agent-conversation { min-width: 0; }
+.conversation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.conversation-messages { list-style: none; padding: 0; margin: 16px 0 24px; }
+.conversation-messages li { padding: 14px 16px; margin: 12px 0; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; }
+.conversation-messages .conversation-user { border-left: 3px solid var(--acc-cyan); background: rgba(0,240,255,.03); }
+.conversation-messages strong { font-size: 12px; color: var(--text-muted); }
+.conversation-messages p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
+.agent-conversation textarea { display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px; max-width: 100%; background: var(--bg-panel, #131c2c); color: var(--text-main); border: 1px solid rgba(255,255,255,.25); border-radius: 8px; padding: 12px; font: inherit; line-height: 1.6; }
+.agent-conversation textarea:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
+.conversation-send { border-color: var(--acc-cyan) !important; }

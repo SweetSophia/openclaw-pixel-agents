@@ -21,7 +21,7 @@ function fixture() {
       if (loseCreate) { loseCreate = false; throw Error('lost create ack'); }
       return { key: p.key, sessionId: 's1', entry: { lifecycleRevision: 'life-1' } };
     }
-    if (method === 'chat.history') return { sessionKey: p.sessionKey, sessionId: 's1', sessionInfo: { activeLeafEntryId: p.sessionKey === target.sessionKey ? 'leaf-1' : null }, messages: persisted && admitted.has(input.idempotencyKey) ? [{ role: 'user', content: 'hello', __openclaw: { id: 'u1', seq: 1, runId: input.idempotencyKey } }] : [] };
+    if (method === 'chat.history') return { sessionKey: p.sessionKey, sessionId: 's1', inputReceipts: [], sessionInfo: { activeLeafEntryId: p.sessionKey === target.sessionKey ? 'leaf-1' : null }, messages: persisted && admitted.has(input.idempotencyKey) ? [{ role: 'user', content: 'hello', __openclaw: { id: 'u1', seq: 1, runId: input.idempotencyKey } }] : [] };
     if (method === 'chat.send') { admitted.add(String(p.idempotencyKey)); if (loseSend) { loseSend = false; throw Error('lost send ack'); } return { runId: p.idempotencyKey, status: 'started' }; }
     return {};
   });
@@ -73,5 +73,15 @@ describe('explicit send admission', () => {
     const f = fixture(); for(let n=0;n<10;n++) await f.sends.send({ ...input, idempotencyKey: `send-${n}` });
     await expect(f.sends.send({ ...input, idempotencyKey: 'send-eleven' })).rejects.toMatchObject({ code: 'rate-limited' });
     await expect(f.sends.send({ ...input, idempotencyKey: 'send-0' })).resolves.toMatchObject({ phase: 'accepted' });
+  });
+  it('reconciles pending custody before a first write, including a restarted office', async () => {
+    const f = fixture(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, signal) => method === 'chat.history' ? { sessionKey: target.sessionKey, sessionId: 's1', messages: [], sessionInfo: { activeLeafEntryId: 'leaf-1' }, inputReceipts: [{ runId: input.idempotencyKey, state: 'pending' }] } : original(method, params, signal));
+    expect(await f.sends.send(input)).toMatchObject({ phase: 'accepted' }); expect(f.admitted.size).toBe(0);
+  });
+  it('does not replay an unknown older submission after source history advanced', async () => {
+    const f = fixture(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, signal) => method === 'chat.history' ? { sessionKey: target.sessionKey, sessionId: 's1', messages: [], sessionInfo: { activeLeafEntryId: 'leaf-later' }, inputReceipts: [] } : original(method, params, signal));
+    await expect(f.sends.send(input)).rejects.toMatchObject({ code: 'outcome-unknown' }); expect(f.admitted.size).toBe(0);
   });
 });

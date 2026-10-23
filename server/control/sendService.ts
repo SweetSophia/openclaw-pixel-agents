@@ -8,6 +8,7 @@ export interface SendService { send(input: ControlSendRequest, signal?: AbortSig
 interface Submission {
   digest: string; at: number; target?: ControlTarget; creating: boolean; attempted: boolean;
   receipt?: ControlSendReceipt; flight?: Promise<ControlSendReceipt>;
+  observedLeaf?: unknown;
 }
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export function createSendService(gateway: ControlGateway, tasks: TaskService): SendService {
@@ -17,13 +18,24 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     const target = entry.target!;
     const page = controlRecord(await gateway.request('chat.history', { agentId: target.agentId, sessionKey: target.sessionKey, limit: 50, maxBytes: 256 * 1024, inputRunIds: [input.idempotencyKey] }, signal));
     if (!page || page.sessionId !== target.sessionId || page.sessionKey !== target.sessionKey || !Array.isArray(page.messages)) throw new ControlError('session-changed');
-    for (const value of page.messages) {
+    if (!Array.isArray(page.inputReceipts) || page.inputReceipts.length > 50) throw new ControlError('unsupported');
+    entry.observedLeaf = controlRecord(page.sessionInfo)?.activeLeafEntryId;
+    const custody = page.inputReceipts.map(controlRecord).find(receipt => receipt?.runId === input.idempotencyKey);
+    let messages = page.messages;
+    if (custody?.state === 'pending' && custody.cancelled === true) throw new ControlError('unsupported');
+    if (custody?.state === 'consumed' && typeof custody.consumedByEventId === 'string') {
+      const committed = controlRecord(await gateway.request('chat.history', { agentId: target.agentId, sessionKey: target.sessionKey, sessionId: target.sessionId, messageId: custody.consumedByEventId, limit: 1, maxBytes: 256 * 1024 }, signal));
+      if (!committed || committed.sessionId !== target.sessionId || committed.sessionKey !== target.sessionKey || !Array.isArray(committed.messages)) throw new ControlError('session-changed');
+      messages = committed.messages;
+    }
+    for (const value of messages) {
       const row = controlRecord(value); const meta = controlRecord(row?.__openclaw);
-      if (row?.role === 'user' && meta?.runId === input.idempotencyKey && typeof meta.id === 'string' && meta.id
+      if (row?.role === 'user' && (meta?.runId === input.idempotencyKey || (custody?.state === 'consumed' && meta?.id === custody.consumedByEventId)) && typeof meta?.id === 'string' && meta.id
         && Number.isSafeInteger(meta.seq) && (meta.seq as number) > 0) {
         return { target, idempotencyKey: input.idempotencyKey, phase: 'persisted', runId: input.idempotencyKey, messageId: meta.id, messageSeq: meta.seq as number };
       }
     }
+    if (custody && ['pending', 'consumed'].includes(String(custody.state))) return { target, idempotencyKey: input.idempotencyKey, phase: 'accepted', runId: input.idempotencyKey };
   }
   async function perform(input: ControlSendRequest, entry: Submission, signal: AbortSignal): Promise<ControlSendReceipt> {
     if (closed || !gateway.status().canSend) throw new ControlError('scope-required');
@@ -45,12 +57,13 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     }
     const target = entry.target; const row = await tasks.verifyTarget(target, signal);
     if (row.sendDisabledReason || row.sharingRole === 'viewer' || row.readOnly === true) throw new ControlError('unsupported');
+    const receipt = await reconcile(input, entry, signal);
+    if (receipt) return entry.receipt = receipt;
     if (entry.attempted) {
-      const receipt = await reconcile(input, entry, signal);
-      if (receipt) return entry.receipt = receipt;
       if (entry.receipt?.phase === 'accepted' || entry.receipt?.phase === 'persisted') return entry.receipt;
     }
     if (!input.newConversation && !target.activeLeafEntryId) throw new ControlError('unsupported');
+    if (entry.observedLeaf !== (target.activeLeafEntryId ?? null)) throw new ControlError('outcome-unknown');
     if (input.newConversation && !entry.attempted) {
       const history = controlRecord(await gateway.request('chat.history', { agentId: target.agentId, sessionKey: target.sessionKey, limit: 1, maxBytes: 256 * 1024 }, signal));
       if (!history || history.sessionId !== target.sessionId || history.sessionKey !== target.sessionKey

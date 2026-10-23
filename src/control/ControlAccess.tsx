@@ -1,22 +1,28 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { parseControlStatus, type ControlStatus } from '../../shared/control';
 import { ControlApiError, controlFetch } from './api';
+import { io, type Socket } from 'socket.io-client';
 
 export interface ControlAccess {
   state: 'locked' | 'unlocked'; status: ControlStatus | null; generation: number;
   unlock(key: string): Promise<void>; lock(): void; request(path: string, init?: RequestInit): Promise<unknown>;
+  openSocket?(): Socket | null;
 }
 const disabled: ControlStatus = { configured: false, state: 'disabled', canRead: false, canSend: false };
 const Context = createContext<ControlAccess>({ state: 'locked', status: disabled, generation: 0,
   unlock: async () => { throw new ControlApiError('disabled'); }, lock() {}, request: async () => disabled });
+const DraftsContext = createContext<Map<string, unknown> | undefined>(undefined);
+export function useConversationDrafts() { return useContext(DraftsContext); }
 
 export function ControlAccessProvider({ children }: React.PropsWithChildren) {
   const key = useRef<string | undefined>(undefined); const revision = useRef(0); const controllers = useRef(new Set<AbortController>());
+  const sockets = useRef(new Set<Socket>()); const drafts = useRef(new Map<string, unknown>());
   const [state, setState] = useState<'locked' | 'unlocked'>('locked'); const [status, setStatus] = useState<ControlStatus | null>(null);
   const [generation, setGeneration] = useState(0);
   const clear = useCallback(() => {
     revision.current++; key.current = undefined;
     for (const controller of controllers.current) controller.abort(); controllers.current.clear();
+    for (const socket of sockets.current) socket.disconnect(); sockets.current.clear();
   }, []);
   const lock = useCallback(() => { clear(); setGeneration(revision.current); setState('locked'); setStatus(null); }, [clear]);
   useEffect(() => () => clear(), [clear]);
@@ -53,7 +59,15 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
       throw error;
     }
   }, [lock, perform]);
-  const value = useMemo(() => ({ state, status, generation, unlock, lock, request }), [state, status, generation, unlock, lock, request]);
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  const openSocket = useCallback(() => {
+    if (!key.current) return null;
+    const socket = io('/control', { forceNew: true, autoConnect: false, auth: { token: key.current }, reconnection: true, reconnectionDelayMax: 30000 });
+    sockets.current.add(socket);
+    const disconnect = socket.disconnect.bind(socket);
+    socket.disconnect = () => { sockets.current.delete(socket); return disconnect(); };
+    return socket;
+  }, []);
+  const value = useMemo(() => ({ state, status, generation, unlock, lock, request, openSocket }), [state, status, generation, unlock, lock, request, openSocket]);
+  return <Context.Provider value={value}><DraftsContext.Provider value={drafts.current}>{children}</DraftsContext.Provider></Context.Provider>;
 }
 export function useControlAccess(): ControlAccess { return useContext(Context); }

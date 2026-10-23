@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { parseControlSessionPage, parseControlTarget, parseControlTaskSnapshot, type ControlSession, type ControlTarget, type ControlTaskSnapshot } from '../../shared/control';
+import { controlRecord, parseControlSession, parseControlSessionPage, parseControlTarget, parseControlTaskSnapshot, type ControlSession, type ControlTarget, type ControlTaskSnapshot } from '../../shared/control';
 import { useControlAccess } from './ControlAccess';
 import { ControlApiError, targetIdentity } from './api';
 
@@ -7,11 +7,12 @@ export interface TaskDetailsState {
   sessions: ControlSession[]; selected: ControlSession | null; task: ControlTaskSnapshot | null;
   loading: boolean; sessionsLoading: boolean; error: ControlApiError | null; selectionNote?: string; nextSessionsCursor?: string;
   selectSession(target: ControlTarget): void; refresh(): Promise<void>; loadMoreSessions(): Promise<void>; loadEarlier(): Promise<void>;
+  selectCreatedSession(target: ControlTarget): void;
 }
-export function useTaskDetails(options: { agentId: string; initialSessionKey: string; active: boolean }): TaskDetailsState {
+export function useTaskDetails(options: { agentId: string; initialSessionKey: string; active: boolean; taskActive?: boolean }): TaskDetailsState {
   const access = useControlAccess();
   const sourceDenied = access.status?.state === 'auth-error' || access.status?.state === 'pairing-required' || access.status?.configured === false;
-  type View = Omit<TaskDetailsState, 'selectSession' | 'refresh' | 'loadMoreSessions' | 'loadEarlier'>;
+  type View = Omit<TaskDetailsState, 'selectSession' | 'selectCreatedSession' | 'refresh' | 'loadMoreSessions' | 'loadEarlier'>;
   const [view, setRendered] = useState<View>({ sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null });
   const data = useRef(view);
   const setView = useCallback((update: View | ((previous: View) => View)) => {
@@ -26,7 +27,7 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
   const permitted = () => context.current.active && context.current.access.state === 'unlocked' && context.current.access.status?.canRead && document.visibilityState !== 'hidden';
   const stop = useCallback(() => { selection.current++; taskRead.current?.abort(); sessionRead.current?.abort(); taskRead.current = null; sessionRead.current = null; }, []);
   const readTask = useCallback(async (target: ControlTarget, cursor?: string) => {
-    if (!permitted() || taskRead.current) return;
+    if (!permitted() || context.current.taskActive === false || taskRead.current) return;
     const controller = new AbortController(); taskRead.current = controller;
     const current = selection.current; const currentScope = scopeRef.current;
     setView(old => ({ ...old, loading: true }));
@@ -55,8 +56,16 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
       let selected = data.current.selected; let note = data.current.selectionNote;
       if (!everSelected.current && value.sessions.length) {
         const ordered = [...value.sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-        selected = ordered.find(item => item.sessionKey === context.current.initialSessionKey) ?? ordered.find(item => !item.isChild) ?? ordered[0];
-        note = selected.sessionKey === context.current.initialSessionKey ? undefined : selected.isChild ? 'Only child sessions are visible. Showing the newest child session.' : 'The roster conversation is not in this page. Showing the newest visible conversation.';
+        let roster = ordered.find(item => item.sessionKey === context.current.initialSessionKey);
+        if (!roster && context.current.initialSessionKey) {
+          const resolved = controlRecord(await context.current.access.request(`/api/control/agents/${encodeURIComponent(context.current.agentId)}/selection`, { method: 'POST', signal: controller.signal, body: JSON.stringify({ sessionKey: context.current.initialSessionKey }) }));
+          if (!resolved || (resolved.session !== null && !parseControlSession(resolved.session))) throw new ControlApiError('invalid-source');
+          roster = parseControlSession(resolved.session) ?? undefined;
+          if (roster && (roster.agentId !== context.current.agentId || roster.sessionKey !== context.current.initialSessionKey)) throw new ControlApiError('invalid-source');
+          if (controller.signal.aborted || currentScope !== scopeRef.current || !permitted()) return;
+        }
+        selected = roster ?? ordered.find(item => !item.isChild) ?? ordered[0];
+        note = selected.sessionKey === context.current.initialSessionKey ? undefined : selected.isChild ? 'Only child sessions are visible. Showing the newest child session.' : 'The roster conversation is not visible. Showing the newest visible conversation.';
         everSelected.current = true;
       }
       const all = more ? [...data.current.sessions, ...value.sessions] : value.sessions;
@@ -98,7 +107,12 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     if (!options.active || !visible || access.state !== 'unlocked' || !access.status?.canRead) { stop(); setView(old => ({ ...old, loading: false, sessionsLoading: false })); return; }
     void refresh(); const timer = setInterval(() => { void refresh(); }, 5000);
     return () => { clearInterval(timer); stop(); };
-  }, [scope, options.active, visible, access.state, access.status?.canRead, refresh, stop]);
+  }, [scope, options.active, options.taskActive, visible, access.state, access.status?.canRead, refresh, stop]);
   const privateView = access.state !== 'unlocked' || sourceDenied || scope !== scopeRef.current ? { sessions: [], selected: null, task: null, loading: false, sessionsLoading: false, error: null } : view;
-  return { ...privateView, selectSession, refresh, loadMoreSessions: () => loadSessions(true), loadEarlier: async () => { const current = data.current; if (current.selected && current.task?.nextCursor) await readTask(current.selected, current.task.nextCursor); } };
+  return { ...privateView, selectSession, selectCreatedSession: target => {
+    if (target.agentId !== options.agentId || !parseControlTarget(target)) return;
+    const selected: ControlSession = { ...target, name: 'Office conversation', isChild: false, hasActiveRun: null };
+    if (!data.current.sessions.some(item => targetIdentity(item) === targetIdentity(selected))) setView(old => ({ ...old, sessions: [selected, ...old.sessions] }));
+    selectSession(selected);
+  }, refresh, loadMoreSessions: () => loadSessions(true), loadEarlier: async () => { const current = data.current; if (current.selected && current.task?.nextCursor) await readTask(current.selected, current.task.nextCursor); } };
 }

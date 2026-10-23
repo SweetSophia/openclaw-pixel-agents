@@ -2,7 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import { type ControlRunState } from '../../shared/control';
 import { useControlAccess } from '../control/ControlAccess';
 import { ControlApiError, targetIdentity } from '../control/api';
-import { useTaskDetails } from '../control/useTaskDetails';
+import { useTaskDetails, type TaskDetailsState } from '../control/useTaskDetails';
 import './TaskDetails.css';
 
 const runLabels: Record<ControlRunState, string> = { running: 'Running', completed: 'Completed', failed: 'Failed', aborted: 'Stopped', 'not-running': 'Not running', unknown: 'Unknown' };
@@ -10,7 +10,11 @@ const outcomeLabels = { pending: 'No result recorded', success: 'Success recorde
 const time = (value: number) => new Date(value).toLocaleString();
 
 export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: string; initialSessionKey: string; active: boolean }) {
-  const access = useControlAccess(); const state = useTaskDetails({ agentId, initialSessionKey, active });
+  const state = useTaskDetails({ agentId, initialSessionKey, active });
+  return <TaskDetailsView agentId={agentId} active={active} state={state} />;
+}
+export function TaskDetailsView({ agentId, active, state, children }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode }) {
+  const access = useControlAccess();
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false); const [accessError, setAccessError] = useState<ControlApiError | null>(null);
   const keyId = useId(); const selectorId = useId();
   const task = state.task && access.status?.canRead === false
@@ -69,8 +73,9 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
       {!state.sessionsLoading && !state.sessions.length && !state.error && access.status?.canRead && <p>No visible conversations for this agent yet.</p>}
     </div>
     {(state.error || accessError) && <p className="task-notice" role="alert">{(state.error ?? accessError)?.message}</p>}
-    {state.loading && !task && <p role="status">Loading verified task facts…</p>}
-    {task && <>
+    {children}
+    {!children && state.loading && !task && <p role="status">Loading verified task facts…</p>}
+    {!children && task && <>
       <p className="task-announcement" role="status" aria-label="Task updates" aria-live="polite" aria-atomic="true">{runLabels[task.runState]} task. {task.runId ? `Following run ${task.runId}.` : 'Task identity unavailable.'}</p>
       <section className="task-state" aria-label="Run state">
         <div className="task-state-line"><strong className={`task-run-${task.runState}`}>{runLabels[task.runState]}</strong><span className="task-muted">{task.source.state === 'stale' ? 'Last known — connection unavailable' : 'Verified by OpenClaw'}</span></div>

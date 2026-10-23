@@ -6,6 +6,7 @@ import { ControlError, type TaskService } from './taskService';
 import { parseSendRequest, parseTaskRequest } from './validation';
 import type { SendService } from './sendService';
 import type { ConversationService } from './conversation';
+import { controlRecord } from '../../shared/control';
 
 export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService }): Router {
   const { gateway, tasks, config, sends, conversations } = options; const router = Router();
@@ -28,6 +29,14 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
     const cursor = req.query.cursor;
     if (cursor !== undefined && (typeof cursor !== 'string' || !cursor || cursor.length > 2048)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid conversation cursor.' }); return; }
     run(req, res, signal => tasks.listSessions(String(req.params.id), cursor, signal));
+  });
+  router.post('/agents/:id/selection', (req, res) => {
+    const body = controlRecord(req.body);
+    if (!body || Object.keys(body).some(key => key !== 'sessionKey') || typeof body.sessionKey !== 'string'
+      || !body.sessionKey || body.sessionKey.length > 512 || /[\u0000-\u001f\u007f]/.test(body.sessionKey)) {
+      res.status(400).json({ code: 'invalid-request', error: 'Invalid conversation selection.' }); return;
+    }
+    run(req, res, async signal => ({ session: await tasks.resolveSession(String(req.params.id), body.sessionKey as string, signal) }));
   });
   router.post('/agents/:id/task', (req, res) => {
     const input = parseTaskRequest(String(req.params.id), req.body);

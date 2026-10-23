@@ -12,10 +12,16 @@ const task = (target = a, at = 100): ControlTaskSnapshot => ({ target, source: {
 const page = (sessions = [a, b], nextCursor?: string) => ({ sessions, source: { state: 'current', observedAt: 100 }, nextCursor });
 function setup(sessions = [a, b]) {
   f.state = 'unlocked'; f.generation = 1; f.sourceState = 'ready';
-  f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page(sessions) : task(JSON.parse(String(init?.body))));
+  f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page(sessions) : path.endsWith('/selection') ? { session: null } : task(JSON.parse(String(init?.body))));
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
+  it('resolves the exact roster conversation even when it is beyond the first page', async () => {
+    setup([b]); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page([b], 'more') : path.endsWith('/selection') ? { session: a } : task(JSON.parse(String(init?.body))));
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, taskActive: false }));
+    await waitFor(() => expect(result.current.selected?.sessionId).toBe(a.sessionId)); expect(result.current.sessions).toContainEqual(a);
+    expect(f.request.mock.calls.some(([path]) => String(path).endsWith('/task'))).toBe(false);
+  });
   it('selects the exact roster conversation and keeps the choice while another becomes busier', async () => {
     setup(); const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
     await waitFor(() => expect(result.current.task?.runState).toBe('running')); expect(result.current.selected?.sessionKey).toBe(a.sessionKey);
