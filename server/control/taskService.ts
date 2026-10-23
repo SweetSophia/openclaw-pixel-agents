@@ -129,15 +129,24 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
         if (!more || projected.requestAssociation === 'run' || (!projected.runId && projected.request)
           || (!cursor && projected.runId && projected.runId === previous?.snapshot.runId && previous.snapshot.requestAssociation === 'run')) break;
       }
-      const childResponse = controlRecord(await gateway.request('sessions.list', { agentId: input.agentId, spawnedBy: input.sessionKey, limit: 25, offset: 0 }, signal));
-      const childRows = Array.isArray(childResponse?.sessions) ? childResponse.sessions.slice(0, 25) : [];
+      const qualifiedParent = /^agent:[^:]+:.+$/.test(input.sessionKey);
+      const childResponse = controlRecord(await gateway.request('sessions.list', { ...(qualifiedParent ? {} : { agentId: input.agentId }), spawnedBy: input.sessionKey, limit: 25, offset: 0 }, signal));
+      const validChildPage = Array.isArray(childResponse?.sessions) && childResponse.sessions.length <= 25
+        && (childResponse.hasMore === undefined || typeof childResponse.hasMore === 'boolean');
+      const childRows: unknown[] = validChildPage ? childResponse!.sessions as unknown[] : [];
       const children = childRows.filter(value => { const child = controlRecord(value); return child && (child.spawnedBy === input.sessionKey || child.parentSessionKey === input.sessionKey); })
-        .flatMap(value => { try { return [owned(value, input.agentId)]; } catch { return []; } });
+        .flatMap(value => {
+          const child = controlRecord(value)!;
+          const owner = typeof child.agentId === 'string' ? child.agentId : typeof child.key === 'string' ? /^agent:([^:]+):/.exec(child.key)?.[1] : undefined;
+          if (!owner || !registeredAgentIds().has(owner)) return [];
+          try { return [owned(value, owner)]; } catch { return []; }
+        });
       const target = parseControlTarget({ ...input, ...row, sessionKey: row.key, activeLeafEntryId: typeof row.activeLeafEntryId === 'string' ? row.activeLeafEntryId : undefined });
       if (!target) throw new ControlError('invalid-source');
       const sourceAt = typeof row.snapshotAt === 'number' && Number.isFinite(row.snapshotAt) && row.snapshotAt >= 0 ? row.snapshotAt : Date.now();
       let result = projectTask({ target, session: row, history: { ...newest, messages, hasMore: more }, children,
-        childrenComplete: childResponse?.hasMore === false || (childResponse?.hasMore !== true && childRows.length < 25), loadedRecords: loaded, observedAt: sourceAt });
+        childrenComplete: qualifiedParent && validChildPage && children.length === childRows.length
+          && (childResponse?.hasMore === false || (childResponse?.hasMore !== true && childRows.length < 25)), loadedRecords: loaded, observedAt: sourceAt });
       if (cursor) {
         const old = cursor.snapshot;
         // Earlier discovery supplies request context; recent response/activity stay at the observed tail.

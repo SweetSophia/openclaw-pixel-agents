@@ -4,7 +4,7 @@ import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './g
 import { createTaskService } from './taskService';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 'lifecycle-1' };
-function fixture() {
+function fixture(registeredIds = ['cylena']) {
   let gatewayState: 'ready' | 'auth-error' | 'pairing-required' = 'ready';
   let row = { ...target, key: target.sessionKey, hasActiveRun: true, activeLeafEntryId: 'leaf-1', snapshotAt: 100 } as Record<string, unknown>;
   let listener: (event: GatewayEvent) => void = () => {};
@@ -22,7 +22,7 @@ function fixture() {
   });
   const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: true, state: gatewayState, canRead: gatewayState === 'ready', canSend: false }), request: rpc,
     onEvent(callback) { listener = callback; return () => { listener = () => {}; }; } };
-  const tasks = createTaskService(gateway, () => new Set(['cylena']));
+  const tasks = createTaskService(gateway, () => new Set(registeredIds));
   return { tasks, rpc, history, setStatus: (state: typeof gatewayState) => { gatewayState = state; }, setRow: (next: Record<string, unknown>) => { row = { ...row, ...next }; }, event: (event: GatewayEvent) => listener(event) };
 }
 afterEach(() => vi.useRealTimers());
@@ -108,6 +108,20 @@ describe('verified task reads', () => {
         { ...target, key: 'agent:cylena:unrelated', sessionId: 'child-2', spawnedBy: 'another-parent' }], hasMore: true,
     } : original(method, params, signal));
     const task = await f.tasks.getTask(target); expect(task.children).toHaveLength(1); expect(task.childrenComplete).toBe(false); f.tasks.close();
+  });
+  it('includes a verified child owned by another registered agent', async () => {
+    const f = fixture(['cylena', 'cybera']); const original = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (method, params, signal) => method === 'sessions.list' && params.spawnedBy ? {
+      sessions: [{ agentId: 'cybera', key: 'agent:cybera:child', sessionId: 'child-1', spawnedBy: target.sessionKey, displayName: 'Review subtask' }], hasMore: false,
+    } : original(method, params, signal));
+    const task = await f.tasks.getTask(target);
+    expect(task.children[0]).toMatchObject({ agentId: 'cybera', sessionKey: 'agent:cybera:child', name: 'Review subtask' });
+    expect(f.rpc.mock.calls.find(([method, params]) => method === 'sessions.list' && params.spawnedBy)?.[1]).not.toHaveProperty('agentId'); f.tasks.close();
+  });
+  it('does not claim a complete zero child count from a malformed child page', async () => {
+    const f = fixture(); const original = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (method, params, signal) => method === 'sessions.list' && params.spawnedBy ? {} : original(method, params, signal));
+    const task = await f.tasks.getTask(target); expect(task.children).toEqual([]); expect(task.childrenComplete).toBe(false); f.tasks.close();
   });
   it('drops cached private data if the source revokes read permission', async () => {
     const f = fixture(); await f.tasks.getTask(target);

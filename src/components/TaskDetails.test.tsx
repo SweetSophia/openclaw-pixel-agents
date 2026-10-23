@@ -43,4 +43,13 @@ describe('task drawer presentation', () => {
     render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
     expect(screen.getByText('Last known — connection unavailable')).toBeInTheDocument();
   });
+  it('announces a new current run without moving keyboard focus', () => {
+    f.task = { target, source: { state: 'current', observedAt: 100 }, hasActiveRun: true, runId: 'run-1', runState: 'running', requestAssociation: 'unknown', requestState: 'not-loaded', activity: [], children: [], childrenComplete: true, loadedRecords: 50 };
+    const { rerender } = render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
+    const announcement = screen.getByRole('status', { name: 'Task updates' });
+    const refresh = screen.getByRole('button', { name: 'Refresh' }); refresh.focus();
+    f.task = { ...f.task as object, runId: 'run-2' }; rerender(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
+    expect(screen.getByRole('status', { name: 'Task updates' })).toBe(announcement);
+    expect(announcement).toHaveTextContent('run-2'); expect(refresh).toHaveFocus();
+  });
 });

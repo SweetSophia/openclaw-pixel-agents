@@ -138,7 +138,11 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
   const matchedRequest = runId ? reversed.find(item => item.value.role === 'user' && item.value.runId === runId) : undefined;
   const request = matchedRequest ?? reversed.find(item => item.value.role === 'user');
   const response = reversed.find(item => item.value.role === 'assistant' && (!runId || item.value.runId === runId));
-  const childSessions = input.children.map(child => projectSession(child, target.agentId)).filter((row): row is ControlSession => row !== null);
+  const childSessions = input.children.map(value => {
+    const child = controlRecord(value);
+    if (!child || typeof child.agentId !== 'string' || (child.spawnedBy !== target.sessionKey && child.parentSessionKey !== target.sessionKey)) return null;
+    return projectSession(child, child.agentId);
+  }).filter((row): row is ControlSession => row !== null);
   const projected: ControlTaskSnapshot = {
     target, source: { state: 'current', observedAt: input.observedAt }, hasActiveRun,
     activeRunIds: exactRuns(session.activeRunIds), runId, runState,
