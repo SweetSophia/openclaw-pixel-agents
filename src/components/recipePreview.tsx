@@ -38,8 +38,6 @@ export interface DrawRecipePreviewOptions {
   recipe: { bodyIndex: number; hairIndex: number; outfitIndex: number };
   /** Base path for the MetroCity source sheets (e.g. "/assets/source/MetroCity/"). */
   basePath: string;
-  /** Source-tile size in pixels (the source PNG uses 32×32 per frame). */
-  srcTileSize?: number;
   /** Output-tile size in pixels (the destination PNG renders at 48×48 by default). */
   dstTileSize?: number;
   /** Background style — defaults to "transparent". */
@@ -63,7 +61,7 @@ const CHECKERBOARD_DARK = '#16213e';
  */
 export async function drawRecipePreview(opts: DrawRecipePreviewOptions): Promise<void> {
   const { canvas, recipe, basePath, cancelled } = opts;
-  const src = opts.srcTileSize ?? 32;
+  const src = 32; // MetroCity source frames are always 32×32, at every output scale.
   const dst = opts.dstTileSize ?? 48;
   const background = opts.background ?? 'transparent';
 
