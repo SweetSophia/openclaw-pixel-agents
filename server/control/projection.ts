@@ -74,6 +74,13 @@ function projectMessage(row: Record<string, unknown>, index: number): ProjectedM
   };
 }
 
+export function projectConversationMessages(rows: unknown[], offset = 0): ControlMessage[] {
+  return rows.flatMap((value, index) => {
+    const row = controlRecord(value); const projected = row && projectMessage(row, offset + index);
+    return projected ? [projected.value] : [];
+  });
+}
+
 function exactRuns(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || value.length > 64 || !value.every(id => opaque(id))) return undefined;
   return [...value] as string[];

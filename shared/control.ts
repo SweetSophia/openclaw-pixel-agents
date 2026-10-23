@@ -3,6 +3,18 @@ export const CONTROL_LIMITS = {
   historyPage: 50, automaticHistory: 200, maximumHistory: 2000, prompt: 8000,
 } as const;
 
+// OpenClaw 2026.10.3 treats these ordinary-text aliases as immediate aborts.
+// Suppression is admin-only, so the read/write office excludes command inputs.
+const ABORT_TEXT = new Set(['stop', 'esc', 'abort', 'exit', 'interrupt', 'detente', 'deten', 'detén', 'arrete', 'arrête',
+  '停止', '停下来', '暂停', 'やめて', '止めて', 'रुको', 'توقف', 'стоп', 'остановись', 'останови', 'остановить', 'прекрати',
+  'halt', 'anhalten', 'aufhören', 'hoer auf', 'stopp', 'pare', 'stop openclaw', 'openclaw stop', 'stop action',
+  'stop current action', 'stop run', 'stop current run', 'stop agent', 'stop the agent', "stop don't do anything",
+  'stop dont do anything', 'stop do not do anything', 'stop doing anything', 'do not do that', 'please stop', 'stop please']);
+export function isControlCommand(text: string): boolean {
+  const normalized = text.normalize('NFC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
+  return /^[\/!]/.test(normalized) || ABORT_TEXT.has(normalized.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, ' ').replace(/[.!?！？…,，。;；:：'"’”)\]}]+$/u, '').trim());
+}
+
 export type ControlRunState = 'running' | 'completed' | 'failed' | 'aborted' | 'not-running' | 'unknown';
 export type ControlGatewayState = 'disabled' | 'connecting' | 'ready' | 'pairing-required' | 'auth-error' | 'unsupported' | 'unavailable';
 export interface ControlTarget {
@@ -47,7 +59,7 @@ export interface ControlSendReceipt {
 }
 export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'pairing-required' | 'scope-required'
   | 'unsupported' | 'unavailable' | 'invalid-source' | 'invalid-target' | 'session-changed'
-  | 'invalid-request' | 'rate-limited' | 'outcome-unknown';
+  | 'invalid-request' | 'rate-limited' | 'outcome-unknown' | 'command-not-supported';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }
 export interface ControlConversationEvent {
   target: ControlTarget; kind: 'messages' | 'invalidated' | 'unavailable'; source: ControlSource; messages?: ControlMessage[];
@@ -168,9 +180,17 @@ export function parseControlHistoryPage(value: unknown): ControlHistoryPage | nu
     nextCursor: optional(text(2048, true)), sendDisabledReason: optional(text(256)),
   });
 }
+export function parseControlConversationEvent(value: unknown): ControlConversationEvent | null {
+  const event = object<ControlConversationEvent>(value, {
+    target: child(parseControlTarget), kind: oneOf(['messages', 'invalidated', 'unavailable']), source: child(parseSource),
+    messages: optional(list(child(parseControlMessage), CONTROL_LIMITS.historyPage)),
+  });
+  return event && (event.kind !== 'messages' || event.messages !== undefined) ? event : null;
+}
 export function parseControlSendReceipt(value: unknown): ControlSendReceipt | null {
-  return object(value, {
+  const receipt = object<ControlSendReceipt>(value, {
     target: child(parseControlTarget), idempotencyKey: text(128, true), phase: oneOf(['accepted', 'persisted', 'unknown']),
     runId: optional(text(256, true)), messageId: optional(text(256, true)), messageSeq: optional(integer),
   });
+  return receipt && (receipt.phase !== 'persisted' || (receipt.messageId && receipt.messageSeq && receipt.messageSeq > 0)) ? receipt : null;
 }

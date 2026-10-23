@@ -8,6 +8,8 @@ const messages: Partial<Record<ControlErrorCode, string>> = {
   'invalid-target': 'This conversation is no longer available. Select another conversation.',
   'invalid-request': 'This history window changed or expired. Refresh to load current records.',
   'rate-limited': 'Too many requests. Wait a moment before retrying.',
+  'outcome-unknown': 'The submission outcome is unknown. Keep your draft and use Retry original submission; do not create a replacement submission.',
+  'command-not-supported': 'This composer accepts messages, not slash commands, shell commands or stop phrases. Your draft is kept.',
 };
 export class ControlApiError extends Error {
   constructor(public readonly code: ControlErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

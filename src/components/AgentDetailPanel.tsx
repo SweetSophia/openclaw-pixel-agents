@@ -2,7 +2,9 @@ import React, { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentState, AgentActivity, SubAgentInfo } from '../../shared/types';
 import { useModalFocus } from '../hooks/useModalFocus';
-import { TaskDetails } from './TaskDetails';
+import { TaskDetailsView } from './TaskDetails';
+import { AgentConversation } from './AgentConversation';
+import { useTaskDetails } from '../control/useTaskDetails';
 import './AgentDetailPanel.css';
 
 interface Props {
@@ -36,8 +38,9 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const headingId = useId();
-  const [tab, setTab] = useState<'task' | 'agent'>('task');
+  const [tab, setTab] = useState<'task' | 'conversation' | 'agent'>('task');
   const tabsId = useId();
+  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: tab !== 'agent', taskActive: tab === 'task' });
 
   useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
 
@@ -83,15 +86,20 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
         </div>
 
         <div className="detail-tabs" role="tablist" aria-label="Agent details">
-          {(['task', 'agent'] as const).map((name, index) => <button key={name} type="button" role="tab" id={`${tabsId}-${name}-tab`}
+          {(['task', 'conversation', 'agent'] as const).map((name, index) => <button key={name} type="button" role="tab" id={`${tabsId}-${name}-tab`}
             aria-selected={tab === name} aria-controls={`${tabsId}-${name}-panel`} tabIndex={tab === name ? 0 : -1}
             onClick={() => setTab(name)} onKeyDown={event => {
-              const position = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : event.key === 'ArrowRight' ? (index + 1) % 2 : event.key === 'ArrowLeft' ? (index + 1) % 2 : -1;
-              if (position < 0) return; event.preventDefault(); const next = position === 0 ? 'task' : 'agent'; setTab(next); document.getElementById(`${tabsId}-${next}-tab`)?.focus();
-            }}>{name === 'task' ? 'Task' : 'Agent'}</button>)}
+              const position = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : -1;
+              if (position < 0) return; event.preventDefault(); const next = (['task', 'conversation', 'agent'] as const)[position]; setTab(next); document.getElementById(`${tabsId}-${next}-tab`)?.focus();
+            }}>{name === 'task' ? 'Task' : name === 'conversation' ? 'Conversation' : 'Agent'}</button>)}
         </div>
         <div role="tabpanel" id={`${tabsId}-task-panel`} aria-labelledby={`${tabsId}-task-tab`} hidden={tab !== 'task'}>
-          <TaskDetails key={agent.id} agentId={agent.id} initialSessionKey={agent.sessionKey} active={tab === 'task'} />
+          <TaskDetailsView agentId={agent.id} active={tab === 'task'} state={details} />
+        </div>
+        <div role="tabpanel" id={`${tabsId}-conversation-panel`} aria-labelledby={`${tabsId}-conversation-tab`} hidden={tab !== 'conversation'}>
+          <TaskDetailsView agentId={agent.id} active={tab === 'conversation'} state={details}>
+            <AgentConversation target={details.selected} agentId={agent.id} active={tab === 'conversation'} busy={details.selected?.hasActiveRun === true} onCreated={details.selectCreatedSession} />
+          </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
         <p className="detail-subvalue">Office roster summary</p>

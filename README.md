@@ -95,7 +95,24 @@ never stored in browser storage or sent over the public office socket. A failed
 refresh keeps same-conversation facts labelled **Last known**, with their original
 verification time. Missing run identities and requests outside the loaded history
 window are shown explicitly. **Load earlier records** continues bounded discovery,
-up to 2,000 records. There are no send or interrupt controls in this delivery.
+up to 2,000 records.
+
+Choose **Conversation** for text-only user/assistant history and explicit messages.
+Enter adds a line; **Send** or Ctrl/Cmd+Enter submits once. Busy conversations offer
+**Send follow-up**, which queues without interrupting current work. Messages stay
+in the selected conversation and do not dispatch to its external channel.
+**New conversation** starts a separate draft for this agent; creation occurs only
+when you send. Existing conversations with empty or unsupported transcript guards
+require a new conversation before sending.
+
+**Accepted** means admitted by OpenClaw; **Persisted** confirms a canonical user
+record. A disconnect may leave **Outcome unknown**. Use **Retry original submission**
+to reconcile that same ID and immutable message. Never replace it with a new send
+to work around uncertainty. Recovery drafts are kept until persistence; edits made
+while waiting remain separate from the original submission. Drafts survive panel
+and conversation switches in tab memory. Lock, authentication rejection and reload
+clear private drafts and retry identities. A reset or branch
+change keeps the old draft separate; select the current conversation explicitly.
 
 ### Layout Editor
 
@@ -279,6 +296,7 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `DATA_DIR` | `join(__dirname, "data")` | Persistence directory for preferences and layouts. Resolved relative to the compiled module location — dev writes under `server/data/`, standalone compiled startup writes under `dist/server/server/data/`. Set explicitly in production. Docker sets `DATA_DIR=/app/data`. |
 | `OPENCLAW_GATEWAY_URL` | *(none)* | Optional task source. Remote endpoints require an encrypted WebSocket connection; plain connections are accepted only on loopback. Credentials, query parameters and fragments are not accepted in the URL. |
 | `PIXEL_CONTROL_TOKEN` | *(none)* | Separate office operator access key for private task details. Both this key and the Gateway URL are required to enable task access. Do not reuse the ingest or Gateway secret. |
+| `CONTROL_SEND_ENABLED` | `false` | Explicitly enable conversation sends. Requires this office device to have both `operator.read` and `operator.write`; never requests admin authority. |
 | `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_GATEWAY_PASSWORD` | *(none)* | Optional server-only Gateway bootstrap credentials. Never enter these into the browser task-key field. |
 | `CONTROL_ALLOW_TAILNET_HTTP` | `false` | Explicitly allow private task access over a direct encrypted Tailscale connection while the browser URL uses HTTP. Both the actual local socket address on `tailscale0` and the actual Tailnet peer must qualify. Forwarded headers cannot establish this exception. |
 
@@ -304,14 +322,27 @@ The legacy `dataSource` field remains a compatibility alias for **effective owne
 
 Configure the Gateway URL and a separate long, random `PIXEL_CONTROL_TOKEN` in the
 server's private environment, then restart the office. The office creates its own
-Ed25519 device under `DATA_DIR/control/` (directory 0700, files 0600), requests only
-`operator.read`, and retains a device token scoped to that endpoint and identity.
+Ed25519 device under `DATA_DIR/control/` (directory 0700, files 0600), requests
+`operator.read` by default, and retains a device token scoped to that endpoint and identity.
 Approve this office device in OpenClaw if the Task tab reports pairing is required;
 use the Gateway's device administration UI or `openclaw devices list` followed by
 `openclaw devices approve <request-id>`. Confirm the request belongs to this office
 device before approving it, then restart the office to retry the scoped connection.
 Do not copy another client's device identity. A corrupt
 identity fails closed and must be repaired by the operator.
+
+For reviewed send controls, set `CONTROL_SEND_ENABLED=true` and approve the same
+office device for `operator.read` plus `operator.write`. Restart it to negotiate
+the new scopes. Missing write authority keeps history readable and sending
+disabled. Do not leave Gateway master credentials in the long-running office
+environment after provisioning its scoped device token. No Stop, Steer, command,
+attachment or generic RPC interface is exposed. An office restart can make an
+uncertain new-conversation outcome unrecoverable automatically; the office fails
+closed instead of adopting an unverified conversation or replaying a prompt.
+
+The composer rejects slash/shell command prefixes and OpenClaw's bare stop phrases.
+The Gateway reserves literal command suppression for admin clients; the office
+does not request that privilege. Write an ordinary task message instead.
 
 The browser normally needs HTTPS, or loopback HTTP during local development.
 Direct-IP Tailscale deployments may explicitly set `CONTROL_ALLOW_TAILNET_HTTP=true`

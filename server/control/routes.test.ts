@@ -30,6 +30,15 @@ describe('private control routes', () => {
     expect((await request(f.app).get(`/api/control/agents/cylena/sessions?cursor=${'x'.repeat(2049)}`).auth('fixture-key', { type: 'bearer' })).status).toBe(400);
     expect(f.gateway.request).not.toHaveBeenCalled(); f.tasks.close();
   });
+  it('authenticates and validates sends while rejecting writes by default', async () => {
+    const f = fixture(); const url = '/api/control/agents/cylena/send';
+    const body = { agentId: 'cylena', newConversation: true, message: 'hello', idempotencyKey: 'send-fixture' };
+    expect((await request(f.app).post(url).send(body)).status).toBe(401);
+    expect((await request(f.app).post(url).auth('fixture-key', { type: 'bearer' }).send({ ...body, deliver: true })).status).toBe(400);
+    const disabled = await request(f.app).post(url).auth('fixture-key', { type: 'bearer' }).send(body);
+    expect(disabled.status).toBe(403); expect(disabled.body.code).toBe('scope-required');
+    expect(f.gateway.request).not.toHaveBeenCalled(); f.tasks.close();
+  });
   it('returns only normalized session lists and never offers a generic RPC route', async () => {
     const f = fixture(); const res = await request(f.app).get('/api/control/agents/cylena/sessions').auth('fixture-key', { type: 'bearer' });
     expect(res.status).toBe(200); expect(res.body.sessions).toEqual([]);

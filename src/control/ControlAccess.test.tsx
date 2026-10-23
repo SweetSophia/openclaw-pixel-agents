@@ -1,14 +1,37 @@
 import React from 'react';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ControlAccessProvider, useControlAccess } from './ControlAccess';
+import { ControlAccessProvider, useControlAccess, useConversationDrafts } from './ControlAccess';
 import { controlFetch } from './api';
 
 const status = { configured: true, state: 'ready', canRead: true, canSend: false };
 const json = (value: unknown, code = 200) => new Response(JSON.stringify(value), { status: code });
 const wrapper = ({ children }: React.PropsWithChildren) => <ControlAccessProvider>{children}</ControlAccessProvider>;
+const socketFixture = vi.hoisted(() => ({ io: vi.fn(), disconnect: vi.fn() }));
+vi.mock('socket.io-client', () => ({ io: socketFixture.io }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('starts an isolated private socket with WebSocket and keeps the key out of its URL', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(status))); socketFixture.io.mockReturnValue({ disconnect: socketFixture.disconnect });
+    const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
+    const socket = result.current.openSocket?.();
+    expect(socketFixture.io).toHaveBeenCalledWith('/control', expect.objectContaining({ forceNew: true, autoConnect: false, transports: ['websocket', 'polling'], auth: { token: 'fixture-key' } }));
+    expect(socketFixture.io.mock.calls[socketFixture.io.mock.calls.length - 1]?.[1]).not.toHaveProperty('query'); act(() => result.current.lock()); expect(socketFixture.disconnect).toHaveBeenCalled(); expect(socket).toBeTruthy();
+  });
+  it('normalizes a late network failure to locked for an obsolete access generation', async () => {
+    let reject: (error: Error) => void = () => {};
+    const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; })); vi.stubGlobal('fetch', fetch);
+    const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
+    const oldRequest = result.current.request; const pending = oldRequest('/api/control/agents/cylena/send', { method: 'POST', body: '{}' }).catch(error => error);
+    act(() => result.current.lock()); reject(Error('network abort after old consumer unmounted'));
+    await act(async () => { expect(await pending).toMatchObject({ code: 'locked' }); });
+  });
+  it('clears private draft and submission caches on lock', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(status)));
+    const { result } = renderHook(() => ({ access: useControlAccess(), drafts: useConversationDrafts()! }), { wrapper });
+    await act(() => result.current.access.unlock('fixture-key')); result.current.drafts.set('target', { text: 'private draft' });
+    act(() => result.current.access.lock()); expect(result.current.drafts.size).toBe(0);
+  });
   it('attaches the key only to same-origin control paths and prevents redirects', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => json(status)); vi.stubGlobal('fetch', fetch);
     for (const path of ['https://other.test/api/control/status', '//other.test/api/control/status', '/api/agents', '/api/control/../../other']) await expect(controlFetch(path, 'fixture-key')).rejects.toThrow();

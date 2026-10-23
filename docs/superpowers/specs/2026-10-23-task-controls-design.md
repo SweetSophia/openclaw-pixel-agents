@@ -1,6 +1,6 @@
 # Real task details, then conversation and send controls
 
-Status: user-approved on 2026-10-23. The first delivery is implemented and undergoing release verification; conversation/send controls follow its release.
+Status: user-approved on 2026-10-23. Delivery 1 merged in PR #294 and deployed with read-only Gateway authority. Conversation/send controls are the next delivery.
 
 ## Intent and agreed order
 
