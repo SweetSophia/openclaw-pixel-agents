@@ -35,6 +35,9 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
       const value = await controlFetch(path, candidate, { ...init, signal: controller.signal });
       if (controller.signal.aborted || current !== revision.current) throw new ControlApiError('locked');
       return value;
+    } catch (error) {
+      if (current !== revision.current) throw new ControlApiError('locked');
+      throw error;
     } finally { init.signal?.removeEventListener('abort', cancel); controllers.current.delete(controller); }
   }, []);
   const unlock = useCallback(async (candidate: string) => {

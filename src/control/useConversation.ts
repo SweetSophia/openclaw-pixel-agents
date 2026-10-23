@@ -75,8 +75,11 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
         || (input.target && targetIdentity(receipt.target) !== targetIdentity(input.target))) throw new ControlApiError('invalid-source');
       mutate(key, value => { value.submission = { input, phase: receipt.phase, receipt }; if (receipt.phase === 'persisted' && value.text === input.message) value.text = ''; });
       if (input.newConversation && current.onCreated) {
-        const createdKey = targetIdentity(receipt.target); drafts.set(createdKey, drafts.get(key)!); drafts.delete(key);
-        if (current.scope === context.current.scope) { setNew(false); current.onCreated(receipt.target); }
+        const createdKey = targetIdentity(receipt.target);
+        if (createdKey !== key) {
+          drafts.set(createdKey, drafts.get(key)!); drafts.delete(key);
+          if (current.scope === context.current.scope) { setNew(false); current.onCreated(receipt.target); }
+        }
       }
       if (current.scope === context.current.scope) { setError(null); void refresh(); }
     } catch (failure) {

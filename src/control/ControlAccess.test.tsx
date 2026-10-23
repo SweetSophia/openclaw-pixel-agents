@@ -9,6 +9,14 @@ const json = (value: unknown, code = 200) => new Response(JSON.stringify(value),
 const wrapper = ({ children }: React.PropsWithChildren) => <ControlAccessProvider>{children}</ControlAccessProvider>;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('normalizes a late network failure to locked for an obsolete access generation', async () => {
+    let reject: (error: Error) => void = () => {};
+    const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; })); vi.stubGlobal('fetch', fetch);
+    const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
+    const oldRequest = result.current.request; const pending = oldRequest('/api/control/agents/cylena/send', { method: 'POST', body: '{}' }).catch(error => error);
+    act(() => result.current.lock()); reject(Error('network abort after old consumer unmounted'));
+    await act(async () => { expect(await pending).toMatchObject({ code: 'locked' }); });
+  });
   it('clears private draft and submission caches on lock', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(status)));
     const { result } = renderHook(() => ({ access: useControlAccess(), drafts: useConversationDrafts()! }), { wrapper });

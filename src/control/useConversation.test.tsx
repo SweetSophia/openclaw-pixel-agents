@@ -63,6 +63,18 @@ describe('manual conversation submissions', () => {
     expect(result.current.draft).toBe(''); act(() => result.current.setDraft('new')); await act(() => result.current.send());
     const send = f.request.mock.calls.find(([p]) => String(p).endsWith('/send'))!; expect(JSON.parse(String(send[1].body))).toMatchObject({ agentId: 'cylena', newConversation: true, message: 'new' }); expect(JSON.parse(String(send[1].body))).not.toHaveProperty('target'); expect(onCreated).toHaveBeenCalledWith(a);
   });
+  it('retains new-conversation recovery text after adopting its target and retrying acceptance', async () => {
+    setup(); const onCreated = vi.fn(); let phase = 'unknown';
+    f.request.mockImplementation(async (path: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)); return path.endsWith('/history') ? { target: body, messages: [], source: { state: 'current', observedAt: 10 } }
+        : { target: b, idempotencyKey: body.idempotencyKey, phase, ...(phase === 'persisted' ? { messageId: 'u1', messageSeq: 1 } : {}) };
+    });
+    const { result, rerender } = renderHook(({ target }) => useConversation(target, true, { agentId: 'cylena', onCreated }), { initialProps: { target: a } });
+    await waitFor(() => expect(result.current.ready).toBe(true)); act(() => result.current.newConversation()); act(() => result.current.setDraft('new recovery draft')); await act(() => result.current.send());
+    rerender({ target: b }); await waitFor(() => expect(result.current.draft).toBe('new recovery draft'));
+    phase = 'accepted'; await act(() => result.current.retryPending()); expect(result.current.draft).toBe('new recovery draft'); expect(result.current.submission?.phase).toBe('accepted');
+    phase = 'persisted'; await act(() => result.current.retryPending()); expect(result.current.draft).toBe(''); expect(result.current.submission?.phase).toBe('persisted');
+  });
   it('tears down private subscriptions on target/lock/close and never sends from an event', async () => {
     setup(); const listeners = new Map<string, (...args: any[]) => void>();
     const socket = { on: vi.fn((name, fn) => { listeners.set(name, fn); }), emit: vi.fn(), connect: vi.fn(), disconnect: vi.fn() };
