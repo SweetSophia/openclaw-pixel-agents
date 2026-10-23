@@ -27,17 +27,15 @@ export const AgentPortrait: React.FC<Props> = ({ recipe, size = 40 }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // The 16×32 source sprite is drawn at `dstTileSize` per source
-    // pixel so the portrait fits inside `size` while preserving
-    // aspect ratio.
-    const dstTileSize = Math.floor((size / 20) * 16);
+    // Scale the 32px source frame to retain the existing centered close-up.
+    // Output scaling must not change the body/hair source row stride.
+    const dstTileSize = Math.floor((size / 20) * 16) * 2;
 
     const cancelled = { value: false };
     drawRecipePreview({
       canvas,
       recipe: r,
       basePath: BASE,
-      srcTileSize: 16,
       dstTileSize,
       background: 'transparent',
       cancelled,
