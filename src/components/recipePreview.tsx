@@ -3,12 +3,12 @@
  *
  * Issue #165: AgentPortrait.tsx and CharacterCustomizer.tsx had two
  * near-identical copies of the recipe-to-canvas render logic. The
- * only meaningful differences were background style and source
- * scaling. This module consolidates both — callers pass an options
- * object to pick the variant.
+ * differences are background style and destination size. Source frame
+ * addressing always follows the shared MetroCity asset contract.
  */
 
 import { assetUrl } from '../util/assetUrl';
+import { METROCITY_FRAME_SIZE, resolveHairRow } from '../game/characterSource';
 
 const SHEET_CACHE = new Map<string, Promise<HTMLImageElement>>();
 
@@ -38,8 +38,8 @@ export interface DrawRecipePreviewOptions {
   recipe: { bodyIndex: number; hairIndex: number; outfitIndex: number };
   /** Base path for the MetroCity source sheets (e.g. "/assets/source/MetroCity/"). */
   basePath: string;
-  /** Output-tile size in pixels (the destination PNG renders at 48×48 by default). */
-  dstTileSize?: number;
+  /** Drawn width and height in pixels, centered on the canvas; defaults to 24×48. */
+  destinationSize?: { width: number; height: number };
   /** Background style — defaults to "transparent". */
   background?: 'transparent' | 'checkerboard';
   /**
@@ -61,8 +61,7 @@ const CHECKERBOARD_DARK = '#16213e';
  */
 export async function drawRecipePreview(opts: DrawRecipePreviewOptions): Promise<void> {
   const { canvas, recipe, basePath, cancelled } = opts;
-  const src = 32; // MetroCity source frames are always 32×32, at every output scale.
-  const dst = opts.dstTileSize ?? 48;
+  const { width: dstW, height: dstH } = opts.destinationSize ?? { width: 24, height: 48 };
   const background = opts.background ?? 'transparent';
 
   const ctx = canvas.getContext('2d');
@@ -97,16 +96,14 @@ export async function drawRecipePreview(opts: DrawRecipePreviewOptions): Promise
     const cropW = 16;
     const cropH = 32;
 
-    // Position: center horizontally, fit to canvas height (preserve aspect)
-    const dstW = Math.floor(cropW * dst / src);
-    const dstH = Math.floor(cropH * dst / src);
+    // Destination geometry is independent of the source frame grid.
     const offsetX = Math.floor((canvas.width - dstW) / 2);
     const offsetY = Math.floor((canvas.height - dstH) / 2);
 
     // Draw layers: body → outfit → hair
-    ctx.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * src, cropW, cropH, offsetX, offsetY, dstW, dstH);
+    ctx.drawImage(bodyImg, srcX + cropX, recipe.bodyIndex * METROCITY_FRAME_SIZE, cropW, cropH, offsetX, offsetY, dstW, dstH);
     ctx.drawImage(outfitImg, srcX + cropX, 0, cropW, cropH, offsetX, offsetY, dstW, dstH);
-    ctx.drawImage(hairImg, srcX + cropX, recipe.hairIndex * src, cropW, cropH, offsetX, offsetY, dstW, dstH);
+    ctx.drawImage(hairImg, srcX + cropX, resolveHairRow(recipe.hairIndex, hairImg.height) * METROCITY_FRAME_SIZE, cropW, cropH, offsetX, offsetY, dstW, dstH);
   } catch {
     if (cancelled?.value) return;
     // Fallback: draw a small marker so the canvas isn't blank.

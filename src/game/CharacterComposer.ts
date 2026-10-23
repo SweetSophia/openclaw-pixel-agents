@@ -20,11 +20,9 @@
  */
 
 import { loadPng } from '../util/loadPng';
+import { METROCITY_FRAME_SIZE as SRC_FRAME, resolveHairRow } from './characterSource';
 
 // ── Source constants ───────────────────────────────────────
-
-/** Source frame size — all MetroCity sheets use 32×32 */
-const SRC_FRAME = 32;
 
 /** Columns per source direction (6 animation frames) */
 const SRC_FRAMES_PER_DIR = 6;
@@ -195,6 +193,7 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
   }
 
   const outfit = outfitSheets[Math.min(recipe.outfitIndex, outfitSheets.length - 1)];
+  const hairRow = resolveHairRow(recipe.hairIndex, hairSheet.height);
 
   // For each output direction, we need the corresponding source direction
   const dirMap: Record<string, keyof typeof SRC_DIR_OFFSETS> = {
@@ -218,7 +217,7 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
 
       const bodyFrame = extractSrcFrame(bodySheet, recipe.bodyIndex, srcCol);
       const outfitFrame = extractSrcFrame(outfit, 0, srcCol); // outfits have 1 row each
-      const hairFrame = extractSrcFrame(hairSheet, recipe.hairIndex, srcCol);
+      const hairFrame = extractSrcFrame(hairSheet, hairRow, srcCol);
 
       const composited = compositeFrame(bodyFrame, outfitFrame, hairFrame);
       result[outDir as 'down' | 'up' | 'right'].push(composited);
