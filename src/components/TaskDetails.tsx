@@ -27,6 +27,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
     return () => { disposed = true; controller.abort(); clearInterval(timer); };
   }, [active, access.state, access.request]);
   const refresh = async () => {
+    if (state.loading || state.sessionsLoading) return;
     try { await access.request('/api/control/status'); setAccessError(null); await state.refresh(); }
     catch (error) { setAccessError(error instanceof ControlApiError ? error : new ControlApiError()); }
   };
@@ -53,7 +54,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
     </section>;
   }
   return <div className="task-details">
-    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" disabled={state.loading || state.sessionsLoading} onClick={() => { void refresh(); }}>Refresh</button></div>
+    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={state.loading || state.sessionsLoading} onClick={() => { void refresh(); }}>Refresh</button></div>
     {access.status && !access.status.canRead && <p role="status">{new ControlApiError(access.status.state === 'pairing-required' ? 'pairing-required' : access.status.state === 'auth-error' ? 'scope-required' : access.status.state === 'unsupported' ? 'unsupported' : 'unavailable').message}</p>}
     <div className="task-conversation">
       <label htmlFor={selectorId}>Conversation</label>
@@ -64,7 +65,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
         {state.sessions.map(item => <option key={targetIdentity(item)} value={targetIdentity(item)}>{item.name}{item.channel ? ` · ${item.channel}` : ''}{item.isChild ? ' · Child session' : ''} · {item.hasActiveRun === true ? 'Running' : item.hasActiveRun === false ? 'Not running' : 'State unknown'} · {item.sessionId.slice(0, 8)}</option>)}
       </select>
       {state.selectionNote && <p className="task-muted">{state.selectionNote}</p>}
-      {state.nextSessionsCursor && <button type="button" disabled={state.sessionsLoading} onClick={() => { void state.loadMoreSessions(); }}>Load more conversations</button>}
+      {state.nextSessionsCursor && <button type="button" aria-disabled={state.sessionsLoading} onClick={() => { if (!state.sessionsLoading) void state.loadMoreSessions(); }}>Load more conversations</button>}
       {!state.sessionsLoading && !state.sessions.length && !state.error && access.status?.canRead && <p>No visible conversations for this agent yet.</p>}
     </div>
     {(state.error || accessError) && <p className="task-notice" role="alert">{(state.error ?? accessError)?.message}</p>}
@@ -85,7 +86,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
         {task.request && <><p className="task-text task-request">{task.request.text}</p>{task.request.truncated && <p className="task-muted">Request text shortened for display.</p>}</>}
         {task.requestAssociation === 'latest-recorded' && <p className="task-muted">Recorded context; its association with current work is unknown.</p>}
         {task.requestState !== 'found' && <p>{task.requestState === 'limit-reached' ? 'Discovery limit reached: 2,000 records. The current task request is outside the loaded window.' : task.requestState === 'not-loaded' ? 'Task request not loaded.' : 'No task request is available in the recorded history.'}</p>}
-        {task.nextCursor && <button type="button" disabled={state.loading} onClick={() => { void state.loadEarlier(); }}>Load earlier records</button>}
+        {task.nextCursor && <button type="button" aria-disabled={state.loading} onClick={() => { if (!state.loading) void state.loadEarlier(); }}>Load earlier records</button>}
       </section>
       <section className="task-block"><h3>Recent recorded activity</h3>
         {task.activity.length ? <ol className="task-activity">{task.activity.map((item, index) => <li key={`${item.id}:${index}`}><strong>{item.toolName}</strong><span>{outcomeLabels[item.outcome]}</span>{item.at !== undefined && <time dateTime={new Date(item.at).toISOString()}>{time(item.at)}</time>}</li>)}</ol> : <p className="task-muted">No tool activity in the loaded window.</p>}

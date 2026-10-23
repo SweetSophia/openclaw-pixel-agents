@@ -4,11 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TaskDetails } from './TaskDetails';
 import { ControlApiError } from '../control/api';
 
-const f = vi.hoisted(() => ({ request: vi.fn(), unlock: vi.fn(), lock: vi.fn(), refresh: vi.fn(), earlier: vi.fn(), accessState: 'unlocked', task: null as unknown, status: null as unknown }));
+const f = vi.hoisted(() => ({ request: vi.fn(), unlock: vi.fn(), lock: vi.fn(), refresh: vi.fn(), earlier: vi.fn(), accessState: 'unlocked', task: null as unknown, status: null as unknown, loading: false }));
 vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ state: f.accessState, status: f.status, request: f.request, unlock: f.unlock, lock: f.lock }) }));
-vi.mock('../control/useTaskDetails', () => ({ useTaskDetails: () => ({ selected: { sessionKey: 'agent:cylena:test' }, sessions: [], task: f.task, loading: false, error: null, refresh: f.refresh, loadEarlier: f.earlier, loadMoreSessions: vi.fn(), selectSession: vi.fn() }) }));
+vi.mock('../control/useTaskDetails', () => ({ useTaskDetails: () => ({ selected: { sessionKey: 'agent:cylena:test' }, sessions: [], task: f.task, loading: f.loading, error: null, refresh: f.refresh, loadEarlier: f.earlier, loadMoreSessions: vi.fn(), selectSession: vi.fn() }) }));
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:test', sessionId: 'session-1' };
-afterEach(() => { cleanup(); vi.clearAllMocks(); f.accessState = 'unlocked'; f.task = null; f.status = null; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); f.accessState = 'unlocked'; f.task = null; f.status = null; f.loading = false; });
 describe('task drawer presentation', () => {
   it('displays source facts and a failed tool without changing the proven run result', () => {
     f.task = { target, source: { state: 'current', observedAt: 100 }, hasActiveRun: false, runState: 'completed', runId: 'run-1',
@@ -48,6 +48,10 @@ describe('task drawer presentation', () => {
     const { rerender } = render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
     const announcement = screen.getByRole('status', { name: 'Task updates' });
     const refresh = screen.getByRole('button', { name: 'Refresh' }); refresh.focus();
+    f.loading = true; rerender(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
+    expect(refresh).not.toBeDisabled(); expect(refresh).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(refresh); expect(f.refresh).not.toHaveBeenCalled();
+    f.loading = false;
     f.task = { ...f.task as object, runId: 'run-2' }; rerender(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
     expect(screen.getByRole('status', { name: 'Task updates' })).toBe(announcement);
     expect(announcement).toHaveTextContent('run-2'); expect(refresh).toHaveFocus();
