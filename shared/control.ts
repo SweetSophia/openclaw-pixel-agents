@@ -7,7 +7,7 @@ export type ControlRunState = 'running' | 'completed' | 'failed' | 'aborted' | '
 export type ControlGatewayState = 'disabled' | 'connecting' | 'ready' | 'pairing-required' | 'auth-error' | 'unsupported' | 'unavailable';
 export interface ControlTarget {
   agentId: string; sessionKey: string; sessionId: string;
-  lifecycleRevision?: number; branchId?: string; activeLeafEntryId?: string;
+  lifecycleRevision?: string; branchId?: string; activeLeafEntryId?: string;
 }
 export interface ControlStatus { configured: boolean; state: ControlGatewayState; canRead: boolean; canSend: boolean }
 export interface ControlSource { state: 'current' | 'stale'; observedAt: number }
@@ -105,7 +105,7 @@ function list(field: Field, maximum: number): Field {
 const agentId: Field = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value) ? value : INVALID;
 const sessionId: Field = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value) ? value : INVALID;
 const targetShape = {
-  agentId, sessionId, sessionKey: text(512, true), lifecycleRevision: optional(integer),
+  agentId, sessionId, sessionKey: text(512, true), lifecycleRevision: optional(text(256, true)),
   branchId: optional(text(256, true)), activeLeafEntryId: optional(text(256, true)),
 };
 

@@ -309,7 +309,8 @@ Ed25519 device under `DATA_DIR/control/` (directory 0700, files 0600), requests 
 Approve this office device in OpenClaw if the Task tab reports pairing is required;
 use the Gateway's device administration UI or `openclaw devices list` followed by
 `openclaw devices approve <request-id>`. Confirm the request belongs to this office
-device before approving it. Do not copy another client's device identity. A corrupt
+device before approving it, then restart the office to retry the scoped connection.
+Do not copy another client's device identity. A corrupt
 identity fails closed and must be repaired by the operator.
 
 The browser normally needs HTTPS, or loopback HTTP during local development.

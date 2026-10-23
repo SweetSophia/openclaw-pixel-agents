@@ -34,4 +34,9 @@ describe('private task access', () => {
     expect(controlTransportAllowed(req('127.0.0.1', '127.0.0.1'), false, {})).toBe(true);
     expect(controlTransportAllowed(req('192.168.1.2', '192.168.1.3', true), false, {})).toBe(true);
   });
+  it('does not mistake a trusted loopback proxy for a local development client', () => {
+    const req = { secure: false, ip: '203.0.113.4', socket: { localAddress: '127.0.0.1', remoteAddress: '127.0.0.1' }, headers: { 'x-forwarded-for': '203.0.113.4', 'x-forwarded-proto': 'http' } };
+    expect(controlTransportAllowed(req, false, {})).toBe(false);
+    expect(controlTransportAllowed({ ...req, secure: true }, false, {})).toBe(true);
+  });
 });

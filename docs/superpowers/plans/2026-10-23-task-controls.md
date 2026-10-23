@@ -55,7 +55,7 @@ Define these cross-task interfaces in Task 1; later tasks must use their exact n
 ```ts
 type ControlRunState = 'running' | 'completed' | 'failed' | 'aborted' | 'not-running' | 'unknown';
 type ControlGatewayState = 'disabled' | 'connecting' | 'ready' | 'pairing-required' | 'auth-error' | 'unsupported' | 'unavailable';
-interface ControlTarget { agentId: string; sessionKey: string; sessionId: string; lifecycleRevision?: number; branchId?: string; activeLeafEntryId?: string }
+interface ControlTarget { agentId: string; sessionKey: string; sessionId: string; lifecycleRevision?: string; branchId?: string; activeLeafEntryId?: string }
 interface ControlStatus { configured: boolean; state: ControlGatewayState; canRead: boolean; canSend: boolean }
 interface ControlSource { state: 'current' | 'stale'; observedAt: number }
 interface ControlSession extends ControlTarget { name: string; channel?: string; isChild: boolean; hasActiveRun: boolean | null; updatedAt?: number; snapshotAt?: number; model?: string; sendDisabledReason?: string }
@@ -133,8 +133,8 @@ interface ControlErrorBody { error: string; code: ControlErrorCode }
 
 **Interfaces:** Consumes Tasks 1–4 and produces a reviewed, deployed Delivery 1 with read-only Gateway authority. No send controls are enabled.
 
-- [ ] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate` and `git diff --check`; require successful exits and repository coverage floors. Do not add tests merely for plan/mockup documentation.
-- [ ] Use an isolated fixture preview at 320/390/768/1024/1440px and short landscape. Exercise native unlock, conversation selection, refresh, history loading, tabs, modal focus and all unavailable/stale states. Check 44px targets, one reachable scroll area, no horizontal overflow, no public-socket private events and no browser errors.
+- [x] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate` and `git diff --check`; require successful exits and repository coverage floors. Do not add tests merely for plan/mockup documentation.
+- [x] Use an isolated fixture preview at 320/390/768/1024/1440px and short landscape. Exercise native unlock, conversation selection, refresh, history loading, tabs, modal focus and all unavailable/stale states. Check 44px targets, one reachable scroll area, no horizontal overflow, no public-socket private events and no browser errors.
 - [ ] Conduct a live read-only Gateway check with its distinct approved read device; never issue a real task. Check returned text/run identity against the selected conversation without committing private fixtures. Confirm collector/room/canvas behavior and persisted layout/preferences remain intact.
 - [ ] Follow the selected execution method's independent review gate and existing bot-review policy. Address valid findings, require green current-head checks and no new valid comments, then merge Delivery 1 in dependency order. Take a fresh backup, deploy the tested artifacts and opt-in read configuration, and verify actual live behavior before proceeding to Delivery 2.
 

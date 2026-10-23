@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   CONTROL_LIMITS, controlByteSize, controlRecord, parseControlTarget,
   type ControlSession, type ControlSessionPage, type ControlTarget, type ControlTaskRequest, type ControlTaskSnapshot,
@@ -17,12 +17,19 @@ export interface TaskService {
   clear(): void; close(): void;
 }
 const identity = (target: ControlTarget) => JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
-interface Cached { snapshot: ControlTaskSnapshot; at: number; valid: boolean; order: number }
+interface Cached { snapshot: ControlTaskSnapshot; at: number; valid: boolean; order: number; offset: number; total?: number }
 interface Earlier { target: ControlTarget; snapshot: ControlTaskSnapshot; offset: number; loaded: number; expires: number; leaf?: unknown }
 interface Flight { promise: Promise<ControlTaskSnapshot>; controller: AbortController; users: number }
 export function createTaskService(gateway: ControlGateway, registeredAgentIds: () => ReadonlySet<string>): TaskService {
   const cache = new Map<string, Cached>(); const earlier = new Map<string, Earlier>(); const flights = new Map<string, Flight>();
-  const cursorSecret = randomBytes(32); let closed = false; let epoch = 0; let order = 0;
+  const cursorSecret = randomBytes(32); let closed = false; let epoch = 0; let destructiveEpoch = 0; let order = 0;
+  const branches = new Map<string, string>(); let globalBranch: string | undefined;
+  // Branch selection can change without a lifecycle reset; bind it to the observed source event.
+  function branchIdentity(agentId: string, key: string, source: unknown): unknown {
+    const observed = branches.get(JSON.stringify([agentId, key]));
+    return observed || globalBranch ? `observed-${createHash('sha256').update(JSON.stringify([source ?? null, globalBranch ?? null, observed ?? null])).digest('hex')}` : source;
+  }
+  const decorate = (row: Record<string, unknown>, agentId: string) => ({ ...row, branchId: branchIdentity(agentId, String(row.key), row.branchId) });
   function trim(): void {
     const now = Date.now();
     for (const [key, entry] of cache) if (now - entry.at >= 60000) cache.delete(key);
@@ -49,7 +56,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   async function verifyTarget(target: ControlTarget, signal?: AbortSignal): Promise<Record<string, unknown>> {
     registered(target.agentId); if (!parseControlTarget(target)) throw new ControlError('invalid-target');
     const response = controlRecord(await gateway.request('sessions.describe', { key: target.sessionKey, agentId: target.agentId }, signal));
-    const row = owned(response?.session, target.agentId); lifecycle(target, row); return row;
+    const row = decorate(owned(response?.session, target.agentId), target.agentId); lifecycle(target, row); return row;
   }
   function listCursor(agentId: string, offset: number): string {
     const body = Buffer.from(JSON.stringify({ agentId, offset, expires: Date.now() + 60000 })).toString('base64url');
@@ -72,7 +79,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     if (!response || !Array.isArray(response.sessions) || response.sessions.length > 25) throw new ControlError('invalid-source');
     const sessions: ControlSession[] = [];
     for (const value of response.sessions) {
-      try { const projected = projectSession(owned(value, agentId), agentId); if (projected) sessions.push(projected); } catch { /* Do not expose another owner's row. */ }
+      try { const projected = projectSession(decorate(owned(value, agentId), agentId), agentId); if (projected) sessions.push(projected); } catch { /* Do not expose another owner's row. */ }
     }
     const hasMore = response.hasMore === true || (response.hasMore !== false && response.sessions.length === 25);
     const observedAt = typeof response.ts === 'number' && Number.isFinite(response.ts) && response.ts >= 0 ? response.ts : Date.now();
@@ -82,13 +89,13 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     const token = randomUUID(); earlier.set(token, { target, snapshot: structuredClone(snapshot), offset, loaded: snapshot.loadedRecords, expires: Date.now() + 60000, leaf }); trim(); return token;
   }
   async function read(input: ControlTaskRequest, signal: AbortSignal): Promise<ControlTaskSnapshot> {
-    trim(); const key = identity(input); const previous = cache.get(key); const myEpoch = epoch; const myOrder = ++order;
+    trim(); const key = identity(input); const previous = cache.get(key); const myEpoch = epoch; const myDestructiveEpoch = destructiveEpoch; const myOrder = ++order;
     const cursor = input.cursor ? earlier.get(input.cursor) : undefined;
     if (input.cursor && (!cursor || cursor.expires <= Date.now() || identity(cursor.target) !== key)) throw new ControlError('invalid-request');
     try {
       let row = await verifyTarget(input, signal);
       if (!input.cursor && previous?.valid && Date.now() - previous.at < 2000) return structuredClone(previous.snapshot);
-      if (cursor && cursor.leaf !== undefined && row.activeLeafEntryId !== cursor.leaf) throw new ControlError('invalid-request');
+      if (cursor && cursor.leaf !== undefined && row.activeLeafEntryId !== undefined && row.activeLeafEntryId !== cursor.leaf) throw new ControlError('invalid-request');
       let offset = cursor?.offset ?? 0; let loaded = cursor?.loaded ?? 0;
       const budget = cursor ? Math.min(50, 2000 - loaded) : 200;
       if (budget <= 0) throw new ControlError('invalid-request');
@@ -100,7 +107,10 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
         total = page.totalMessages;
         const info = controlRecord(page.sessionInfo);
         if (info && Object.keys(info).length) {
-          const updated = owned({ ...row, ...info }, input.agentId); lifecycle(input, updated); row = updated;
+          if (cursor && info.activeLeafEntryId !== undefined && info.activeLeafEntryId !== cursor.leaf) throw new ControlError('invalid-request');
+          if (newest && info.activeLeafEntryId !== undefined && row.activeLeafEntryId !== undefined && info.activeLeafEntryId !== row.activeLeafEntryId) throw new ControlError('invalid-request');
+          const updated = owned({ ...row, ...info, branchId: info.branchId === undefined ? row.branchId : branchIdentity(input.agentId, input.sessionKey, info.branchId) }, input.agentId);
+          lifecycle(input, updated); row = updated;
         }
         if (!newest) newest = page;
         messages = [...page.messages, ...messages]; loaded += 50;
@@ -110,13 +120,15 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
         if (more) offset = next as number;
         const projected = projectTask({ target: { ...input, activeLeafEntryId: typeof row.activeLeafEntryId === 'string' ? row.activeLeafEntryId : undefined }, session: row,
           history: { ...newest, messages, hasMore: more }, children: [], childrenComplete: false, loadedRecords: loaded, observedAt: Date.now() });
-        if (!more || projected.requestAssociation === 'run' || (!projected.runId && projected.request)) break;
+        if (!more || projected.requestAssociation === 'run' || (!projected.runId && projected.request)
+          || (!cursor && projected.runId && projected.runId === previous?.snapshot.runId && previous.snapshot.requestAssociation === 'run')) break;
       }
       const childResponse = controlRecord(await gateway.request('sessions.list', { agentId: input.agentId, spawnedBy: input.sessionKey, limit: 25, offset: 0 }, signal));
       const childRows = Array.isArray(childResponse?.sessions) ? childResponse.sessions.slice(0, 25) : [];
       const children = childRows.filter(value => { const child = controlRecord(value); return child && (child.spawnedBy === input.sessionKey || child.parentSessionKey === input.sessionKey); })
         .flatMap(value => { try { return [owned(value, input.agentId)]; } catch { return []; } });
-      const target = parseControlTarget({ ...input, ...row, sessionKey: row.key })!;
+      const target = parseControlTarget({ ...input, ...row, sessionKey: row.key, activeLeafEntryId: typeof row.activeLeafEntryId === 'string' ? row.activeLeafEntryId : undefined });
+      if (!target) throw new ControlError('invalid-source');
       const sourceAt = typeof row.snapshotAt === 'number' && Number.isFinite(row.snapshotAt) && row.snapshotAt >= 0 ? row.snapshotAt : Date.now();
       let result = projectTask({ target, session: row, history: { ...newest, messages, hasMore: more }, children,
         childrenComplete: childResponse?.hasMore === false || (childResponse?.hasMore !== true && childRows.length < 25), loadedRecords: loaded, observedAt: sourceAt });
@@ -126,17 +138,23 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
         result = { ...old, target, loadedRecords: loaded, nextCursor: undefined,
           request: result.requestAssociation === 'run' ? result.request : old.request ?? result.request,
           requestAssociation: result.requestAssociation === 'run' ? 'run' : old.requestAssociation === 'run' ? 'run' : result.request ? 'latest-recorded' : old.requestAssociation,
-          requestState: result.request || old.request ? 'found' : loaded >= 2000 ? 'limit-reached' : more ? 'not-loaded' : 'unavailable' };
+          requestState: result.requestAssociation === 'run' || old.requestAssociation === 'run' || (!result.runId && (result.request || old.request)) ? 'found' : loaded >= 2000 ? 'limit-reached' : more ? 'not-loaded' : 'unavailable' };
+      }
+      if (!cursor && result.runId && result.runId === previous?.snapshot.runId && typeof total === 'number' && previous.total !== undefined && total >= previous.total) {
+        const old = previous.snapshot;
+        if (result.requestAssociation !== 'run' && old.requestAssociation === 'run') result = { ...result, request: old.request, requestAssociation: 'run', requestState: 'found' };
+        if (old.loadedRecords > result.loadedRecords) { loaded = old.loadedRecords; result.loadedRecords = loaded; offset = previous.offset + total - previous.total; }
       }
       if (more && loaded < 2000) result.nextCursor = continuation(target, result, offset, row.activeLeafEntryId);
       if (controlByteSize(result) > CONTROL_LIMITS.responseBytes) throw new ControlError('invalid-source');
       if (closed || signal.aborted || myEpoch !== epoch) throw new ControlError('unavailable');
       const latest = cache.get(key);
       if (!latest || (result.source.observedAt >= latest.snapshot.source.observedAt && myOrder >= latest.order)) {
-        cache.delete(key); cache.set(key, { snapshot: structuredClone(result), at: Date.now(), valid: true, order: myOrder }); trim();
+        cache.delete(key); cache.set(key, { snapshot: structuredClone(result), at: Date.now(), valid: true, order: myOrder, offset, total: typeof total === 'number' ? total : undefined }); trim();
       }
       return result;
     } catch (error) {
+      if (myDestructiveEpoch !== destructiveEpoch) throw new ControlError('session-changed');
       if (error instanceof GatewayRequestError && error.code !== 'unavailable') {
         cache.delete(key); for (const [token, item] of earlier) if (identity(item.target) === key) earlier.delete(token);
         throw new ControlError(error.code);
@@ -152,7 +170,18 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     if (event.event === 'source.invalidated' || event.event === 'sessions.changed') {
       epoch++;
       const payload = controlRecord(event.payload);
-      if (payload && ['reset', 'delete', 'branch', 'rewind'].includes(String(payload.reason))) { cache.clear(); earlier.clear(); }
+      if (payload && ['reset', 'delete', 'branch', 'branch-switch', 'rewind'].includes(String(payload.reason))) {
+        destructiveEpoch++; cache.clear(); earlier.clear();
+        if (payload.reason === 'branch-switch' || payload.reason === 'branch' || payload.reason === 'rewind') {
+          const nested = controlRecord(payload.session); const sessionKey = payload.sessionKey ?? nested?.key;
+          const agentId = payload.agentId ?? nested?.agentId ?? (typeof sessionKey === 'string' ? /^agent:([^:]+):/.exec(sessionKey)?.[1] : undefined);
+          if (typeof sessionKey === 'string' && sessionKey.length <= 512 && typeof agentId === 'string' && registeredAgentIds().has(agentId)) {
+            branches.set(JSON.stringify([agentId, sessionKey]), randomUUID());
+            while (branches.size > 1000) branches.delete(branches.keys().next().value!);
+          } else { globalBranch = randomUUID(); branches.clear(); }
+        }
+        for (const flight of flights.values()) flight.controller.abort();
+      }
       else for (const entry of cache.values()) entry.valid = false;
     }
   });

@@ -37,4 +37,10 @@ describe('task drawer presentation', () => {
     await waitFor(() => expect(screen.getByText('A secure connection is required')).toBeInTheDocument());
     expect(screen.queryByLabelText('Task access key')).not.toBeInTheDocument();
   });
+  it('marks retained facts last-known as soon as the Gateway status becomes unavailable', () => {
+    f.status = { configured: true, state: 'unavailable', canRead: false, canSend: false };
+    f.task = { target, source: { state: 'current', observedAt: 100 }, hasActiveRun: true, runState: 'running', requestAssociation: 'unknown', requestState: 'not-loaded', activity: [], children: [], childrenComplete: true, loadedRecords: 50 };
+    render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
+    expect(screen.getByText('Last known — connection unavailable')).toBeInTheDocument();
+  });
 });

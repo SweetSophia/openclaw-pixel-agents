@@ -31,7 +31,7 @@ export function projectSession(value: unknown, agentId: string): ControlSession 
   if (!row || row.agentId !== agentId) return null;
   const target = parseControlTarget({
     agentId, sessionKey: row.key, sessionId: row.sessionId,
-    lifecycleRevision: sequence(row.lifecycleRevision), branchId: opaque(row.branchId),
+    lifecycleRevision: opaque(row.lifecycleRevision), branchId: opaque(row.branchId),
     activeLeafEntryId: opaque(row.activeLeafEntryId),
   });
   if (!target || (target.sessionKey.startsWith('agent:') && !target.sessionKey.startsWith(`agent:${agentId}:`))) return null;

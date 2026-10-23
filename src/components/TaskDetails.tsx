@@ -12,7 +12,9 @@ const time = (value: number) => new Date(value).toLocaleString();
 export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: string; initialSessionKey: string; active: boolean }) {
   const access = useControlAccess(); const state = useTaskDetails({ agentId, initialSessionKey, active });
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false); const [accessError, setAccessError] = useState<ControlApiError | null>(null);
-  const keyId = useId(); const selectorId = useId(); const { task } = state;
+  const keyId = useId(); const selectorId = useId();
+  const task = state.task && access.status?.canRead === false
+    ? { ...state.task, source: { ...state.task.source, state: 'stale' as const } } : state.task;
   useEffect(() => {
     if (!active) return;
     let disposed = false; const controller = new AbortController();

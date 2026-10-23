@@ -19,6 +19,8 @@ describe('task selection and refresh lifecycle', () => {
   it('selects the exact roster conversation and keeps the choice while another becomes busier', async () => {
     setup(); const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
     await waitFor(() => expect(result.current.task?.runState).toBe('running')); expect(result.current.selected?.sessionKey).toBe(a.sessionKey);
+    const body = JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/task'))![1].body));
+    expect(body).toEqual({ agentId: a.agentId, sessionKey: a.sessionKey, sessionId: a.sessionId });
     await act(() => result.current.refresh()); expect(result.current.selected?.sessionKey).toBe(a.sessionKey);
     act(() => result.current.selectSession(b)); await waitFor(() => expect(result.current.task?.target.sessionKey).toBe(b.sessionKey));
   });

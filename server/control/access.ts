@@ -17,12 +17,13 @@ function tailnet(value: string): boolean {
   return isIP(value) === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
 }
 export function controlTransportAllowed(
-  req: { secure?: boolean; socket: { localAddress?: string; remoteAddress?: string } }, allowTailnetHttp: boolean,
+  req: { secure?: boolean; ip?: string; headers?: Record<string, unknown>; socket: { localAddress?: string; remoteAddress?: string } }, allowTailnetHttp: boolean,
   interfaces: Record<string, { address: string }[] | undefined> = networkInterfaces(),
 ): boolean {
   if (req.secure) return true;
   const local = address(req.socket.localAddress); const peer = address(req.socket.remoteAddress);
-  if (loopback(local) && loopback(peer)) return true;
+  if (loopback(local) && loopback(peer) && (!req.ip || loopback(address(req.ip)))
+    && !req.headers?.['x-forwarded-for'] && !req.headers?.forwarded) return true;
   return allowTailnetHttp && tailnet(peer) && Boolean(interfaces.tailscale0?.some(entry => address(entry.address) === local));
 }
 export function createControlAccess(config: ControlConfig): RequestHandler {

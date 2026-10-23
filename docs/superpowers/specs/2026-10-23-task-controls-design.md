@@ -1,6 +1,6 @@
 # Real task details, then conversation and send controls
 
-Status: user-approved on 2026-10-23; implementation-plan review is next. Product implementation has not started.
+Status: user-approved on 2026-10-23. The first delivery is implemented and undergoing release verification; conversation/send controls follow its release.
 
 ## Intent and agreed order
 

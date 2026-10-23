@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { parseControlSessionPage, parseControlTaskSnapshot, type ControlSession, type ControlTarget, type ControlTaskSnapshot } from '../../shared/control';
+import { parseControlSessionPage, parseControlTarget, parseControlTaskSnapshot, type ControlSession, type ControlTarget, type ControlTaskSnapshot } from '../../shared/control';
 import { useControlAccess } from './ControlAccess';
 import { ControlApiError, targetIdentity } from './api';
 
@@ -30,7 +30,8 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     const current = selection.current; const currentScope = scopeRef.current;
     setView(old => ({ ...old, loading: true }));
     try {
-      const value = parseControlTaskSnapshot(await context.current.access.request(`/api/control/agents/${encodeURIComponent(target.agentId)}/task`, { method: 'POST', signal: controller.signal, body: JSON.stringify({ ...target, cursor }) }));
+      const selected = parseControlTarget(target); if (!selected) throw new ControlApiError('invalid-target');
+      const value = parseControlTaskSnapshot(await context.current.access.request(`/api/control/agents/${encodeURIComponent(target.agentId)}/task`, { method: 'POST', signal: controller.signal, body: JSON.stringify({ ...selected, cursor }) }));
       if (!value || targetIdentity(value.target) !== targetIdentity(target)) throw new ControlApiError('invalid-source');
       if (controller.signal.aborted || current !== selection.current || currentScope !== scopeRef.current || !permitted()) return;
       setView(old => old.task && old.task.source.observedAt > value.source.observedAt ? { ...old, loading: false } : { ...old, task: value, loading: false, error: null });

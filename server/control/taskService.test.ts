@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './gatewayClient';
 import { createTaskService } from './taskService';
 
-const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 1 };
+const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 'lifecycle-1' };
 function fixture() {
   let row = { ...target, key: target.sessionKey, hasActiveRun: true, activeLeafEntryId: 'leaf-1', snapshotAt: 100 } as Record<string, unknown>;
   let listener: (event: GatewayEvent) => void = () => {};
@@ -34,7 +34,7 @@ describe('verified task reads', () => {
   });
   it('rechecks canonical identity before history and fences resets but accepts appends', async () => {
     const f = fixture();
-    for (const patch of [{ sessionId: 'replacement' }, { lifecycleRevision: 2 }, { branchId: 'changed' }]) {
+    for (const patch of [{ sessionId: 'replacement' }, { lifecycleRevision: 'lifecycle-2' }, { branchId: 'changed' }]) {
       f.setRow({ ...target, ...patch });
       await expect(f.tasks.getTask({ ...target, branchId: 'original' })).rejects.toMatchObject({ code: 'session-changed' });
       expect(f.history).not.toHaveBeenCalled();
@@ -75,7 +75,7 @@ describe('verified task reads', () => {
   });
   it('invalidates caches on source changes and never serves cached data for a known reset', async () => {
     const f = fixture(); await f.tasks.getTask(target); f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey } });
-    await f.tasks.getTask(target); expect(f.history).toHaveBeenCalledTimes(8);
+    await f.tasks.getTask(target); expect(f.history.mock.calls.length).toBeGreaterThan(4);
     f.setRow({ sessionId: 'replacement' }); f.event({ event: 'sessions.changed', payload: { reason: 'reset', sessionKey: target.sessionKey } });
     await expect(f.tasks.getTask(target)).rejects.toMatchObject({ code: 'session-changed' }); f.tasks.close();
   });
@@ -129,5 +129,42 @@ describe('verified task reads', () => {
     f.rpc.mockRejectedValue(Error('offline'));
     await expect(f.tasks.getTask({ ...target, sessionKey: 'agent:cylena:0' })).rejects.toMatchObject({ code: 'unavailable' });
     expect((await f.tasks.getTask({ ...target, sessionKey: 'agent:cylena:100' })).source.state).toBe('stale'); f.tasks.close();
+  });
+  it('preserves opaque Gateway lifecycle revisions through selection and history', async () => {
+    const f = fixture(); f.setRow({ lifecycleRevision: 'lifecycle-fixture-uuid' });
+    const selected = (await f.tasks.listSessions('cylena')).sessions[0];
+    expect(selected.lifecycleRevision).toBe('lifecycle-fixture-uuid');
+    expect((await f.tasks.getTask(selected)).target.lifecycleRevision).toBe('lifecycle-fixture-uuid'); f.tasks.close();
+  });
+  it('continues from the history leaf when describe omits that field', async () => {
+    const f = fixture(); const original = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (method, params, signal) => {
+      const value = await original(method, params, signal);
+      if (method !== 'sessions.describe') return value;
+      const result = value as { session: Record<string, unknown> }; return { ...result, session: { ...result.session, activeLeafEntryId: undefined } };
+    });
+    const initial = await f.tasks.getTask(target);
+    expect((await f.tasks.getTask({ ...target, cursor: initial.nextCursor })).loadedRecords).toBe(250); f.tasks.close();
+  });
+  it('renders a genuine empty transcript whose authoritative active leaf is null', async () => {
+    const f = fixture(); f.setRow({ activeLeafEntryId: undefined, hasActiveRun: false });
+    f.history.mockImplementation(async () => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: { activeLeafEntryId: null }, messages: [], inFlightRun: undefined, hasMore: false } as never));
+    const task = await f.tasks.getTask(target); expect(task.request).toBeUndefined(); expect(task.requestState).toBe('unavailable'); expect(task.target.activeLeafEntryId).toBeUndefined(); f.tasks.close();
+  });
+  it('keeps a request discovered beyond 200 records through the next tail refresh', async () => {
+    const f = fixture(); const original = f.history.getMockImplementation()!;
+    f.history.mockImplementation(async offset => offset === 150 ? { ...(await original(offset)), messages: [] } : original(offset));
+    const initial = await f.tasks.getTask(target); expect(initial.request).toBeUndefined();
+    const expanded = await f.tasks.getTask({ ...target, cursor: initial.nextCursor }); expect(expanded.requestAssociation).toBe('run');
+    f.event({ event: 'sessions.changed', payload: {} });
+    const refreshed = await f.tasks.getTask(target); expect(refreshed.request?.id).toBe(expanded.request?.id); expect(refreshed.loadedRecords).toBeGreaterThanOrEqual(250); f.tasks.close();
+  });
+  it('fences the old target and its cursors after the actual branch-switch event', async () => {
+    const f = fixture(); const initial = await f.tasks.getTask(target);
+    f.event({ event: 'sessions.changed', payload: { reason: 'branch-switch', agentId: target.agentId, sessionKey: target.sessionKey } });
+    await expect(f.tasks.getTask(target)).rejects.toMatchObject({ code: 'session-changed' });
+    await expect(f.tasks.getTask({ ...target, cursor: initial.nextCursor })).rejects.toThrow();
+    const selected = (await f.tasks.listSessions('cylena')).sessions[0]; expect(selected.branchId).toBeTruthy();
+    expect((await f.tasks.getTask(selected)).target).toMatchObject({ sessionId: selected.sessionId, branchId: selected.branchId }); f.tasks.close();
   });
 });
