@@ -27,16 +27,15 @@ export const AgentPortrait: React.FC<Props> = ({ recipe, size = 40 }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Scale the 32px source frame to retain the existing centered close-up.
-    // Output scaling must not change the body/hair source row stride.
-    const dstTileSize = Math.floor((size / 20) * 16) * 2;
+    // Keep the centered close-up: the 16×32 crop is twice as tall as it is wide.
+    const width = Math.floor(size * 0.8);
 
     const cancelled = { value: false };
     drawRecipePreview({
       canvas,
       recipe: r,
       basePath: BASE,
-      dstTileSize,
+      destinationSize: { width, height: width * 2 },
       background: 'transparent',
       cancelled,
     });

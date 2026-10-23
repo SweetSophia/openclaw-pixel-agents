@@ -10,7 +10,7 @@ function deferred<T>() {
 
 describe('CharacterComposer source-sheet ownership', () => {
   let bitmaps: Bitmap[];
-  const draw = vi.fn((source: { width: number; height: number }) => {
+  const draw = vi.fn((source: { width: number; height: number }, ..._rectangle: number[]) => {
     if (!source.width || !source.height) throw new Error('Cannot draw a closed bitmap');
   });
 
@@ -52,6 +52,23 @@ describe('CharacterComposer source-sheet ownership', () => {
     expect(sources.size).toBe(3);
     for (const source of sources) expect(sheets).toContain(source);
   }
+
+  it.each([
+    { height: 256, expectedY: 224 },
+    { height: 288, expectedY: 256 },
+  ])('renders accepted hairstyle 8 within a $height pixel source sheet', async ({ height, expectedY }) => {
+    const { loadSourceSheets, composeCharacter } = await import('./CharacterComposer');
+    await loadSourceSheets();
+    const hair = bitmaps[1];
+    hair.height = height;
+    draw.mockClear();
+
+    composeCharacter({ bodyIndex: 2, hairIndex: 8, outfitIndex: 0 });
+
+    const hairDraws = draw.mock.calls.filter(([source]) => source === hair);
+    expect(hairDraws).toHaveLength(21);
+    expect(new Set(hairDraws.map(([, , y]) => y))).toEqual(new Set([expectedY]));
+  });
 
   it('closes the previous set only after its replacement is ready', async () => {
     const { loadSourceSheets, composeCharacter } = await import('./CharacterComposer');
