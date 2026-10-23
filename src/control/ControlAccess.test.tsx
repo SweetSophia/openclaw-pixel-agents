@@ -7,8 +7,17 @@ import { controlFetch } from './api';
 const status = { configured: true, state: 'ready', canRead: true, canSend: false };
 const json = (value: unknown, code = 200) => new Response(JSON.stringify(value), { status: code });
 const wrapper = ({ children }: React.PropsWithChildren) => <ControlAccessProvider>{children}</ControlAccessProvider>;
+const socketFixture = vi.hoisted(() => ({ io: vi.fn(), disconnect: vi.fn() }));
+vi.mock('socket.io-client', () => ({ io: socketFixture.io }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('starts an isolated private socket with WebSocket and keeps the key out of its URL', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(status))); socketFixture.io.mockReturnValue({ disconnect: socketFixture.disconnect });
+    const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
+    const socket = result.current.openSocket?.();
+    expect(socketFixture.io).toHaveBeenCalledWith('/control', expect.objectContaining({ forceNew: true, autoConnect: false, transports: ['websocket', 'polling'], auth: { token: 'fixture-key' } }));
+    expect(socketFixture.io.mock.calls.at(-1)?.[1]).not.toHaveProperty('query'); act(() => result.current.lock()); expect(socketFixture.disconnect).toHaveBeenCalled(); expect(socket).toBeTruthy();
+  });
   it('normalizes a late network failure to locked for an obsolete access generation', async () => {
     let reject: (error: Error) => void = () => {};
     const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockImplementationOnce(() => new Promise((_done, fail) => { reject = fail; })); vi.stubGlobal('fetch', fetch);

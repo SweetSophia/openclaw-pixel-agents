@@ -65,7 +65,7 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
   }, [lock, perform]);
   const openSocket = useCallback(() => {
     if (!key.current) return null;
-    const socket = io('/control', { forceNew: true, autoConnect: false, auth: { token: key.current }, reconnection: true, reconnectionDelayMax: 30000 });
+    const socket = io('/control', { forceNew: true, autoConnect: false, transports: ['websocket', 'polling'], auth: { token: key.current }, reconnection: true, reconnectionDelayMax: 30000 });
     sockets.current.add(socket);
     const disconnect = socket.disconnect.bind(socket);
     socket.disconnect = () => { sockets.current.delete(socket); return disconnect(); };
