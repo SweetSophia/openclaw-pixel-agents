@@ -16,6 +16,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
 export function TaskDetailsView({ agentId, active, state, children }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode }) {
   const access = useControlAccess();
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false); const [accessError, setAccessError] = useState<ControlApiError | null>(null);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
   const keyId = useId(); const selectorId = useId();
   const task = state.task && access.status?.canRead === false
     ? { ...state.task, source: { ...state.task.source, state: 'stale' as const } } : state.task;
@@ -45,14 +46,15 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
       <p>{setup ? 'Connect the office to OpenClaw to see real requests, run state and recorded activity. Your office roster continues to update normally.'
         : transport ? 'Use HTTPS or the office’s configured private Tailnet connection before entering an access key.' : 'Use the office task access key. It stays in this tab until you lock it or reload the page.'}</p>
       {!setup && !transport && <form onSubmit={async event => {
-        event.preventDefault(); if (unlocking) return; setUnlocking(true); setAccessError(null);
-        try { await access.unlock(key); } catch (error) { setAccessError(error instanceof ControlApiError ? error : new ControlApiError()); }
+        event.preventDefault(); if (unlocking) return; setUnlocking(true); setAccessError(null); setUnlockError(null);
+        try { await access.unlock(key); } catch (error) { setUnlockError(error instanceof ControlApiError && error.code !== 'locked' ? error.message : 'Unlock failed. Check your access key and try again.'); }
         finally { setKey(''); setUnlocking(false); }
       }}>
         <label htmlFor={keyId}>Task access key</label>
         <input id={keyId} type="password" autoComplete="off" value={key} maxLength={4096} onChange={event => setKey(event.target.value)} />
         <button type="submit" disabled={!key || unlocking}>{unlocking ? 'Unlocking…' : 'Unlock task details'}</button>
       </form>}
+      {unlockError && <p role="alert">{unlockError}</p>}
       {accessError && !['locked', 'transport-required'].includes(accessError.code) && <p role="alert">{accessError.message}</p>}
       {(setup || transport || accessError?.code === 'unavailable') && <button type="button" onClick={() => { void refresh(); }}>Check connection</button>}
     </section>;

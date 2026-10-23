@@ -16,6 +16,20 @@ function setup(sessions = [a, b]) {
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
+  it('retains loaded conversation pages and the advanced cursor across polling refreshes', async () => {
+    setup(); const c = session('c');
+    f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? path.includes('page-three') ? page([c]) : path.includes('page-two') ? page([b], 'page-three') : page([a], 'page-two') : task(JSON.parse(String(init?.body))));
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
+    await waitFor(() => expect(result.current.selected).toBeTruthy()); await act(() => result.current.loadMoreSessions()); await act(() => result.current.refresh());
+    expect(result.current.sessions).toContainEqual(b); expect(result.current.nextSessionsCursor).toBe('page-three');
+    await act(() => result.current.loadMoreSessions()); await act(() => result.current.refresh());
+    expect(result.current.sessions).toContainEqual(c); expect(result.current.nextSessionsCursor).toBeUndefined();
+  });
+  it('keeps only parsed target fields when adopting a newly created session', async () => {
+    setup(); const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
+    await waitFor(() => expect(result.current.selected).toBeTruthy()); act(() => result.current.selectCreatedSession({ ...b, sessionId: 'created', extra: 'not-contract-data' } as typeof b));
+    expect(result.current.selected?.sessionId).toBe('created'); expect(result.current.selected).not.toHaveProperty('extra');
+  });
   it('updates selected metadata when the same conversation starts working', async () => {
     setup([{ ...a, hasActiveRun: false }]); const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
     await waitFor(() => expect(result.current.selected?.hasActiveRun).toBe(false));
