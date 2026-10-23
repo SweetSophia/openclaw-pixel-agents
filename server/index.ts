@@ -49,6 +49,7 @@ import { loadControlConfig } from "./control/config";
 import { createControlGateway } from "./control/gatewayClient";
 import { createTaskService } from "./control/taskService";
 import { createSendService } from "./control/sendService";
+import { createConversationService, mountControlNamespace } from "./control/conversation";
 import { createControlRouter } from "./control/routes";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
@@ -1846,9 +1847,12 @@ const controlConfig = loadControlConfig(process.env, DATA_DIR);
 const controlGateway = createControlGateway(controlConfig);
 const controlTasks = createTaskService(controlGateway, () => new Set(AGENT_REGISTRY.keys()));
 const controlSends = createSendService(controlGateway, controlTasks);
-app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends }));
+const controlConversations = createConversationService(controlGateway, controlTasks);
+const closeControlNamespace = mountControlNamespace(io, { config: controlConfig, tasks: controlTasks, conversations: controlConversations,
+  originAllowed: origin => isOriginAllowed(origin, corsConfig), trustProxy: app.get("trust proxy fn") });
+app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations }));
 server.on("listening", () => controlGateway.start());
-server.on("close", () => { controlSends.close(); controlTasks.close(); controlGateway.close(); });
+server.on("close", () => { closeControlNamespace(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close(); });
 
 // Unmatched requests that reach the end of the API route chain keep the API
 // representation/status contract. In particular, an unknown GET must not fall

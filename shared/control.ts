@@ -168,6 +168,13 @@ export function parseControlHistoryPage(value: unknown): ControlHistoryPage | nu
     nextCursor: optional(text(2048, true)), sendDisabledReason: optional(text(256)),
   });
 }
+export function parseControlConversationEvent(value: unknown): ControlConversationEvent | null {
+  const event = object<ControlConversationEvent>(value, {
+    target: child(parseControlTarget), kind: oneOf(['messages', 'invalidated', 'unavailable']), source: child(parseSource),
+    messages: optional(list(child(parseControlMessage), CONTROL_LIMITS.historyPage)),
+  });
+  return event && (event.kind !== 'messages' || event.messages !== undefined) ? event : null;
+}
 export function parseControlSendReceipt(value: unknown): ControlSendReceipt | null {
   const receipt = object<ControlSendReceipt>(value, {
     target: child(parseControlTarget), idempotencyKey: text(128, true), phase: oneOf(['accepted', 'persisted', 'unknown']),
