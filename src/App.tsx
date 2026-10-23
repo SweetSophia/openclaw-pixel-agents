@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { PixelOffice } from './components/PixelOffice';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AgentDetailPanel } from './components/AgentDetailPanel';
+import { ControlAccessProvider } from './control/ControlAccess';
 import { LayoutEditor } from './components/LayoutEditor';
 import { SoundControls } from './components/SoundControls';
 import { RoomSwitcher } from './components/RoomSwitcher';
@@ -175,6 +176,7 @@ export const App: React.FC = () => {
   }, []);
 
   return (
+    <ControlAccessProvider>
     <div className="app" style={{ backgroundImage: `url("${assetUrl('/assets/background.png')}")` }}>
       <header className="app-header" ref={headerRef}>
         <h1 aria-label="OpenClaw Pixel Agents"><span aria-hidden="true">🖥️ </span><span className="brand-text">OpenClaw Pixel Agents</span></h1>
@@ -282,5 +284,6 @@ export const App: React.FC = () => {
       )}
       <LiveActivity agents={agents} connected={connected} snapshotReceivedAt={snapshotReceivedAt} onSelectAgent={setSelectedAgentId} />
     </div>
+    </ControlAccessProvider>
   );
 };

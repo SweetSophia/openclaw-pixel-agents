@@ -300,6 +300,13 @@ describe('shared modal focus contract (issue #105)', () => {
     trigger.focus();
     expect(close).toHaveFocus();
     await user.keyboard('[Tab]');
+    expect(screen.getByRole('tab', { name: 'Task' })).toHaveFocus();
+    await user.keyboard('[End]');
+    expect(screen.getByRole('tab', { name: 'Agent' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Agent' })).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('[Home]');
+    expect(screen.getByRole('tab', { name: 'Task' })).toHaveFocus();
+    await user.keyboard('[ShiftLeft>][Tab][/ShiftLeft]');
     expect(close).toHaveFocus();
     await user.keyboard('[Escape]');
     expect(screen.queryByRole('dialog', { name: 'Cybera' })).toBeNull();

@@ -81,6 +81,22 @@ Activity labels are estimates based on session recency and token counts; they do
 
 Freshness is checked every 15 seconds. In ingest mode, the age comes from the last successful collector push, independently of socket connectivity. The HTTP `Date` header supplies the server clock so browser clock differences do not distort the age; proxies must preserve this header. CLI mode shows when the browser last received an agent snapshot. Data older than 90 seconds is marked stale, with unavailable and waiting states shown explicitly.
 
+### Task details
+
+Open an agent and choose **Task** to inspect its conversations, verified run state,
+recorded request, recent tool outcomes and visible response. **Agent** retains the
+office roster summary. The selected conversation stays selected as other work
+arrives. Child sessions are labelled separately; their outcomes do not determine
+the parent's outcome.
+
+Task details require a separately configured operator access key. Unlocking lasts
+only in the current tab; **Lock** and page reload clear it. Private task data is
+never stored in browser storage or sent over the public office socket. A failed
+refresh keeps same-conversation facts labelled **Last known**, with their original
+verification time. Missing run identities and requests outside the loaded history
+window are shown explicitly. **Load earlier records** continues bounded discovery,
+up to 2,000 records. There are no send or interrupt controls in this delivery.
+
 ### Layout Editor
 
 Click **✏️ Edit** in the header to enter editor mode:
@@ -261,6 +277,10 @@ Furniture uses per-type directories with `manifest.json` for dimensions and rota
 | `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
 | `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
 | `DATA_DIR` | `join(__dirname, "data")` | Persistence directory for preferences and layouts. Resolved relative to the compiled module location — dev writes under `server/data/`, standalone compiled startup writes under `dist/server/server/data/`. Set explicitly in production. Docker sets `DATA_DIR=/app/data`. |
+| `OPENCLAW_GATEWAY_URL` | *(none)* | Optional task source. Remote endpoints require an encrypted WebSocket connection; plain connections are accepted only on loopback. Credentials, query parameters and fragments are not accepted in the URL. |
+| `PIXEL_CONTROL_TOKEN` | *(none)* | Separate office operator access key for private task details. Both this key and the Gateway URL are required to enable task access. Do not reuse the ingest or Gateway secret. |
+| `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_GATEWAY_PASSWORD` | *(none)* | Optional server-only Gateway bootstrap credentials. Never enter these into the browser task-key field. |
+| `CONTROL_ALLOW_TAILNET_HTTP` | `false` | Explicitly allow private task access over a direct encrypted Tailscale connection while the browser URL uses HTTP. Both the actual local socket address on `tailscale0` and the actual Tailnet peer must qualify. Forwarded headers cannot establish this exception. |
 
 `CORS_ORIGIN` must include the browser's scheme, hostname, and port. For Tailscale access, list the MagicDNS hostname separately from the IP address. A missing origin can leave agent data updating through read-only REST polling while blocking Socket.IO and changes such as character designs.
 
@@ -279,6 +299,26 @@ CLI polling inherits the server environment except for `INGEST_API_TOKEN`, which
 While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
 
 The legacy `dataSource` field remains a compatibility alias for **effective ownership**: `cli-poll` while polling owns state, and `ingest` while ingest-only owns state. It no longer means that an ingest push happened at any point in the process lifetime; use `lastIngestAt` for accepted-push history and migrate mode checks to `dataSourceEffective`.
+
+### Connecting task details
+
+Configure the Gateway URL and a separate long, random `PIXEL_CONTROL_TOKEN` in the
+server's private environment, then restart the office. The office creates its own
+Ed25519 device under `DATA_DIR/control/` (directory 0700, files 0600), requests only
+`operator.read`, and retains a device token scoped to that endpoint and identity.
+Approve this office device in OpenClaw if the Task tab reports pairing is required;
+use the Gateway's device administration UI or `openclaw devices list` followed by
+`openclaw devices approve <request-id>`. Confirm the request belongs to this office
+device before approving it. Do not copy another client's device identity. A corrupt
+identity fails closed and must be repaired by the operator.
+
+The browser normally needs HTTPS, or loopback HTTP during local development.
+Direct-IP Tailscale deployments may explicitly set `CONTROL_ALLOW_TAILNET_HTTP=true`
+to retain their existing private route. Ordinary LAN/public HTTP remains denied.
+Include the exact office origin in `CORS_ORIGIN`; private task POSTs retain the
+normal origin guard. Reverse-proxy HTTPS requires correctly restricted
+`TRUST_PROXY` configuration. The task connection is independent of the collector
+and does not change Gateway binding, global models or authentication policy.
 
 ### Reverse-proxy deployments
 
