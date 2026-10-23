@@ -5,17 +5,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { createControlRouter } from './routes';
 import { loadControlConfig } from './config';
 import type { ControlGateway } from './gatewayClient';
-import { createTaskService } from './taskService';
+import { ControlError, createTaskService } from './taskService';
+import type { ControlErrorCode } from '../../shared/control';
 
 describe('private control routes', () => {
-  function fixture(enabled = true) {
+  function fixture(enabled = true, sendFailure?: ControlErrorCode) {
     const config = loadControlConfig(enabled ? { OPENCLAW_GATEWAY_URL: 'ws://localhost:18789', PIXEL_CONTROL_TOKEN: 'fixture-key' } : {}, '/tmp/fixture');
     const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: enabled, state: enabled ? 'ready' : 'disabled', canRead: enabled, canSend: false }), request: vi.fn(async () => ({ sessions: [] })), onEvent: () => () => {} };
     const tasks = createTaskService(gateway, () => new Set(['cylena']));
+    const sends = sendFailure ? { send: vi.fn(async () => { throw new ControlError(sendFailure); }), close() {} } : undefined;
+    if (sends) config.sendEnabled = true;
     vi.mocked(gateway.request).mockClear();
-    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config }));
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, sends }));
     return { app, gateway, tasks };
   }
+  it.each([['outcome-unknown', 409], ['pairing-required', 403]] as const)('maps %s explicitly without inviting generic service-unavailable retries', async (code, status) => {
+    const f = fixture(true, code); const response = await request(f.app).post('/api/control/agents/cylena/send').auth('fixture-key', { type: 'bearer' }).send({ newConversation: true, message: 'ordinary text', idempotencyKey: 'send-fixture' });
+    expect(response.status).toBe(status); expect(response.body.code).toBe(code); f.tasks.close();
+  });
   it('allows disabled status without exposing configured capabilities and marks private responses no-store', async () => {
     const disabled = fixture(false); expect((await request(disabled.app).get('/api/control/status')).body).toMatchObject({ configured: false, state: 'disabled' }); disabled.tasks.close();
     const f = fixture(); expect((await request(f.app).get('/api/control/status')).status).toBe(401);

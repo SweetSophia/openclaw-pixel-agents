@@ -33,6 +33,7 @@ describe("API write rate limiting (issue #154)", () => {
     vi.stubEnv("INGEST_API_TOKEN", "test-secret");
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", appOrigin);
+    vi.stubEnv("OPENCLAW_GATEWAY_URL", ""); vi.stubEnv("PIXEL_CONTROL_TOKEN", "");
     vi.stubEnv("FRONTEND_DIR", frontendDir);
     vi.stubEnv("PREFS_WRITE_RATE_LIMIT_MAX", "1");
     vi.stubEnv("LAYOUT_WRITE_RATE_LIMIT_MAX", "2");
@@ -65,6 +66,13 @@ describe("API write rate limiting (issue #154)", () => {
     ["recipe", () => request(app).put("/api/agents/main/recipe").set("Origin", appOrigin).send({ bodyIndex: 0, hairIndex: 0, outfitIndex: 0 })],
     ["tags", () => request(app).put("/api/agents/main/tags").set("Origin", appOrigin).send({ tags: ["coding"] })],
   ] as const;
+
+  it("keeps private control reads and sends out of preference and layout write buckets while preserving origins", async () => {
+    await request(app).post('/api/control/agents/main/task').set('Origin', 'https://other.test').send({}).expect(403);
+    for (const route of ['task', 'history', 'send']) await request(app).post(`/api/control/agents/main/${route}`).set('Origin', appOrigin).send({}).expect(503);
+    await request(app).post('/api/agents/main/toggle').set('Origin', appOrigin).send({ enabled: false }).expect(200);
+    await request(app).post('/api/control/agents/main/task').set('Origin', appOrigin).send({}).expect(503);
+  });
 
   it.each(preferenceMutations)("bounds the %s persistence/broadcast path", async (_name, mutate) => {
     await mutate().expect(200);

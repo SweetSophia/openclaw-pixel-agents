@@ -21,7 +21,7 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
     void Promise.resolve().then(() => action(controller.signal)).then(result => { if (!controller.signal.aborted) res.json(result); }, error => {
       if (controller.signal.aborted) return;
       const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
-      const status = code === 'scope-required' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400 : code === 'invalid-target' ? 404 : code === 'session-changed' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
+      const status = code === 'scope-required' || code === 'pairing-required' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400 : code === 'invalid-target' ? 404 : code === 'session-changed' || code === 'outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
       res.status(status).json({ code, error: code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The conversation request could not be completed.' });
     }).finally(() => { res.off('close', close); req.off('aborted', close); });
   }
