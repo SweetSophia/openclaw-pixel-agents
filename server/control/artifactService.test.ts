@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { controlByteSize, type ControlTarget } from '../../shared/control';
+import type { ControlFileRequest } from '../../shared/controlResults';
 import { createArtifactService } from './artifactService';
 import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './gatewayClient';
 import { createTaskService } from './taskService';
@@ -16,6 +17,7 @@ function fixture() {
   const nativeArtifact = () => ({ id: 'artifact-1', type: 'text', title: 'report.txt', mimeType: 'text/plain',
     sessionKey: target.sessionKey, ...(runId ? { runId } : {}), messageSeq: 2, source: 'session-transcript', download: { mode: 'bytes' } });
   const list = vi.fn(async (_params: Record<string, unknown>, _signal?: AbortSignal): Promise<unknown> => ({ artifacts: [nativeArtifact()] }));
+  const download = vi.fn(async (_params: Record<string, unknown>, _signal?: AbortSignal): Promise<unknown> => ({ artifact: nativeArtifact(), encoding: 'base64', data: Buffer.from('fixture bytes').toString('base64') }));
   const rpc = vi.fn<ControlGateway['request']>(async (method, params, signal) => {
     if (state !== 'ready') throw new GatewayRequestError(state === 'auth-error' ? 'scope-required' : 'unavailable');
     const row: Record<string, unknown> = { ...rows.get(String(params.key ?? params.sessionKey)), hasActiveRun: runId ? !completed : null,
@@ -27,6 +29,8 @@ function fixture() {
         ...(text ? [{ role: 'assistant', content: text, stopReason: 'stop', __openclaw: { id: 'response', runId } }] : [])],
       ...(runId && !completed ? { inFlightRun: { runId } } : {}), hasMore: false, totalMessages: 2 };
     if (method === 'artifacts.list') return list(params, signal);
+    if (method === 'artifacts.get') return { artifact: nativeArtifact() };
+    if (method === 'artifacts.download') return download(params, signal);
     return {};
   });
   const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: true, state, canRead: state === 'ready', canSend: false }),
@@ -34,7 +38,7 @@ function fixture() {
     artifactConnection: () => state === 'ready' ? { id: `fixture-${generation}`, generation, gatewayUrl: 'ws://127.0.0.1:18789/' } : null };
   const tasks = createTaskService(gateway, () => new Set(['cylena'])); const artifacts = createArtifactService(gateway, tasks);
   cleanups.push(() => { artifacts.close(); tasks.close(); });
-  return { artifacts, tasks, rpc, list, nativeArtifact, setRun: (value: string | undefined) => { runId = value; },
+  return { artifacts, tasks, rpc, list, download, nativeArtifact, setRun: (value: string | undefined) => { runId = value; },
     setText: (value: string | undefined) => { text = value; }, complete: () => { completed = true; },
     setStatus: (value: typeof state) => { state = value; }, reconnect: () => { generation++; },
     add: (value: ControlTarget) => rows.set(value.sessionKey, { ...value, key: value.sessionKey }),
@@ -43,6 +47,32 @@ function fixture() {
 }
 
 describe('assistant-delivered results discovery', () => {
+  const fileInput: ControlFileRequest = { target, scope: { kind: 'run', runId: 'run-1' }, artifactId: 'artifact-1', intent: 'preview' };
+  it('requires the displayed task scope to remain canonical before content reads', async () => {
+    const f = fixture(); f.setRun('run-2');
+    await expect(f.artifacts.file(fileInput)).rejects.toMatchObject({ code: 'session-changed' });
+    expect(f.rpc.mock.calls.filter(([method]) => method.startsWith('artifacts.'))).toHaveLength(0);
+  });
+  it.each(['run', 'session', 'branch', 'generation', 'revocation'] as const)('never exposes late content after %s changes', async change => {
+    const f = fixture(); const originalArtifact = f.nativeArtifact(); let release: (value: unknown) => void = () => {};
+    f.download.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const pending = f.artifacts.file(fileInput).catch(error => error); await vi.waitFor(() => expect(f.download).toHaveBeenCalledTimes(1));
+    if (change === 'run') f.setRun('run-2');
+    if (change === 'session') f.patch({ sessionId: 'replacement' });
+    if (change === 'branch') f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey, reason: 'branch-switch' } });
+    if (change === 'generation') f.reconnect();
+    if (change === 'revocation') { f.setStatus('auth-error'); f.event({ event: 'source.invalidated', payload: null }); }
+    release({ artifact: originalArtifact, encoding: 'base64', data: Buffer.from('old-private-bytes').toString('base64') });
+    expect(await pending).toMatchObject({ code: change === 'revocation' ? 'scope-required' : 'session-changed' });
+  });
+  it('aborts a total content operation after thirty seconds without returning partial bytes', async () => {
+    const f = fixture(); let upstream: AbortSignal | undefined;
+    f.download.mockImplementation((_params, signal) => { upstream = signal; return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(Error('cancelled')))); });
+    vi.useFakeTimers();
+    const deadline = f.artifacts.file(fileInput).catch(error => error); await vi.advanceTimersByTimeAsync(0);
+    expect(f.download).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30000); expect(await deadline).toMatchObject({ code: 'unavailable' }); expect(upstream?.aborted).toBe(true);
+  });
   it('keeps assistant, agent, session and canonical run filters on discovery and strips private raw fields', async () => {
     const f = fixture(); f.complete();
     f.list.mockResolvedValue({ artifacts: [{ ...f.nativeArtifact(), image: { url: '/private-image-ticket' }, url: '/fake-host-file' }] });
@@ -66,6 +96,12 @@ describe('assistant-delivered results discovery', () => {
     const result = await f.artifacts.read(target);
     expect(result).toMatchObject({ responseKind: 'latest', artifactState: 'unsupported', artifacts: [], source: { state: 'current' } });
     expect(f.list).toHaveBeenCalledTimes(1); expect(f.list.mock.calls[0][0].messageRole).toBe('assistant');
+  });
+  it('discards cached metadata when the native artifact owner rejects the selected scope', async () => {
+    const f = fixture(); await f.artifacts.read(target);
+    f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey } });
+    f.list.mockRejectedValue(new GatewayRequestError('session-changed'));
+    await expect(f.artifacts.read(target)).rejects.toMatchObject({ code: 'session-changed' });
   });
   it.each(['run', 'session', 'lifecycle', 'branch', 'generation', 'revocation'] as const)('discards pending metadata after %s changes', async change => {
     const f = fixture(); let release: (value: unknown) => void = () => {};

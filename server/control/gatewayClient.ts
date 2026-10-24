@@ -11,7 +11,7 @@ const ARTIFACT_METHODS = ['artifacts.list', 'artifacts.get', 'artifacts.download
 export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -129,9 +129,12 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       pending.delete(frame.id); clearTimeout(item.timer); item.cleanup();
       if (frame.ok) item.resolve(frame.payload);
       else {
-        const error = controlRecord(frame.error);
+        const error = controlRecord(frame.error); const details = controlRecord(error?.details);
+        const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
         item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST'
-          ? (ARTIFACT_METHODS as readonly string[]).includes(item.method) ? 'unsupported' : 'invalid-source' : 'unavailable'));
+          ? !artifact ? 'invalid-source' : details?.type === 'artifact_scope_not_found' ? 'session-changed'
+            : details?.type === 'artifact_not_found' || details?.type === 'artifact_download_unsupported' ? 'file-unavailable' : 'unsupported'
+          : 'unavailable'));
       }
     });
   }

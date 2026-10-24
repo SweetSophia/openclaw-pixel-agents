@@ -75,6 +75,14 @@ const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.wai
 describe('scoped task Gateway client', () => {
   const assistantSelection = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', runId: 'run-1', messageRole: 'assistant' };
   const artifactMethods = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
+  it.each([['artifact_not_found', 'file-unavailable'], ['artifact_download_unsupported', 'file-unavailable'], ['artifact_scope_not_found', 'session-changed']])('preserves native %s as %s without private diagnostics', async (type, code) => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', ...artifactMethods], events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'synthetic-private-path', details: { type } } })));
+    const gateway = client(host.url); await ready(gateway);
+    const error = await gateway.request('artifacts.download', { ...assistantSelection, artifactId: 'artifact-1' }).catch(error => error);
+    expect(error).toMatchObject({ code }); expect(error).toBeInstanceOf(Error); expect((error as Error).message).not.toContain('synthetic-private-path');
+  });
   it('keeps old Gateway task reads available when optional artifact methods are absent', async () => {
     const host = await fixture(); const gateway = client(host.url); await ready(gateway);
     for (const method of artifactMethods) await expect(gateway.request(method, assistantSelection)).rejects.toMatchObject({ code: 'unsupported' });

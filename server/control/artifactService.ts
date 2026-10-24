@@ -1,18 +1,21 @@
 import { CONTROL_LIMITS, controlByteSize, controlRecord, parseControlTarget, type ControlTarget, type ControlTaskSnapshot } from '../../shared/control';
-import { CONTROL_RESULT_LIMITS, parseControlResultsSnapshot, type ControlArtifactScope, type ControlArtifactSummary, type ControlResultsSnapshot } from '../../shared/controlResults';
+import { CONTROL_RESULT_LIMITS, parseControlFileRequest, parseControlResultsSnapshot, type ControlFileRequest, type ControlArtifactScope, type ControlArtifactSummary, type ControlResultsSnapshot } from '../../shared/controlResults';
 import { artifactQuery, artifactScope, artifactTargetIdentity, nativeArtifactSummary, sameArtifactScope } from './artifactProtocol';
 import { ControlError } from './errors';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import type { TaskService } from './taskService';
+import { downloadArtifact, type ArtifactContent } from './artifactTransfer';
 
 export interface ArtifactService {
   read(target: ControlTarget, signal?: AbortSignal): Promise<ControlResultsSnapshot>;
+  file(input: ControlFileRequest, signal?: AbortSignal): Promise<ArtifactContent>;
   clear(): void; close(): void;
 }
 interface Cached { snapshot: ControlResultsSnapshot; at: number; valid: boolean }
 interface Flight { target: ControlTarget; controller: AbortController; users: number; observation: { dirty: boolean }; promise: Promise<ControlResultsSnapshot> }
 export function createArtifactService(gateway: ControlGateway, tasks: TaskService): ArtifactService {
   const cache = new Map<string, Cached>(); const flights = new Map<string, Flight>();
+  const contentWork = new Set<AbortController>();
   let closed = false; let epoch = 0;
   const stamp = () => { const connection = gateway.artifactConnection?.(); return JSON.stringify([epoch, connection?.id ?? null, connection?.generation ?? null]); };
   function denied(): void {
@@ -44,6 +47,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
   }
   function clear(): void {
     epoch++; cache.clear(); for (const flight of flights.values()) flight.controller.abort(); flights.clear();
+    for (const controller of contentWork) controller.abort(); contentWork.clear();
   }
   async function perform(target: ControlTarget, signal: AbortSignal, connection: string, observation: { dirty: boolean }): Promise<ControlResultsSnapshot> {
     guard(signal, connection); let task: ControlTaskSnapshot;
@@ -65,7 +69,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
     if (!reused) {
       try { raw = await gateway.request('artifacts.list', artifactQuery(task.target, scope), signal); }
       catch (error) {
-        if ((error instanceof GatewayRequestError || error instanceof ControlError) && ['scope-required', 'pairing-required'].includes(error.code)) {
+        if ((error instanceof GatewayRequestError || error instanceof ControlError) && ['scope-required', 'pairing-required', 'session-changed', 'invalid-target'].includes(error.code)) {
           clear(); throw new ControlError(error.code);
         }
         failed = true; unsupported = (error instanceof GatewayRequestError || error instanceof ControlError) && error.code === 'unsupported';
@@ -100,6 +104,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
     if (destructive || gateway.status().state === 'auth-error' || gateway.status().state === 'pairing-required') { clear(); return; }
     if (event.event !== 'sessions.changed') {
       epoch++; for (const flight of flights.values()) flight.controller.abort(); flights.clear();
+      for (const controller of contentWork) controller.abort(); contentWork.clear();
     }
     const nested = controlRecord(payload?.session); const key = payload?.sessionKey ?? nested?.key;
     const agent = payload?.agentId ?? nested?.agentId;
@@ -108,6 +113,22 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
     for (const flight of flights.values()) if (affected(flight.target)) flight.observation.dirty = true;
   });
   return {
+    async file(value, signal) {
+      const input = parseControlFileRequest(value); if (!input) throw new ControlError('invalid-request');
+      const controller = new AbortController(); contentWork.add(controller);
+      const combined = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]); const connection = stamp();
+      const timer = setTimeout(() => controller.abort(), CONTROL_RESULT_LIMITS.contentDeadlineMs); timer.unref?.();
+      const verify = async () => {
+        guard(combined, connection); const task = await tasks.getTask(input.target, combined, { fresh: true }); guard(combined, connection);
+        if (task.source.state !== 'current') throw new ControlError('unavailable');
+        if (!sameArtifactScope(artifactScope(task), input.scope)) throw new ControlError('session-changed');
+      };
+      try {
+        await verify(); let content: ArtifactContent | undefined; let failure: unknown;
+        try { content = await downloadArtifact(gateway, input, combined); } catch (error) { failure = error; }
+        await verify(); if (failure) throw failure; return content!;
+      } finally { clearTimeout(timer); contentWork.delete(controller); }
+    },
     read(input, signal) {
       const target = parseControlTarget(input);
       if (!target) return Promise.reject(new ControlError('invalid-target'));
