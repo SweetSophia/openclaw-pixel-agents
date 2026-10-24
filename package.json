@@ -3,6 +3,29 @@
   "version": "0.1.0",
   "description": "Pixel art office dashboard for OpenClaw agents",
   "private": false,
+  "bin": {
+    "openclaw-pixel-agents": "bin/openclaw-pixel-agents.mjs"
+  },
+  "files": [
+    "bin/openclaw-pixel-agents.mjs",
+    "dist/client/**",
+    "dist/server/server/**/*.js",
+    "dist/server/shared/**/*.js",
+    "scripts/generate-control-key.mjs",
+    "collector/README.md",
+    "collector/push-pixel-agents.mjs",
+    "collector/.env.collector.example",
+    "collector/systemd/*",
+    "docs/task-access-setup.md",
+    "docs/configuration.md",
+    "docs/editor.md",
+    "docs/releases.md",
+    ".env.example"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
@@ -13,6 +36,8 @@
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "NODE_ENV=production node dist/server/server/index.js",
     "control:key": "node scripts/generate-control-key.mjs",
+    "prepack": "npm run build",
+    "test:package": "node scripts/smoke-package.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
