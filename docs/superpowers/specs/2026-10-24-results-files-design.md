@@ -1,6 +1,6 @@
 # Task results and delivered files
 
-Status: proposed design for approval. The user selected task results and delivered files as the next improvement on 2026-10-24. This document proposes the behavior and implementation boundaries; product implementation has not started.
+Status: user-approved on 2026-10-24. The user selected task results and delivered files as the next improvement and approved this written design. A subsequent user requirement adds a portable operator key-generation and setup path; deliver that onboarding fix first, then implement this design.
 
 ## Intent and selected scope
 
