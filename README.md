@@ -129,11 +129,11 @@ docker build -t openclaw-pixel-agents .
 docker run --rm openclaw-pixel-agents npm run --silent control:key
 ```
 
-Prepare a private `office.env` with your exact `CORS_ORIGIN`, `DATA_SOURCE=ingest` and `INGEST_API_TOKEN`, plus optional task settings. Run with persistent data:
+Prepare a private, Git-ignored `.env` with your exact `CORS_ORIGIN`, `DATA_SOURCE=ingest` and `INGEST_API_TOKEN`, plus optional task settings. Run with persistent data:
 
 ```sh
 docker run -d --name pixel-office \
-  -p 3001:3001 --env-file office.env \
+  -p 3001:3001 --env-file .env \
   -e DATA_DIR=/app/data \
   -v pixel-office-data:/app/data \
   openclaw-pixel-agents
