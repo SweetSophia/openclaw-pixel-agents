@@ -12,7 +12,7 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
 
 ## Prepare a version
 
-1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. The initial version is `0.1.0`.
+1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. The first npm release uses `1.4.0`, continuing the existing GitHub release series after `v1.3.5`.
 2. Run the checks:
 
    ```sh
@@ -26,7 +26,7 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
    ```
 
 3. Merge after required checks and reviews pass.
-4. Create a GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v0.1.0`**. Review its notes and publish the stable release. Drafts and prereleases do not publish to npm.
+4. Create a GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.4.0`**. Review its notes and publish the stable release. Drafts and prereleases do not publish to npm.
 
 Publishing the release authorizes npm publication. Protect release tags and restrict release publishing according to the repository's maintainer policy.
 
@@ -43,8 +43,8 @@ It then publishes **the same tested tarball** to the public npm registry with pr
 Check Actions, then verify the registry separately, substituting the released version:
 
 ```sh
-npm view openclaw-pixel-agents@0.1.0 version dist.integrity dist.tarball
-npm exec --yes --package=openclaw-pixel-agents@0.1.0 -- openclaw-pixel-agents --version
+npm view openclaw-pixel-agents@1.4.0 version dist.integrity dist.tarball
+npm exec --yes --package=openclaw-pixel-agents@1.4.0 -- openclaw-pixel-agents --version
 ```
 
 Metadata and tarball availability can propagate separately. Allow a short bounded retry after an accepted upload; never republish an accepted immutable version. A successful upload alone does not prove that the public package installs. If a run fails during publication, check whether npm accepted the version before retrying. Corrected artifacts need a new version.
