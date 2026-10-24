@@ -57,10 +57,10 @@ The repository includes an npm launcher and release workflow. **These commands b
 ```sh
 npm install --global openclaw-pixel-agents
 openclaw-pixel-agents --help
-openclaw-pixel-agents --env-file /absolute/path/to/office.env
+openclaw-pixel-agents --env-file /absolute/path/to/.env
 ```
 
-Alternatively, use `npx openclaw-pixel-agents --env-file /absolute/path/to/office.env`. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
+Alternatively, use `npx openclaw-pixel-agents --env-file /absolute/path/to/.env`. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
 
 The launcher runs in production mode. Its default data directory is **`~/.openclaw-pixel-agents`**, outside the installation, so package upgrades do not replace saved layouts or appearances. Set `DATA_DIR` explicitly for a service account or multiple offices. Obtain an [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example) and follow the [configuration reference](docs/configuration.md).
 

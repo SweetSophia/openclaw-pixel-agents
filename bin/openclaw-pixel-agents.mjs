@@ -12,7 +12,7 @@ try {
   if (values.help) {
     console.log(`OpenClaw Pixel Agents
 
-Usage: openclaw-pixel-agents [--env-file /path/to/office.env]
+Usage: openclaw-pixel-agents [--env-file /path/to/.env]
        openclaw-pixel-agents --generate-key
        openclaw-pixel-agents --version
 

@@ -3,8 +3,8 @@
 Supply configuration through your process/service environment or explicitly load a private file. The server does not automatically read `.env`.
 
 - Source build: `node --env-file=.env dist/server/server/index.js`.
-- npm launcher: `openclaw-pixel-agents --env-file /absolute/path/to/office.env`.
-- Docker: `--env-file office.env` supplies the container environment.
+- npm launcher: `openclaw-pixel-agents --env-file /absolute/path/to/.env`.
+- Docker: `--env-file .env` supplies the container environment.
 
 Existing process environment variables take precedence over an env file. Start with the [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example). See the [task-access guide](task-access-setup.md) for key generation, pairing and send permissions.
 
