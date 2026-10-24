@@ -80,9 +80,10 @@ If the office URL uses HTTP, private access is normally available only from loop
 
 ## Docker
 
-The runtime image includes the key generator. If Node is not installed on the host, generate a key with your built image:
+The runtime image includes the key generator. From the repository root, build your image with an explicit tag, then generate a key without needing Node on the host:
 
 ```sh
+docker build -t openclaw-pixel-agents .
 docker run --rm openclaw-pixel-agents npm run --silent control:key
 ```
 
