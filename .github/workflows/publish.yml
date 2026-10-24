@@ -1,0 +1,72 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify and publish release
+    if: github.repository == 'SweetSophia/openclaw-pixel-agents' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write # npm provenance; also supports a future trusted-publisher setup.
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Verify release version and main ancestry
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module -e 'import { readFileSync } from "node:fs"; const { version } = JSON.parse(readFileSync("package.json", "utf8")); if (!/^\d+\.\d+\.\d+$/.test(version) || process.env.RELEASE_TAG !== `v${version}`) throw new Error("Stable release tag must equal v + package.json version");'
+          git merge-base --is-ancestor HEAD origin/main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.22.2
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Test and enforce coverage
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=moderate
+
+      - name: Pack and test a clean production install
+        run: npm run test:package -- --pack-destination "$RUNNER_TEMP/npm-release"
+
+      - name: Publish the tested tarball
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::Add the NPM_TOKEN Actions secret before publishing a release."
+            exit 1
+          fi
+          npm publish "$RUNNER_TEMP/npm-release/"*.tgz --ignore-scripts --access public --provenance --tag latest
