@@ -13,12 +13,13 @@ A live pixel-art office for [OpenClaw](https://github.com/openclaw/openclaw): se
 - **Follow live activity.** Animated agents, room counts and a filterable activity dock show working, attention-needed, idle and inactive states. Freshness indicators distinguish an old collector snapshot from a lost browser connection.
 - **Inspect real tasks.** Open an agent's Task tab to choose a conversation, inspect verified run state, read the recorded request and response, and review recent tool outcomes. Load earlier records when the first history window is incomplete.
 - **Have a conversation.** Read text history, send a message, queue a follow-up while an agent is busy, or start a new conversation. Sending is optional and requires a separately approved write grant.
+- **Collect results and files.** The Results tab shows a verified result or clearly labels the latest response when completion is unconfirmed. Preview delivered text and still PNG/JPEG/WebP images, download other supported files, or explicitly open an external link after checking its host. It follows the selected conversation and task; it is not a workspace file browser.
 - **Build your office.** Search 25 furniture types, place, drag, rotate and delete items, and save multiple layouts. Footprint previews show overlap and boundaries; layouts auto-save after edits.
 - **Move around comfortably.** Fit, zoom, pan, keyboard navigation and pinch gestures work with the responsive office view and mobile drawers.
 - **Make agents recognizable.** Choose body, hair and outfit, edit tags, and show or hide agents. Customizations live on the server, sync between browsers and survive restarts when the data directory is retained.
 - **Choose your deployment.** Run beside OpenClaw with local CLI polling, or run the dashboard elsewhere and push roster snapshots from the supplied collector. Private task access connects separately to the Gateway.
 
-Task and conversation features are implemented. A dedicated Results/Files panel is planned and is not included yet.
+Task, Conversation, Results and Agent tabs share the same conversation selection. Private results and file access use the existing office key and `operator.read` grant. Gateways without assistant-filtered artifact APIs still provide task text; Results explains when file discovery is unsupported. See [results and file access](docs/task-access-setup.md#results-and-delivered-files) for limits and compatibility.
 
 ## Start from source
 
@@ -52,7 +53,7 @@ The example uses **http://localhost:3001**. The server does not load `.env` auto
 
 ### npm installation
 
-The repository includes an npm launcher and release workflow. **These commands become available after the first npm release is published**; preparing the workflow does not publish the package.
+The package is available on npm with a launcher and release workflow. The Results/Files feature described here requires a build containing this change; npm 1.4.0 predates it.
 
 ```sh
 npm install --global openclaw-pixel-agents

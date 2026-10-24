@@ -82,6 +82,18 @@ Open an agent's **Task** tab and paste the **office key from step 1** into **Unl
 
 If the office URL uses HTTP, private access is normally available only from loopback. An operator using a direct encrypted Tailscale connection can explicitly enable `CONTROL_ALLOW_TAILNET_HTTP=true`; this requires actual direct Tailnet endpoints and does not allow ordinary LAN/public HTTP. HTTPS remains the normal remote setup.
 
+## Results and delivered files
+
+Choose a conversation, then open **Results**. This uses the same office key and paired `operator.read` grant as Task; sending does not need to be enabled. **Result** means the task service has verified a completed result. **Latest response** explicitly leaves completion unconfirmed. A file appearing never makes a running or failed task successful.
+
+Files come from assistant-delivered artifacts for the selected run. When a run cannot be identified, Results labels the list as conversation-wide and warns that it may include earlier work. Local workspace files, tool outputs and arbitrary host paths are not browsable here. Native `artifacts.list`, `artifacts.get` and `artifacts.download` must accept the assistant/agent/session/run filters; older Gateways that lack them show an unsupported file-discovery state while task text stays available. Native transfer was checked with OpenClaw 2026.10.3 in an isolated synthetic session, without submitting an agent task.
+
+Text previews are plain UTF-8, limited to 256 KiB with a shortened notice. Still PNG/JPEG/WebP previews are limited to 8 MiB and 16 million pixels; animated images require download. HTML, SVG, PDF, audio, video, archives and executables are download-only. The actual transfer limit is 16 MiB even if a source declares a smaller size. Each IP has a separate content budget of two concurrent transfers and six requests per minute, with a 30-second deadline. This does not consume message-send admissions.
+
+The visible Results tab refreshes metadata every five seconds. It retains at most 100 newest file summaries and labels shortened lists. Failed refreshes retain last-known facts with the original timestamp and disable file actions until the source is current again. **Copy displayed text** copies only the visible response; when clipboard access is unavailable, including direct-IP HTTP, select and copy the response manually.
+
+Preview content stays in tab memory. Lock, close, hidden-page and selection/source changes cancel transfers, clear previews and revoke owned image URLs. Saved downloads remain ordinary user files. Native Gateway tickets stay on the server; external HTTP(S) references are shown with their host and require an explicit click. No workspace browser or additional permission is needed.
+
 ## Docker
 
 The runtime image includes the key generator. From the repository root, build your image with an explicit tag, then generate a key without needing Node on the host:

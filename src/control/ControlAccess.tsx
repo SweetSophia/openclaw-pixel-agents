@@ -1,16 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { parseControlStatus, type ControlStatus } from '../../shared/control';
-import { ControlApiError, controlFetch } from './api';
+import { ControlApiError, controlFetch, controlFetchFile, type ControlFileResponse } from './api';
 import { io, type Socket } from 'socket.io-client';
 
 export interface ControlAccess {
   state: 'locked' | 'unlocked'; status: ControlStatus | null; generation: number;
   unlock(key: string): Promise<void>; lock(): void; request(path: string, init?: RequestInit): Promise<unknown>;
+  requestFile(path: string, init?: RequestInit): Promise<ControlFileResponse>;
   openSocket?(): Socket | null;
 }
 const disabled: ControlStatus = { configured: false, state: 'disabled', canRead: false, canSend: false };
 const Context = createContext<ControlAccess>({ state: 'locked', status: disabled, generation: 0,
-  unlock: async () => { throw new ControlApiError('disabled'); }, lock() {}, request: async () => disabled });
+  unlock: async () => { throw new ControlApiError('disabled'); }, lock() {}, request: async () => disabled,
+  requestFile: async () => { throw new ControlApiError('locked'); } });
 const DraftsContext = createContext<Map<string, unknown> | undefined>(undefined);
 export function useConversationDrafts() { return useContext(DraftsContext); }
 
@@ -27,12 +29,12 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
   }, []);
   const lock = useCallback(() => { clear(); setGeneration(revision.current); setState('locked'); setStatus(null); }, [clear]);
   useEffect(() => () => clear(), [clear]);
-  const perform = useCallback(async (path: string, candidate: string | undefined, init: RequestInit = {}) => {
+  const perform = useCallback(async (path: string, candidate: string | undefined, init: RequestInit = {}, file = false) => {
     const current = revision.current; const controller = new AbortController(); controllers.current.add(controller);
     const cancel = () => controller.abort(); init.signal?.addEventListener('abort', cancel, { once: true });
     if (init.signal?.aborted) controller.abort();
     try {
-      const value = await controlFetch(path, candidate, { ...init, signal: controller.signal });
+      const value = await (file ? controlFetchFile : controlFetch)(path, candidate, { ...init, signal: controller.signal });
       if (controller.signal.aborted || current !== revision.current) throw new ControlApiError('locked');
       return value;
     } catch (error) {
@@ -48,6 +50,14 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
     if (!value) throw new ControlApiError('invalid-source');
     if (!value.configured) throw new ControlApiError('disabled');
     key.current = candidate; setStatus(value); setState('unlocked');
+  }, [lock, perform]);
+  const requestFile = useCallback(async (path: string, init?: RequestInit): Promise<ControlFileResponse> => {
+    const current = revision.current; if (!key.current) throw new ControlApiError('locked');
+    try { return await perform(path, key.current, init, true) as ControlFileResponse; }
+    catch (error) {
+      if (current === revision.current && error instanceof ControlApiError && ['locked', 'scope-required', 'pairing-required'].includes(error.code)) lock();
+      throw error;
+    }
   }, [lock, perform]);
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const current = revision.current;
@@ -71,7 +81,7 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
     socket.disconnect = () => { sockets.current.delete(socket); return disconnect(); };
     return socket;
   }, []);
-  const value = useMemo(() => ({ state, status, generation, unlock, lock, request, openSocket }), [state, status, generation, unlock, lock, request, openSocket]);
+  const value = useMemo(() => ({ state, status, generation, unlock, lock, request, requestFile, openSocket }), [state, status, generation, unlock, lock, request, requestFile, openSocket]);
   return <Context.Provider value={value}><DraftsContext.Provider value={drafts.current}>{children}</DraftsContext.Provider></Context.Provider>;
 }
 export function useControlAccess(): ControlAccess { return useContext(Context); }

@@ -11,6 +11,22 @@ const socketFixture = vi.hoisted(() => ({ io: vi.fn(), disconnect: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: socketFixture.io }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('owns binary requests too, aborts on lock and rejects a late file', async () => {
+    let resolve: (response: Response) => void = () => {};
+    const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; })); vi.stubGlobal('fetch', fetch);
+    const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
+    const pending = result.current.requestFile('/api/control/agents/cylena/results/file', { method: 'POST', body: '{}' }).catch(error => error);
+    const signal = (fetch.mock.calls[1][1] as RequestInit).signal!; act(() => result.current.lock()); expect(signal.aborted).toBe(true);
+    resolve(new Response('private', { headers: { 'X-Pixel-Control-File': 'bytes', 'Content-Disposition': 'attachment; filename="report.txt"' } }));
+    expect(await pending).toMatchObject({ code: 'locked' }); expect(result.current.state).toBe('locked');
+  });
+  it('locks after a binary authorization rejection and drops private drafts', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(status)).mockResolvedValueOnce(json({ code: 'scope-required' }, 403)));
+    const { result } = renderHook(() => ({ access: useControlAccess(), drafts: useConversationDrafts()! }), { wrapper }); await act(() => result.current.access.unlock('fixture-key'));
+    result.current.drafts.set('private', 'draft');
+    await act(async () => { await expect(result.current.access.requestFile('/api/control/file')).rejects.toMatchObject({ code: 'scope-required' }); });
+    expect(result.current.access.state).toBe('locked'); expect(result.current.drafts.size).toBe(0);
+  });
   it('starts an isolated private socket with WebSocket and keeps the key out of its URL', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(status))); socketFixture.io.mockReturnValue({ disconnect: socketFixture.disconnect });
     const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));

@@ -73,6 +73,44 @@ function client(url?: string, sendEnabled = false, options?: { directory: string
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 
 describe('scoped task Gateway client', () => {
+  const assistantSelection = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', runId: 'run-1', messageRole: 'assistant' };
+  const artifactMethods = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
+  it.each([['artifact_not_found', 'file-unavailable'], ['artifact_download_unsupported', 'file-unavailable'], ['artifact_scope_not_found', 'session-changed']])('preserves native %s as %s without private diagnostics', async (type, code) => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', ...artifactMethods], events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'synthetic-private-path', details: { type } } })));
+    const gateway = client(host.url); await ready(gateway);
+    const error = await gateway.request('artifacts.download', { ...assistantSelection, artifactId: 'artifact-1' }).catch(error => error);
+    expect(error).toMatchObject({ code }); expect(error).toBeInstanceOf(Error); expect((error as Error).message).not.toContain('synthetic-private-path');
+  });
+  it('keeps old Gateway task reads available when optional artifact methods are absent', async () => {
+    const host = await fixture(); const gateway = client(host.url); await ready(gateway);
+    for (const method of artifactMethods) await expect(gateway.request(method, assistantSelection)).rejects.toMatchObject({ code: 'unsupported' });
+    expect(gateway.status().canRead).toBe(true);
+    expect(await gateway.request('sessions.list', { agentId: 'cylena' })).toEqual({ sessions: [] });
+    expect(host.frames.filter(frame => frame.method.startsWith('artifacts.'))).toHaveLength(0);
+  });
+  it('treats rejected assistant filtering as optional unsupported functionality without unfiltered retries', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', ...artifactMethods], events: [] },
+    }) : frame.method.startsWith('artifacts.') ? { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'synthetic-filter-rejected' } }
+      : { type: 'res', id: frame.id, ok: true, payload: { sessions: [] } })));
+    const gateway = client(host.url); await ready(gateway);
+    await expect(gateway.request('artifacts.list', assistantSelection)).rejects.toMatchObject({ code: 'unsupported' });
+    expect(host.frames.filter(frame => frame.method === 'artifacts.list').map(frame => frame.params)).toEqual([assistantSelection]);
+    expect(gateway.status().canRead).toBe(true);
+    await expect(gateway.request('sessions.list', {})).resolves.toEqual({ sessions: [] });
+  });
+  it('preserves genuine scope rejection and exposes connection identity only while that generation is ready', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', ...artifactMethods], events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN' } })));
+    const gateway = client(host.url);
+    expect(gateway.artifactConnection?.()).toBeNull(); await ready(gateway);
+    expect(gateway.artifactConnection?.()).toEqual({ id: 'fixture', generation: expect.any(Number), gatewayUrl: host.url + '/' });
+    await expect(gateway.request('artifacts.get', { ...assistantSelection, artifactId: 'artifact-1' })).rejects.toMatchObject({ code: 'scope-required' });
+    gateway.close(); expect(gateway.artifactConnection?.()).toBeNull();
+  });
   it('reports disconnected writes as unavailable rather than revoked authority', async () => {
     const host = await fixture(); const gateway = client(host.url, true);
     await expect(gateway.request('chat.send', {})).rejects.toMatchObject({ code: 'unavailable' });
