@@ -1,425 +1,178 @@
-*Development picked up again at 19th of April 2026. Expect many updates and improvements every week now!*
+# OpenClaw Pixel Agents
 
-# 🖥️ OpenClaw Pixel Agents
+A live pixel-art office for [OpenClaw](https://github.com/openclaw/openclaw): see who is working, inspect a task, and send a message without leaving the office.
 
-A pixel art office dashboard for [OpenClaw](https://github.com/openclaw/openclaw) — where your AI agents walk around, sit at desks, and visually reflect what they're doing in real time.
-
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![React 19](https://img.shields.io/badge/React-19-61dafb.svg)
-![TypeScript 7](https://img.shields.io/badge/TypeScript-7-3178c6.svg)
-![Vite 8](https://img.shields.io/badge/Vite-8-646cff.svg)
 [![CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/codeql.yml/badge.svg)](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/codeql.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-<img width="797" height="656" alt="screenshot-office" src="https://github.com/user-attachments/assets/6b485484-26ff-4739-bfdd-d7a0f90fbec6" />
-<img width="797" height="660" alt="screenshot-furniture" src="https://github.com/user-attachments/assets/506f3ec8-4c7c-4fa0-9db5-e5274eb4390d" />
-<img width="578" height="321" alt="character-customization" src="https://github.com/user-attachments/assets/9a0a0315-a7a5-4907-adf5-a68dd8010ed3" />
+<img width="797" height="656" alt="Pixel office with agents, desks and room navigation" src="https://github.com/user-attachments/assets/6b485484-26ff-4739-bfdd-d7a0f90fbec6" />
 
+## What you can do
 
-## What It Does
+- **Follow live activity.** Animated agents, room counts and a filterable activity dock show working, attention-needed, idle and inactive states. Freshness indicators distinguish an old collector snapshot from a lost browser connection.
+- **Inspect real tasks.** Open an agent's Task tab to choose a conversation, inspect verified run state, read the recorded request and response, and review recent tool outcomes. Load earlier records when the first history window is incomplete.
+- **Have a conversation.** Read text history, send a message, queue a follow-up while an agent is busy, or start a new conversation. Sending is optional and requires a separately approved write grant.
+- **Build your office.** Search 25 furniture types, place, drag, rotate and delete items, and save multiple layouts. Footprint previews show overlap and boundaries; layouts auto-save after edits.
+- **Move around comfortably.** Fit, zoom, pan, keyboard navigation and pinch gestures work with the responsive office view and mobile drawers.
+- **Make agents recognizable.** Choose body, hair and outfit, edit tags, and show or hide agents. Customizations live on the server, sync between browsers and survive restarts when the data directory is retained.
+- **Choose your deployment.** Run beside OpenClaw with local CLI polling, or run the dashboard elsewhere and push roster snapshots from the supplied collector. Private task access connects separately to the Gateway.
 
-Turns your OpenClaw multi-agent system into a live pixel art office. Each agent becomes a character that walks to their desk, sits down, and animates based on real agent state — typing when writing code, reading when analyzing, thinking when reasoning, waiting when they need your attention.
+Task and conversation features are implemented. A dedicated Results/Files panel is planned and is not included yet.
 
+## Start from source
 
-## Features
+Use Node.js **22.22.2+ within 22.x**, **24.15.0+ within 24.x**, or **26+**; the exact supported range is enforced by the repository. For live agents, you also need OpenClaw locally or a configured collector.
 
-- **Live agent visualization** — characters animate based on real OpenClaw Gateway state (typing, reading, thinking, waiting, error)
-- **Drag-and-drop layout editor** — place, move, rotate, and delete furniture on a grid
-- **Persistent layouts** — save and load office designs; create multiple layouts
-- **25 furniture types** — desks, PCs, chairs, plants, bookshelves, whiteboards, coffee machines, paintings, and more
-- **Agent toggle** — choose which agents appear in the pixel office
-- **Character sprites** — animated pixel characters with walk, typing, and reading states
-- **Fallback rendering** — works even without sprite assets (colored rectangles)
-- **Real-time sync** — polls OpenClaw Gateway for agent state every 3 seconds
-
-## Quick Start
-
-```bash
+```sh
 git clone https://github.com/SweetSophia/openclaw-pixel-agents.git
 cd openclaw-pixel-agents
-npm install
+npm ci
 npm run dev
 ```
 
-The app runs at `http://localhost:3000` with the backend API on port 3001.
+Open **http://localhost:3000**. Vite serves the client and proxies the API and socket to the backend on port **3001**. When OpenClaw is installed elsewhere, set `OPENCLAW_BIN` in the backend environment or follow the [collector guide](collector/README.md).
 
-### Requirements
+Development builds can show demo characters before live data arrives. **Production does not insert demo agents**; an empty office may simply be waiting for its data source.
 
-- **Node.js** `^22.22.2`, `^24.15.0`, or `>=26.0.0` (the binding range comes from `jsdom@30`). Declared in `package.json#engines` and enforced via `.npmrc` (`engine-strict=true`).
-- **One of:**
-  - **OpenClaw** running locally with CLI in PATH (for `cli`/`auto` data mode)
-  - **Ingest API** — set `DATA_SOURCE=ingest` + `INGEST_API_TOKEN` and push data from a collector script on the OpenClaw host
-
-### Demo Mode
-
-Without a running OpenClaw Gateway, the app starts with 8 demo agents (Cybera, Shodan, Cyberlogis, Descartes, Chi, Cylena, Sysauxilia, Miku) in various activity states. This is enough to test the layout editor and rendering.
-
-## Usage
-
-### Agent Sidebar
-
-The right sidebar shows all configured agents with:
-- Activity state badge (color-coded)
-- Model name
-- Token usage bar
-- Toggle button to show/hide in the pixel office
-- Bulk Show All / Hide All controls
-
-### Character Customization
-
-Use an agent's palette button to choose its body, hair and outfit, then **Apply**. Each agent's appearance is stored on the server in `DATA_DIR/agent-prefs.json`, shared with connected browsers and restored after bridge or server restarts. Portraits, the customizer and office sprites use the same per-agent defaults when no custom recipe has been saved.
-
-Keep the same persistent `DATA_DIR` when restarting, rebuilding or switching between development and production; configure an absolute directory in your service environment. Without an explicit setting, development uses `server/data` while the compiled server uses `dist/server/server/data`. Docker installations should persist `/app/data` as a volume.
-
-Apply reports success after the preference write completes. A failed write leaves the previous appearance intact. If the file was already replaced but filesystem durability could not be confirmed, the current appearance remains visible and the form reports that saving needs to be retried.
-
-### Office View
-
-Use **Fit** to show the complete office between the header, editor toolbar, activity summary and desktop sidebar. **−** and **+** zoom from 100% to 400% of that fitted view. Resize the window to refit the available space automatically.
-
-In short windows, scroll the workspace to reach the editor panels, view controls and office. The map keeps a usable minimum height instead of disappearing when the editor needs more space.
-
-Toggle **Pan** to drag the view with a mouse or one finger. While Pan is active, arrow keys move the view and **Escape** returns to selection; **Fit** recenters and also exits Pan. Two-finger gestures zoom and move the view in either mode. Turn Pan off to select agents or place, drag and rotate furniture. Changing editor tools exits Pan automatically. View navigation does not change the saved layout.
-
-### Live Activity
-
-The bottom **Live activity** dock counts working, attention-needed, idle, and inactive agents across every room, including agents hidden from the pixel office. Expand it to filter the roster, see models and rooms, or open an agent's existing details panel.
-
-Activity labels are estimates based on session recency and token counts; they do not identify the actual task or tool being used. **Observed changes** records up to 50 status changes seen since the page opened, including while the dock is collapsed. Reloading clears that history. Transcript excerpts appear separately under **Messages** when the source supplies them; collector snapshots currently supply session status only.
-
-Freshness is checked every 15 seconds. In ingest mode, the age comes from the last successful collector push, independently of socket connectivity. The HTTP `Date` header supplies the server clock so browser clock differences do not distort the age; proxies must preserve this header. CLI mode shows when the browser last received an agent snapshot. Data older than 90 seconds is marked stale, with unavailable and waiting states shown explicitly.
-
-### Task details
-
-Open an agent and choose **Task** to inspect its conversations, verified run state,
-recorded request, recent tool outcomes and visible response. **Agent** retains the
-office roster summary. The selected conversation stays selected as other work
-arrives. Child sessions are labelled separately; their outcomes do not determine
-the parent's outcome.
-
-Task details require a separately configured operator access key. Unlocking lasts
-only in the current tab; **Lock** and page reload clear it. Private task data is
-never stored in browser storage or sent over the public office socket. A failed
-refresh keeps same-conversation facts labelled **Last known**, with their original
-verification time. Missing run identities and requests outside the loaded history
-window are shown explicitly. **Load earlier records** continues bounded discovery,
-up to 2,000 records.
-
-Choose **Conversation** for text-only user/assistant history and explicit messages.
-Enter adds a line; **Send** or Ctrl/Cmd+Enter submits once. Busy conversations offer
-**Send follow-up**, which queues without interrupting current work. Messages stay
-in the selected conversation and do not dispatch to its external channel.
-**New conversation** starts a separate draft for this agent; creation occurs only
-when you send. Existing conversations with empty or unsupported transcript guards
-require a new conversation before sending.
-
-**Accepted** means admitted by OpenClaw; **Persisted** confirms a canonical user
-record. A disconnect may leave **Outcome unknown**. Use **Retry original submission**
-to reconcile that same ID and immutable message. Never replace it with a new send
-to work around uncertainty. Recovery drafts are kept until persistence; edits made
-while waiting remain separate from the original submission. Drafts survive panel
-and conversation switches in tab memory. Lock, authentication rejection and reload
-clear private drafts and retry identities. A reset or branch
-change keeps the old draft separate; select the current conversation explicitly.
-
-### Layout Editor
-
-Click **✏️ Edit** in the header to enter editor mode:
-
-| Action | How |
-|--------|-----|
-| Find furniture | Open 📦 Furniture and search by label or type (e.g. `large plant` or `LARGE_PLANT`) |
-| Place furniture | Click a type in the 📦 palette, then click on the grid |
-| Select furniture | Click on placed furniture (green dashed border) |
-| Move furniture | Click and drag |
-| Rotate furniture | Right-click, or use 🔄 button in the info bar |
-| Delete furniture | Use 🗑️ button in the info bar, or enable Delete mode and click a placed item |
-| Save layout | Click 💾 Save |
-
-Furniture search matches a single substring, ignoring case and leading/trailing spaces. Only catalog items and non-empty categories are shown. A persistent polite status region reports no matches; a catalog that has not loaded or is unavailable is reported separately, even with a query entered.
-
-**Clear** (the sole visible clear control) or **Escape** anywhere in the palette resets the query without cancelling placement; filtering never changes your selected furniture. The query is retained when switching panels within an editor session, and opening Furniture focuses search. Exiting the editor unmounts its panels and discards the query; reopening Furniture in a new session starts with an empty search.
-
-Tab reaches enabled Clear and the matching items. The search input and Clear isolate all keydown/keyup events from document/window bubble listeners while preserving native typing and navigation; result buttons isolate **Escape** only, and other keys propagate normally. Rotate and Delete are click controls, not keyboard shortcuts.
-
-**Furniture footprint previews are informational, not a placement validator.** The outline shows the loaded sprite's grid footprint, rotated around the centre of its stored anchor tile (marked with a small cross). Amber means overlap, contact with the office border, or extent outside the canvas. “Overlaps furniture — placement is allowed.” includes intentional table/decor layering: placing, moving, draw order and saving are unchanged. Missing sprites show the actual 2×1 placeholder footprint; the existing unknown-type mouse/drag clamp still uses 1×1.
-
-Preview geometry and overlap assessment are cached until the candidate, layout, live drag, rotation or asset geometry changes. Unchanged frames reuse the placed-rectangle list and complete preview; sprite validity checks still run per distinct referenced type. A real-engine regression with 200 items and 200 overlay frames counts one list build, 201 footprint-helper calls and one assessment (including the initial pointer event), versus 202 list builds, 40,602 helper calls and 202 assessments before caching (the harness also reads the preview once). These are allocation-path/scan counts, not measured CPU, frame-time or jank gains; the separate selected-item outline still computes its own footprint. Use `setLayout` for external furniture changes: mutating an item reference returned by the shallow `getPlacedFurniture()` accessor directly does not invalidate the cache (no production callers currently use that path).
-
-Mouse placement commits on primary mouse-down; its preview uses the existing dimension-only clamp. Mouse dragging snaps the anchor to the pointer with no pickup offset. Touch placement commits on release at the **touch-start** cell, without that clamp; jitter up to 12 CSS pixels per axis keeps the start target even across a tile boundary. Movement beyond that threshold with a type selected does not place an item, so its preview disappears. Touch dragging retains the pickup offset and shares its existing clamped drop target with the preview. Pinch, cancellation, leaving rendered canvas content, mode/type changes and layout updates clear the preview.
-
-The visible polite status reports semantic changes, not every coordinate or frame. It is separate from placement instructions, furniture-search feedback and save errors. Previews describe the currently fixed **24×16 rendered canvas**, not server legality, editable floor rules or arbitrary saved layout dimensions. Footprint extent and an outside anchor are reported separately; existing raw touch edge anchors can still be rejected on save. Overlap permission applies only to overlap, not to an outside anchor or guaranteed saving. Geometry and fallback status refresh when assets finish loading, even without another pointer event. Rotated hit-testing, legacy clamps (including border/off-canvas extent), drag rollback on cancellation and dynamic canvas sizing are unchanged and remain separate follow-ups.
-
-Layouts auto-save 2 seconds after the last furniture change; the explicit Save button remains available.
-
-### Layout Manager
-
-Click **📐 Layouts** to manage saved layouts:
-- Create new layouts with custom names
-- Switch between layouts
-- Delete layouts (default layout is protected)
-
-The server permits at most 100 entries in the layouts directory. Legacy
-installations above that limit show at most 100 layouts at a time; delete unused
-layouts until the capacity warning clears. Delete an unused layout before
-creating another after the limit is reached. Non-layout files also consume
-capacity; if the warning persists, remove them from that directory manually.
-
-## Architecture
-
-### Data Source Modes
-
-The server supports three modes for getting agent data, controlled by the `DATA_SOURCE` env var:
-
-| Mode | `DATA_SOURCE` | How it works |
-|------|--------------|--------------|
-| **Auto** (default) | `auto` | Tries CLI polling; if `openclaw` is not found and `INGEST_API_TOKEN` is set, switches to ingest-only |
-| **CLI Poll** | `cli` | Polls `openclaw sessions` locally every 3 seconds (requires OpenClaw on the same machine) |
-| **Ingest** | `ingest` | Accepts pushed data via `POST /api/ingest/agents` — no local OpenClaw needed |
-
-#### Mode 1: Same machine as OpenClaw (CLI Poll)
-
-```
-Browser                          Server                     OpenClaw
-┌──────────────┐   HTTP/WS   ┌──────────────┐   CLI poll   ┌──────────────┐
-│ React 19     │◄───────────►│ Express      │◄────────────►│ Gateway      │
-│ Canvas 2D    │             │ Socket.IO    │   (3s)       │ Sessions API │
-│ GameEngine   │             │ Layout API   │              └──────────────┘
-└──────────────┘             └──────────────┘
-```
-
-Just run it on the same machine as OpenClaw. No extra configuration needed.
-
-#### Mode 2: Separate server (Ingest via Collector)
-
-```
-┌─────────────────────┐         every 15s          ┌──────────────────┐
-│  OpenClaw Server     │ ──── collector script ───→ │  Your Server     │
-│  (has openclaw CLI)  │    token-authenticated     │  (pixel-agents)  │
-│                      │    POST /api/ingest/agents │                  │
-└─────────────────────┘                            └──────────────────┘
-```
-
-1. Set `DATA_SOURCE=ingest` and `INGEST_API_TOKEN=<secret>` on the pixel-agents server
-2. On the OpenClaw host, copy `collector/.env.collector.example` to `.env.collector` and configure:
-   - `PIXEL_AGENTS_URL` — HTTPS URL of the pixel-agents server (loopback HTTP is allowed for local development)
-   - `PIXEL_INGEST_TOKEN` — same secret as `INGEST_API_TOKEN`
-   - `OPENCLAW_BIN` — absolute path returned by `command -v openclaw`
-3. Install the systemd timer from `collector/systemd/`:
-   ```bash
-   # Edit User and all installation paths in the .service file first
-   sudo cp collector/systemd/openclaw-pixel-collector.* /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now openclaw-pixel-collector.timer
-   ```
-
-The ingest endpoint accepts additive fields from OpenClaw's evolving session output,
-then sanitizes each entry into the small session shape used by this server. Registered
-agent IDs, retained field types and sizes, and opaque session IDs are validated before
-an update is applied; invalid retained fields return HTTP 400.
-
-See [collector/README.md](collector/README.md) for full setup instructions.
-
-### Key Components
-
-| Component | Purpose |
-|-----------|---------|
-| `GameEngine` | Canvas 2D rendering loop, sprite animation, pathfinding, and host façade |
-| `EditorController` | Mouse/touch editor state and canvas listener lifecycle |
-| `SpriteLoader` | Loads and slices sprite sheets into individual frame canvases |
-| `LayoutEditor` | Toolbar, furniture palette, layout manager UI |
-| `PixelOffice` | Canvas wrapper, wires agent/layout data to GameEngine |
-| `AgentSidebar` | Agent list with toggles and activity badges |
-| `useAgentStore` | Fetches agent state via REST fallback and switches to Socket.IO only after the first live snapshot |
-| `useLayoutStore` | CRUD operations for layouts with auto-save |
-
-### Sprite Format
-
-Character sprite sheets are 112×96px PNGs:
-- **7 frames per row** (16×32px each)
-- **3 rows**: down (row 0), up (row 1), right (row 2)
-- **Frame mapping**: 0-2 walk, 3-4 typing, 5-6 reading
-- Left direction is auto-generated by flipping the right row
-
-Furniture uses per-type directories with `manifest.json` for dimensions and rotation schemes.
-
-## Adding Custom Assets
-
-### New Furniture Type
-
-1. Add sprites to `public/assets/furniture/<TYPE>/`
-2. Create `manifest.json`:
-   ```json
-   {
-     "id": "MY_FURNITURE",
-     "name": "My Furniture",
-     "category": "decor",
-     "type": "single",
-     "members": [{
-       "type": "asset",
-       "id": "MY_FURNITURE",
-       "file": "MY_FURNITURE.png",
-       "width": 32,
-       "height": 32,
-       "footprintW": 2,
-       "footprintH": 2
-     }]
-   }
-   ```
-3. Add the type name to the furniture catalog in `server/index.ts`
-4. It appears in the editor palette automatically
-
-### New Character Sprite
-
-1. Create a 112×96px sprite sheet following the format above
-2. Place in `public/assets/characters/`
-3. The `SpriteLoader` picks it up automatically
-
-## Tech Stack
-
-- **Frontend**: React 19, TypeScript, Vite, Canvas 2D
-- **Backend**: Node.js, Express, Socket.IO
-- **Assets**: [MetroCity](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack) character pack by JIK-A-4
-- **Agent Data**: [OpenClaw](https://github.com/openclaw/openclaw) Gateway
-
-## Configuration
-
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `PORT` | `3001` | Backend server port (`3000` in production) |
-| `NODE_ENV` | *(set to `production` by `npm start`)* | Runtime mode; production requires `CORS_ORIGIN` for WebSocket origin checks |
-| `CORS_ORIGIN` | *(none)* | Comma-separated browser origins allowed to open Socket.IO connections and to send state-mutating REST requests in production |
-| `DATA_SOURCE` | `auto` | Data mode: `auto`, `cli` (local polling), or `ingest` (push-based); invalid values fail safe to `auto` |
-| `OPENCLAW_BIN` | `openclaw` | Path to OpenClaw CLI binary (CLI polling modes only) |
-| `POLL_INTERVAL` | `3000` | Agent state poll interval in ms (cli mode only) |
-| `ACTIVE_MINUTES` | `30` | Session staleness threshold |
-| `INGEST_API_TOKEN` | *(none)* | Shared secret for ingest API auth (required for ingest mode) |
-| `RATE_LIMIT_MAX` | `10` | Authenticated ingest pushes allowed per minute and token digest |
-| `PRE_AUTH_RATE_LIMIT_MAX` | `5` | Ingest attempts allowed per minute and client IP before authentication |
-| `PUBLIC_GET_RATE_LIMIT_MAX` | `512` | Static/SPA GET or HEAD requests allowed per minute and client IP; accommodates several cold office loads sharing an IP |
-| `PREFS_WRITE_RATE_LIMIT_MAX` | `60` | Non-layout `/api` mutations allowed per minute and client IP |
-| `LAYOUT_WRITE_RATE_LIMIT_MAX` | `90` | Layout PUT/POST/DELETE requests allowed per minute and client IP; includes headroom above the editor's 30/minute theoretical autosave ceiling |
-| `TRUST_PROXY` | *(unset)* | Reverse-proxy trust for client-IP rate limiting: `"false"`/`"0"`/unset = no trust (default), a positive integer = trusted proxy hop count (e.g. `"1"`), or a comma-separated list of proxy IPs/CIDRs or the presets `loopback`/`linklocal`/`uniquelocal` (e.g. `"10.0.0.0/8,127.0.0.1"`). Required for per-client limiting behind a reverse proxy; invalid values fail startup with a descriptive error. See [Reverse-proxy deployments](#reverse-proxy-deployments). |
-| `OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | Path to agent session transcripts |
-| `DATA_DIR` | `join(__dirname, "data")` | Persistence directory for preferences and layouts. Resolved relative to the compiled module location — dev writes under `server/data/`, standalone compiled startup writes under `dist/server/server/data/`. Set explicitly in production. Docker sets `DATA_DIR=/app/data`. |
-| `OPENCLAW_GATEWAY_URL` | *(none)* | Optional task source. Remote endpoints require an encrypted WebSocket connection; plain connections are accepted only on loopback. Credentials, query parameters and fragments are not accepted in the URL. |
-| `PIXEL_CONTROL_TOKEN` | *(none)* | Separate office operator access key for private task details. Both this key and the Gateway URL are required to enable task access. Do not reuse the ingest or Gateway secret. |
-| `CONTROL_SEND_ENABLED` | `false` | Explicitly enable conversation sends. Requires this office device to have both `operator.read` and `operator.write`; never requests admin authority. |
-| `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_GATEWAY_PASSWORD` | *(none)* | Optional server-only Gateway bootstrap credentials. Never enter these into the browser task-key field. |
-| `CONTROL_ALLOW_TAILNET_HTTP` | `false` | Explicitly allow private task access over a direct encrypted Tailscale connection while the browser URL uses HTTP. Both the actual local socket address on `tailscale0` and the actual Tailnet peer must qualify. Forwarded headers cannot establish this exception. |
-
-`CORS_ORIGIN` must include the browser's scheme, hostname, and port. For Tailscale access, list the MagicDNS hostname separately from the IP address. A missing origin can leave agent data updating through read-only REST polling while blocking Socket.IO and changes such as character designs.
-
-Agent preferences and layouts are written through a flushed same-directory temporary file, atomically renamed into place, and followed by a parent-directory sync on POSIX. A failure before replacement therefore leaves the previous JSON file intact instead of exposing a truncated target.
-
-### Agent data-source modes
-
-The server follows a finite-state machine and the single-writer principle: CLI polling and ingest writes are never active at the same time. `cli` always keeps CLI polling active, and `ingest` starts ingest-only without polling. Ingest mode requires `INGEST_API_TOKEN`. Configuring a token does not enable pushes in explicit `cli` mode; use `ingest` or `auto` when collector delivery should own agent state.
-
-`auto` starts with CLI polling. When an ingest token is configured and CLI execution cannot recover without operator action—`OPENCLAW_BIN` has a missing or invalid path (`ENOENT`, `ENOTDIR`, `EISDIR`), permission is denied (`EACCES`, `EPERM`), the executable format is invalid (`ENOEXEC`, `EFTYPE`), the path contains a symlink loop or is too long (`ELOOP`, `ENAMETOOLONG`), or session output exceeds the shared 10 MiB safety limit (`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`)—the server makes an at-most-once, sticky transition to ingest-only. This hysteresis prevents later polling from taking ownership back; returning to CLI ownership after fallback requires restarting the server once the CLI problem is fixed. Transient failures—including non-zero exits, timeouts, temporary resource exhaustion (`EAGAIN`, `EBUSY`, `EMFILE`), malformed output, and unknown errors—preserve the previous snapshot and do not switch modes. Without an ingest token, `auto` remains in CLI mode even after a permanent CLI execution failure.
-
-CLI polling logs the first failure in full, suppresses repeated same-kind failures, and emits an ongoing summary every 20 failed poll cycles (about one minute at the default 3-second interval). A successful poll after failures logs recovery once.
-
-CLI polling inherits the server environment except for `INGEST_API_TOKEN`, which is removed before spawning `OPENCLAW_BIN` so the ingest bearer token is not exposed to the child process tree.
-
-While CLI polling owns agent state, authenticated ingest requests are rejected with `409 Conflict` before rate limiting or payload validation. `/api/status` reports `dataSourceConfig`, `dataSourceEffective`, `dataSourceTransitioned`, `cliPolling`, and `lastIngestAt`.
-
-The legacy `dataSource` field remains a compatibility alias for **effective ownership**: `cli-poll` while polling owns state, and `ingest` while ingest-only owns state. It no longer means that an ingest push happened at any point in the process lifetime; use `lastIngestAt` for accepted-push history and migrate mode checks to `dataSourceEffective`.
-
-### Connecting task details
-
-Generate a separate key for your own installation:
+### Run a production build
 
 ```sh
-npm run --silent control:key
+npm run build
+cp .env.example .env
 ```
 
-Set the output as the server's `PIXEL_CONTROL_TOKEN`, then paste that same value
-into **Unlock task details**. See the [task access setup guide](docs/task-access-setup.md)
-for the supplied [.env.example](.env.example), first-time Gateway pairing,
-development/Docker setup, and key rotation. Visitors obtain the key from their
-office operator; generating a new value does not change a running server.
+Edit `.env`: set your exact `CORS_ORIGIN`, choose a stable absolute `DATA_DIR`, and configure the roster source. Keep it private (`chmod 600 .env` on POSIX). Then explicitly load it:
 
-Configure the Gateway URL and a separate long, random `PIXEL_CONTROL_TOKEN` in the
-server's private environment, then restart the office. The office creates its own
-Ed25519 device under `DATA_DIR/control/` (directory 0700, files 0600), requests
-`operator.read` by default, and retains a device token scoped to that endpoint and identity.
-Approve this office device in OpenClaw if the Task tab reports pairing is required;
-use the Gateway's device administration UI or `openclaw devices list` followed by
-`openclaw devices approve <request-id>`. Confirm the request belongs to this office
-device before approving it, then restart the office to retry the scoped connection.
-Do not copy another client's device identity. A corrupt
-identity fails closed and must be repaired by the operator.
+```sh
+node --env-file=.env dist/server/server/index.js
+```
 
-For reviewed send controls, set `CONTROL_SEND_ENABLED=true` and approve the same
-office device for `operator.read` plus `operator.write`. Restart it to negotiate
-the new scopes. Missing write authority keeps history readable and sending
-disabled. A cached read-only token reconnects with read-only scopes. To upgrade it,
-temporarily provide the server-only bootstrap credential for device approval,
-then remove that credential and restart after the scoped token has been stored.
-Do not leave Gateway master credentials in the long-running office
-environment after provisioning its scoped device token. No Stop, Steer, command,
-attachment or generic RPC interface is exposed. An office restart can make an
-uncertain new-conversation outcome unrecoverable automatically; the office fails
-closed instead of adopting an unverified conversation or replaying a prompt.
+The example uses **http://localhost:3001**. The server does not load `.env` automatically. `npm start` is available when your service manager or shell already supplies the environment. Existing process variables take precedence over an env file.
 
-Active retries refresh their receipt metadata. Abandoned entries may be removed
-after an hour without a retry; such eviction can also prevent automatic recovery
-of an uncertain new-conversation outcome.
+### npm installation
 
-The composer rejects slash/shell command prefixes and OpenClaw's bare stop phrases.
-The Gateway reserves literal command suppression for admin clients; the office
-does not request that privilege. Write an ordinary task message instead.
+The repository includes an npm launcher and release workflow. **These commands become available after the first npm release is published**; preparing the workflow does not publish the package.
 
-The browser normally needs HTTPS, or loopback HTTP during local development.
-Direct-IP Tailscale deployments may explicitly set `CONTROL_ALLOW_TAILNET_HTTP=true`
-to retain their existing private route. Ordinary LAN/public HTTP remains denied.
-Include the exact office origin in `CORS_ORIGIN`; private task POSTs retain the
-normal origin guard. Reverse-proxy HTTPS requires correctly restricted
-`TRUST_PROXY` configuration. The task connection is independent of the collector
-and does not change Gateway binding, global models or authentication policy.
+```sh
+npm install --global openclaw-pixel-agents
+openclaw-pixel-agents --help
+openclaw-pixel-agents --env-file /absolute/path/to/.env
+```
 
-### Reverse-proxy deployments
+Alternatively, use `npx openclaw-pixel-agents --env-file /absolute/path/to/.env`. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
 
-If you terminate TLS or rewrite requests in a reverse proxy in front of the Node server, make sure the `Origin` header from the browser is forwarded unchanged. State-mutating REST routes (`POST/PUT/PATCH/DELETE /api/*`) require an allowed `Origin` in production; stripping or rewriting it will cause legitimate browser mutations to fail with `403 Forbidden origin`.
+The launcher runs in production mode. Its default data directory is **`~/.openclaw-pixel-agents`**, outside the installation, so package upgrades do not replace saved layouts or appearances. Set `DATA_DIR` explicitly for a service account or multiple offices. Obtain an [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example) and follow the [configuration reference](docs/configuration.md).
 
-#### Client identity and rate limiting (`TRUST_PROXY`)
+## Create your task-access key
 
-By default the server does not trust any proxy: every request's client IP is the direct socket peer. Behind a reverse proxy that means **all users share the proxy's address** — and with it the public GET/HEAD (120 req/min; `/api` and `/socket.io/` are exempt) and API-write rate buckets. One noisy client can then exhaust a shared budget for everyone behind that proxy.
+**Each installation creates its own key.** There is no project-wide key, and no developer-specific file path is required.
 
-Set `TRUST_PROXY` to restore per-client limiting:
+1. Generate a fresh key from a source checkout:
 
-| Value | Meaning |
-|-------|---------|
-| *(unset)* / `"false"` / `"0"` | No proxy trust; `req.ip` is the direct peer (default, correct for direct exposure) |
-| `"1"`, `"2"`, … | Trust exactly that many proxy hops (Express `trust proxy N`). Use the exact hop count of your chain so the client IP is read from the correct `X-Forwarded-For` position |
-| `"loopback"`, `"linklocal"`, `"uniquelocal"` | Express IP presets for the respective address ranges |
-| `"10.0.0.0/8,127.0.0.1"` | Explicit proxy IPs/CIDRs — only those addresses are treated as trusted proxies |
+   ```sh
+   npm run --silent control:key
+   ```
 
-Two hard requirements:
+   With the npm launcher, use `openclaw-pixel-agents --generate-key` instead. Both use Node's cryptographic random generator and print a new 64-character hexadecimal key. They do not change a running server.
 
-1. **The trusted proxy must overwrite client-supplied forwarding headers.** If clients can reach the server directly (or an intermediate hop forwards a spoofable `X-Forwarded-For`), do not configure trust — each forged header value would get its own rate bucket and defeat the limiter.
-2. **Unrestricted trust is deliberately rejected.** `TRUST_PROXY="true"`, any `/0` CIDR (`0.0.0.0/0`, `::/0` — a zero prefix length matches every address of the family, i.e. the same blanket trust), and any other malformed value abort startup with a descriptive error rather than silently degrading security. Express's blanket `"true"` would trust every peer, which is exactly the spoofing scenario above.
+2. Put that value in the office server's private configuration:
 
-Malformed values (bad CIDRs, hostnames, empty entries, `"true"`) fail fast at startup with an error naming the accepted forms — never as an opaque crash from inside Express, and never by silently falling back to no trust, which would reintroduce the shared-bucket collapse.
+   ```dotenv
+   OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
+   PIXEL_CONTROL_TOKEN=PASTE_THE_GENERATED_KEY_HERE
+   CONTROL_SEND_ENABLED=false
+   ```
 
-All rate-limit maximums must be positive integers; malformed or non-positive values fail startup rather than silently disabling protection. A `429` response includes `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` so clients can back off without guessing. Mutating API and ingest pre-auth limits run before JSON parsing, bounding repeated malformed-body work.
+   The loopback URL assumes the Gateway runs on the same host. Use an encrypted `wss://` endpoint for a remote Gateway. Restart the office after updating its configuration.
 
-## Scripts
+3. Pair the office's own device with OpenClaw. First-time pairing may need a temporary server-only Gateway credential and approval of `operator.read`. Follow the [task-access setup guide](docs/task-access-setup.md#3-pair-the-office-with-openclaw), then remove the bootstrap credential once the scoped device grant is saved.
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start dev server (Vite + backend) |
-| `npm run build` | Production build to `dist/` |
-| `npm start` | Run production build |
-| `npm run --silent control:key` | Generate a fresh private task access key without changing server configuration |
+4. Open an agent's **Task** tab and paste the **same `PIXEL_CONTROL_TOKEN` value** into **Unlock task details**. Visitors get this key from their office operator. Generating a different key will not unlock somebody else's installation.
 
-## License
+The office key, collector ingest token and Gateway bootstrap credential serve different purposes. Never paste a Gateway master credential into the task window or put any key in a browser URL, commit or `VITE_*` variable. Unlock lasts only in the current tab; Lock and reload clear it.
 
-[MIT](LICENSE) — free for personal and commercial use.
+To enable sending, set `CONTROL_SEND_ENABLED=true` and approve this office device for **`operator.read` plus `operator.write`**. Read-only access remains useful without sending. Remote private access normally requires HTTPS; loopback development and an explicitly configured direct-Tailscale exception are covered in the [setup guide](docs/task-access-setup.md).
 
-Pixel art assets by [JIK-A-4](https://jik-a-4.itch.io/) (MetroCity pack) — free for personal and commercial use per itch.io terms.
+## Connect your agents
 
-## Contributing
+| Where OpenClaw runs | Roster source | Setup |
+| --- | --- | --- |
+| On the dashboard host | `DATA_SOURCE=cli` | Put `openclaw` in PATH or set `OPENCLAW_BIN`; polling defaults to 3 seconds. |
+| On another host | `DATA_SOURCE=ingest` | Set `INGEST_API_TOKEN` and run the [collector](collector/README.md) on the OpenClaw host. |
+| Automatic local fallback | `DATA_SOURCE=auto` | Starts with CLI polling; an ingest token permits a sticky fallback on permanent CLI failures. |
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and how to add custom assets.
+The collector supplies roster/session status. It does **not** enable private task details or conversation controls; those use the separately paired Gateway connection above. `/api/status` reports roster ownership and freshness.
+
+### Use your own roster
+
+The current server ships with eight predefined agent IDs: `main`, `miku`, `chi`, `sysauxilia`, `descartes`, `cyberlogis`, `cylena` and `cybera`. Display names, default tags and enabled state are defined in `defaultRegistry()` in [server/index.ts](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/server/index.ts); default appearance recipes live in [shared/characterRecipes.ts](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/shared/characterRecipes.ts).
+
+If your OpenClaw installation uses different IDs, adapt the registry in a source checkout and rebuild. The current release does not automatically discover an arbitrary agent roster. Tags determine room mapping and can be edited in the office.
+
+## Using the office
+
+**Activity:** expand the bottom dock to filter agents across rooms, including hidden ones. Activity estimates come from session recency and token counts; they do not prove which tool an agent is using. Observed changes contains this tab's recent status transitions and clears on reload. Task details provide the separately verified task facts.
+
+**Navigation:** Fit recenters the whole office. Use −/+ to zoom from 100% to 400% of the fitted view. Pan enables mouse or one-finger dragging; arrow keys pan while it is active, and Escape exits. Two-finger gestures zoom and move together. Navigation does not edit saved layouts.
+
+**Layouts:** enter Editor, search Furniture, choose an item and place it on the grid. Drag to move; right-click or use Rotate to turn an item. Delete removes it. Furniture changes auto-save after two seconds, and Save remains available. Layouts lets you create, switch and delete designs; the default is protected. See the [editor guide](docs/editor.md) for controls and preview limits.
+
+**Appearances:** use the agent's palette button and Apply. Portraits, the editor and map share the same recipe. A failed save is reported; keep the same `DATA_DIR` across rebuilds and restarts. The default source-runtime paths differ between development and compiled startup, so set the directory explicitly for production.
+
+**Tasks and conversations:** select an agent and switch between Task, Conversation and Agent. The selected conversation stays selected as new work arrives. Load earlier records when needed; unknown run state and stale facts are labelled explicitly. Enter adds a line; Send or Ctrl/Cmd+Enter submits. Send follow-up queues without interrupting work. New conversation creates a session only when sent. If a send reports Outcome unknown, retry the original submission to reconcile its existing identity. Drafts stay in tab memory and clear on Lock or reload. Sending from the office does not post to the conversation's external channel.
+
+## Docker
+
+```sh
+docker build -t openclaw-pixel-agents .
+docker run --rm openclaw-pixel-agents npm run --silent control:key
+```
+
+Prepare a private, Git-ignored `.env` with your exact `CORS_ORIGIN`, `DATA_SOURCE=ingest` and `INGEST_API_TOKEN`, plus optional task settings. Run with persistent data:
+
+```sh
+docker run -d --name pixel-office \
+  -p 3001:3001 --env-file .env \
+  -e DATA_DIR=/app/data \
+  -v pixel-office-data:/app/data \
+  openclaw-pixel-agents
+```
+
+The image runs as a non-root user. The collector still runs on the OpenClaw host. Inside a container, `127.0.0.1` means the container itself; use a reachable Gateway endpoint satisfying the same transport rules. See [task access in Docker](docs/task-access-setup.md#docker).
+
+## Configuration and troubleshooting
+
+See the [configuration reference](docs/configuration.md) for environment variables, data-source fallback, persistent storage and reverse proxies.
+
+| Symptom | Check |
+| --- | --- |
+| Roster updates but tasks are unavailable | Configure the separate Gateway connection, office key and scoped device grant. |
+| Unlock fails | Use the key configured on this server; key generation alone does not rotate it. |
+| Forbidden origin or changes fail | Include the exact browser scheme, hostname and port in `CORS_ORIGIN`; preserve the browser Origin header through your proxy. |
+| Appearances/layouts differ after restart | Keep one persistent `DATA_DIR`; retain the Docker volume or service directory. |
+| Empty production office | Check `/api/status`, the CLI path or collector delivery, and the configured agent IDs. Production has no demo fallback. |
+| Asset requests return 429 | Check public request limits and proxy client-IP trust. The default allows 512 static/SPA requests per minute per IP. |
+
+The roster/editor is not an individual-user login system. The separate task key protects private task and conversation access. Deploy the office on a trusted network or behind appropriate access controls.
+
+## Development and releases
+
+Built with React, TypeScript, Vite, Canvas 2D, Express and Socket.IO.
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Vite client and backend with source watching |
+| `npm run typecheck` | Browser and test TypeScript checks |
+| `npm test` | Test suite |
+| `npm run test:coverage` | Tests with coverage floors |
+| `npm run build` | Compiled client and server |
+| `npm start` | Built server; supply production configuration |
+| `npm run --silent control:key` | Generate a fresh task-access key |
+| `npm run test:package` | After building, pack/install/start the app in a disposable directory |
+
+[CONTRIBUTING.md](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/CONTRIBUTING.md) covers local checks, browser testing and custom assets. [Release instructions](docs/releases.md) explain the `NPM_TOKEN` secret and GitHub Release workflow. Pull requests test the package without publishing; only publishing a stable GitHub Release triggers npm publication.
+
+## License and assets
+
+Code is [MIT licensed](LICENSE). Character art is from the [MetroCity pack by JIK-A-4](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack); the asset author's terms apply to the artwork.

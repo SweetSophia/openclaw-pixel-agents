@@ -73,6 +73,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test npm package installation and startup
+        run: npm run test:package
+
       - name: Audit production dependencies
         # Issue #168: the previous audit only inspected the production
         # tree, so advisories in dev-only security-sensitive tools (e.g.
