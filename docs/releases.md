@@ -26,13 +26,13 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
    ```
 
 3. Merge after required checks and reviews pass.
-4. Create a GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.5.0`**. Review its notes and publish the stable release. Drafts and prereleases do not publish to npm.
+4. Create a GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.5.0`**. Copy the matching `docs/releases/<version>.md` into the release body (for this release, `docs/releases/1.5.0.md`), review the notes and publish the stable release. Drafts and prereleases do not publish to npm.
 
 Publishing the release authorizes npm publication. Protect release tags and restrict release publishing according to the repository's maintainer policy.
 
 ## What gets published
 
-Version-specific notes live in `docs/releases/` on GitHub and are copied into each GitHub Release. They are not included in the npm package; the README links to them on GitHub. The package includes the installation, configuration, editor, task-access and publishing guides.
+Version-specific notes live in `docs/releases/` on GitHub. Copy them into the GitHub Release body as described above; the publish workflow does not do this automatically. They are not included in the npm package; the README links to them on GitHub. The package includes the installation, configuration, editor, task-access and publishing guides.
 
 [The workflow](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.github/workflows/publish.yml) verifies tag/version equality and `main` ancestry, then installs, type-checks, tests coverage, builds and audits.
 
