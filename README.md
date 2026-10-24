@@ -65,6 +65,14 @@ The right sidebar shows all configured agents with:
 - Toggle button to show/hide in the pixel office
 - Bulk Show All / Hide All controls
 
+### Character Customization
+
+Use an agent's palette button to choose its body, hair and outfit, then **Apply**. Each agent's appearance is stored on the server in `DATA_DIR/agent-prefs.json`, shared with connected browsers and restored after bridge or server restarts. Portraits, the customizer and office sprites use the same per-agent defaults when no custom recipe has been saved.
+
+Keep the same persistent `DATA_DIR` when restarting, rebuilding or switching between development and production; configure an absolute directory in your service environment. Without an explicit setting, development uses `server/data` while the compiled server uses `dist/server/server/data`. Docker installations should persist `/app/data` as a volume.
+
+Apply reports success after the preference write completes. A failed write leaves the previous appearance intact. If the file was already replaced but filesystem durability could not be confirmed, the current appearance remains visible and the form reports that saving needs to be retried.
+
 ### Office View
 
 Use **Fit** to show the complete office between the header, editor toolbar, activity summary and desktop sidebar. **−** and **+** zoom from 100% to 400% of that fitted view. Resize the window to refit the available space automatically.

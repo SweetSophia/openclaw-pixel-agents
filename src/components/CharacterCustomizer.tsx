@@ -47,8 +47,8 @@ export const CharacterCustomizer: React.FC<Props> = ({
 
   // Issue #164: reset local form state when the agent identity
   // changes — but key on `agentId` ONLY (not `currentRecipe`).
-  // AgentSidebar passes `currentRecipe={customizerAgent.recipe ?? {...}}`
-  // and the `??` fallback is a fresh object literal on every render, so
+  // AgentSidebar resolves `currentRecipe` through getRecipe(), which returns
+  // a fresh object on every render, so
   // depending on `currentRecipe` would re-fire this effect on every
   // unrelated parent re-render (socket event, sidebar toggle, etc.)
   // and silently clobber the user's in-progress selection. The
