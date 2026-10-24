@@ -53,7 +53,7 @@ The example uses **http://localhost:3001**. The server does not load `.env` auto
 
 ### npm installation
 
-The package is available on npm with a launcher and release workflow. The Results/Files feature described here requires a build containing this change; npm 1.4.0 predates it.
+The package is available on npm with a launcher and release workflow. Results/Files requires **1.5.0 or newer**; see the [1.5.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.5.0.md) for features and upgrade details.
 
 ```sh
 npm install --global openclaw-pixel-agents
