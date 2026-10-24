@@ -32,7 +32,7 @@ Publishing the release authorizes npm publication. Protect release tags and rest
 
 ## What gets published
 
-Version-specific notes live in `docs/releases/` on GitHub. Copy them into the GitHub Release body as described above; the publish workflow does not do this automatically. They are not included in the npm package; the README links to them on GitHub. The package includes the installation, configuration, editor, task-access and publishing guides.
+Version-specific notes live in `docs/releases/` on GitHub. Their installation examples pin that exact release; general README examples select compatible updates. Copy the notes into the GitHub Release body as described above; the publish workflow does not do this automatically. They are not included in the npm package; the README links to them on GitHub. The package includes the installation, configuration, editor, task-access and publishing guides.
 
 [The workflow](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.github/workflows/publish.yml) verifies tag/version equality and `main` ancestry, then installs, type-checks, tests coverage, builds and audits.
 
