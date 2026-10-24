@@ -3,7 +3,7 @@
  * (issue #125, review findings).
  *
  * Pins the scope contract of publicGetRateLimiter:
- *   1. the 120/121 threshold and 429 response on static/SPA paths;
+ *   1. the configured 120/121 threshold and 429 response on static/SPA paths;
  *   2. GET and HEAD are both counted (HEAD performs the same filesystem
  *      work via express.static / SPA sendFile);
  *   3. the /api exemption uses an exact namespace boundary: "/api" and
@@ -63,6 +63,7 @@ describe("public GET/HEAD rate limiter (issue #125)", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
     vi.stubEnv("FRONTEND_DIR", frontendDir);
+    vi.stubEnv("PUBLIC_GET_RATE_LIMIT_MAX", String(PUBLIC_GET_RATE_LIMIT_MAX));
     // Deliberately NOT setting TRUST_PROXY: default no-trust contract means
     // all supertest requests share the loopback bucket unless reset.
 
@@ -331,6 +332,7 @@ describe("public GET limiter without frontend at boot (issue #156)", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
     vi.stubEnv("FRONTEND_DIR", join(dataDir, "missing-frontend"));
+    vi.stubEnv("PUBLIC_GET_RATE_LIMIT_MAX", String(PUBLIC_GET_RATE_LIMIT_MAX));
 
     vi.resetModules();
     const serverModule = await import("./index");
@@ -400,6 +402,7 @@ describe("TRUST_PROXY=1 per-client buckets (proxy separation)", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CORS_ORIGIN", "https://pixel.test");
     vi.stubEnv("FRONTEND_DIR", frontendDir);
+    vi.stubEnv("PUBLIC_GET_RATE_LIMIT_MAX", String(PUBLIC_GET_RATE_LIMIT_MAX));
     vi.stubEnv("TRUST_PROXY", "1");
 
     vi.resetModules();

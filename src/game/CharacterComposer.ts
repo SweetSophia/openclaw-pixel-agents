@@ -68,7 +68,7 @@ export interface ComposedCharacter {
 
 let bodySheet: ImageBitmap | null = null;
 let hairSheet: ImageBitmap | null = null;
-let outfitSheets: ImageBitmap[] = [];
+let outfitSheets: (ImageBitmap | null)[] = [];
 let shadowSheet: ImageBitmap | null = null;
 
 // ── Helpers ────────────────────────────────────────────────
@@ -166,12 +166,12 @@ export async function loadSourceSheets(
     ]);
 
     signal?.throwIfAborted();
-    const nextOutfits = outfits.filter((o): o is ImageBitmap => o !== null);
-    if (nextOutfits.length === 0) throw new Error('No source outfit sheets loaded');
+    if (!outfits.some(outfit => outfit !== null)) throw new Error('No source outfit sheets loaded');
     const previous = [bodySheet, hairSheet, ...outfitSheets];
     bodySheet = body;
     hairSheet = hair;
-    outfitSheets = nextOutfits;
+    // Recipe indices refer to asset filenames, including slots whose request failed.
+    outfitSheets = outfits;
     for (const bitmap of previous) bitmap?.close();
   } catch (err) {
     discard();
@@ -192,7 +192,9 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
     throw new Error('Source sheets not loaded. Call loadSourceSheets() first.');
   }
 
-  const outfit = outfitSheets[Math.min(recipe.outfitIndex, outfitSheets.length - 1)];
+  const outfit = outfitSheets[Math.min(recipe.outfitIndex, outfitSheets.length - 1)]
+    ?? outfitSheets.find((sheet): sheet is ImageBitmap => sheet !== null);
+  if (!outfit) throw new Error('No source outfit sheets loaded');
   const hairRow = resolveHairRow(recipe.hairIndex, hairSheet.height);
 
   // For each output direction, we need the corresponding source direction
@@ -237,31 +239,5 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
   return result;
 }
 
-// ── Default recipes for the agent roster ───────────────────
-
-// `Readonly<Record<...>>` prevents reassignment of the table (no
-// `delete recipes[k]`, no `recipes[k] = ...`), and `Readonly<CharacterRecipe>`
-// prevents mutation of any individual recipe (no `recipes.cybera.bodyIndex = ...`).
-// The table is effectively deep-immutable at the type level — `getRecipe` is
-// the only legitimate escape hatch and returns a fresh spread (issue #132).
-export const DEFAULT_RECIPES: Readonly<Record<string, Readonly<CharacterRecipe>>> = {
-  main:       { bodyIndex: 3, hairIndex: 0, outfitIndex: 2 },  // Shodan: darker skin, short hair, casual
-  cybera:     { bodyIndex: 1, hairIndex: 2, outfitIndex: 0 },  // Cybera: lighter skin, longer hair, shirt
-  chi:        { bodyIndex: 2, hairIndex: 5, outfitIndex: 3 },  // Chi: medium skin, styled hair, belt outfit
-  descartes:  { bodyIndex: 4, hairIndex: 1, outfitIndex: 1 },  // Descartes: darker skin, neat hair, formal
-  cyberlogis: { bodyIndex: 0, hairIndex: 3, outfitIndex: 4 },  // Cyberlogis: lightest skin, unique hair, full outfit
-  cylena:     { bodyIndex: 5, hairIndex: 7, outfitIndex: 5 },  // Cylena: darkest skin, styled hair, outfit 6
-  sysauxilia: { bodyIndex: 2, hairIndex: 4, outfitIndex: 2 },  // Sysauxilia: medium skin, different hair, casual
-  miku:       { bodyIndex: 1, hairIndex: 6, outfitIndex: 0 },  // Miku: lighter skin, long hair, shirt
-};
-
-/**
- * Get the recipe for an agent, falling back to defaults.
- */
-export function getRecipe(
-  agentId: string,
-  overrides?: Partial<CharacterRecipe>,
-): CharacterRecipe {
-  const base = DEFAULT_RECIPES[agentId] ?? { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 };
-  return { ...base, ...overrides };
-}
+// Preserve the compositor import surface while sharing defaults with persistence and portraits.
+export { DEFAULT_RECIPES, getRecipe } from '../../shared/characterRecipes';
