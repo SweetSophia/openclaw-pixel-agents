@@ -12,7 +12,7 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
 
 ## Prepare a version
 
-1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. The first npm release was `1.4.0`, continuing the existing GitHub release series after `v1.3.5`. The Results/Files release is `1.5.0`; its [release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.5.0.md) describe the upgrade.
+1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. Add `docs/releases/<version>.md` to the same pull request with that version's release notes. The first npm release was `1.4.0`, continuing the existing GitHub release series after `v1.3.5`. The Results/Files release is `1.5.0`; its [release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.5.0.md) describe the upgrade.
 2. Run the checks:
 
    ```sh
@@ -26,7 +26,7 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
    ```
 
 3. Merge after required checks and reviews pass.
-4. Create a GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.5.0`**. Copy the matching `docs/releases/<version>.md` into the release body (for this release, `docs/releases/1.5.0.md`), review the notes and publish the stable release. Drafts and prereleases do not publish to npm.
+4. Create a **draft** GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.5.0`**. Copy the matching `docs/releases/<version>.md` into the release body (for this release, `docs/releases/1.5.0.md`). Finalize and review the notes before publishing the stable release, which triggers npm publication. Drafts and prereleases do not publish to npm.
 
 Publishing the release authorizes npm publication. Protect release tags and restrict release publishing according to the repository's maintainer policy.
 
