@@ -3,7 +3,7 @@
 .task-details button, .task-details input, .task-details select { min-height: 44px; max-width: 100%; border: 1px solid var(--border-color, rgba(255,255,255,.2)); border-radius: 6px; color: var(--text-main); background: var(--bg-panel, #131c2c); font: inherit; padding: 8px 12px; }
 .task-details button { cursor: pointer; }
 .task-details button:disabled, .task-details button[aria-disabled="true"] { opacity: .55; cursor: default; }
-.task-details :is(button, input, select):focus-visible, .detail-tabs button:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
+.task-details :is(button, input, select, a):focus-visible, .detail-tabs button:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
 .task-details h3 { margin: 0 0 12px; font: 600 15px var(--font-body); }
 .task-eyebrow { font-size: 10px; letter-spacing: 1.5px; font-weight: 700; color: var(--acc-cyan); }
 .task-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
@@ -13,6 +13,7 @@
 .task-details select, .task-access input { width: 100%; min-width: 0; margin-bottom: 8px; }
 .task-access p { color: var(--text-muted); }
 .task-access form { margin: 24px 0; }
+.task-setup-link { display: inline-block; box-sizing: border-box; min-height: 44px; padding: 10px 0; color: var(--acc-cyan); }
 .task-state { padding: 16px; margin-bottom: 24px; border: 1px solid rgba(0,240,255,.2); background: rgba(0,240,255,.03); border-radius: 8px; }
 .task-state p { margin: 4px 0 0; }
 .task-state-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }

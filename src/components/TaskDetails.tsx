@@ -45,6 +45,8 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
       <h3>{setup ? 'Task access is not connected' : transport ? 'A secure connection is required' : 'Unlock task details'}</h3>
       <p>{setup ? 'Connect the office to OpenClaw to see real requests, run state and recorded activity. Your office roster continues to update normally.'
         : transport ? 'Use HTTPS or the office’s configured private Tailnet connection before entering an access key.' : 'Use the office task access key. It stays in this tab until you lock it or reload the page.'}</p>
+      <p>Ask the person who runs this office for its task access key. Hosting your own office? Follow the setup guide.</p>
+      <a className="task-setup-link" href="https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/task-access-setup.md" target="_blank" rel="noreferrer">Task access setup guide</a>
       {!setup && !transport && <form onSubmit={async event => {
         event.preventDefault(); if (unlocking) return; setUnlocking(true); setAccessError(null); setUnlockError(null);
         try { await access.unlock(key); } catch (error) { setUnlockError(error instanceof ControlApiError && error.code !== 'locked' ? error.message : 'Unlock failed. Check your access key and try again.'); }

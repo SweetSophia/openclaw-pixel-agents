@@ -38,6 +38,7 @@ describe('task drawer presentation', () => {
     f.accessState = 'locked'; f.status = { configured: false, state: 'disabled', canRead: false, canSend: false }; f.request.mockResolvedValue(f.status);
     render(<TaskDetails agentId="cylena" initialSessionKey={target.sessionKey} active />);
     await waitFor(() => expect(screen.getByText(/Task access is not connected/)).toBeInTheDocument()); expect(screen.queryByLabelText('Task access key')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Task access setup guide' })).toHaveAttribute('href', 'https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/task-access-setup.md');
   });
   it('does not solicit a key before checking transport, or on unsafe HTTP', async () => {
     f.accessState = 'locked'; f.request.mockRejectedValue(new ControlApiError('transport-required'));

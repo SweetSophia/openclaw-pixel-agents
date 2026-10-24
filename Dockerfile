@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # ---- Runtime stage -----------------------------------------------------------
-# Production deps only + compiled dist. No source, no dev deps, no .git.
+# Production deps, compiled app and the standalone key generator; no dev deps or .git.
 FROM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5
 WORKDIR /app
 ENV NODE_ENV=production
@@ -26,6 +26,7 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/scripts/generate-control-key.mjs ./scripts/generate-control-key.mjs
 
 # Non-root user. BusyBox adduser takes -h for the home dir (not GNU's -d) —
 # this -d was a pre-existing floating-base-image regression that broke the build.

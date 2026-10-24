@@ -320,6 +320,18 @@ The legacy `dataSource` field remains a compatibility alias for **effective owne
 
 ### Connecting task details
 
+Generate a separate key for your own installation:
+
+```sh
+npm run --silent control:key
+```
+
+Set the output as the server's `PIXEL_CONTROL_TOKEN`, then paste that same value
+into **Unlock task details**. See the [task access setup guide](docs/task-access-setup.md)
+for the supplied [.env.example](.env.example), first-time Gateway pairing,
+development/Docker setup, and key rotation. Visitors obtain the key from their
+office operator; generating a new value does not change a running server.
+
 Configure the Gateway URL and a separate long, random `PIXEL_CONTROL_TOKEN` in the
 server's private environment, then restart the office. The office creates its own
 Ed25519 device under `DATA_DIR/control/` (directory 0700, files 0600), requests
@@ -392,6 +404,7 @@ All rate-limit maximums must be positive integers; malformed or non-positive val
 | `npm run dev` | Start dev server (Vite + backend) |
 | `npm run build` | Production build to `dist/` |
 | `npm start` | Run production build |
+| `npm run --silent control:key` | Generate a fresh private task access key without changing server configuration |
 
 ## License
 
