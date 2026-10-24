@@ -37,6 +37,25 @@ describe('asset loading at browser boundaries', () => {
     expect(paths.every(path => path.endsWith(`?v=${revision}`))).toBe(true);
   });
 
+  it.each([
+    { outfitIndex: 4, expected: 'Outfit5.png' },
+    { outfitIndex: 1, expected: 'Outfit1.png' },
+  ])('uses $expected for outfit slot $outfitIndex after a source sheet fails', async ({ outfitIndex, expected }) => {
+    vi.mocked(fetch).mockImplementation(async url => String(url).includes('/Outfits/Outfit2.png')
+      ? new Response('', { status: 429 }) : new Response(String(url)));
+    vi.mocked(createImageBitmap).mockImplementation(async blob => ({
+      width: 768, height: 288, url: await (blob as Blob).text(), close: vi.fn(),
+    } as unknown as ImageBitmap));
+    const drawImage = document.createElement('canvas').getContext('2d')!.drawImage as ReturnType<typeof vi.fn>;
+    const { loadSourceSheets, composeCharacter } = await import('./CharacterComposer');
+    await loadSourceSheets();
+    drawImage.mockClear();
+    composeCharacter({ bodyIndex: 0, hairIndex: 0, outfitIndex });
+    const outfitSources = drawImage.mock.calls.map(([image]) => image.url).filter((url): url is string => typeof url === 'string' && url.includes('/Outfits/'));
+    expect(outfitSources.length).toBeGreaterThan(0);
+    expect(outfitSources.every(url => url.includes(`/Outfits/${expected}`))).toBe(true);
+  });
+
   it('still loads versioned legacy characters when compositor sheets are missing', async () => {
     vi.mocked(fetch).mockImplementation(async url => String(url).includes('/source/')
       ? new Response('', { status: 404 })

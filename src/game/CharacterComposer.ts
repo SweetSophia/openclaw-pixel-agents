@@ -68,7 +68,7 @@ export interface ComposedCharacter {
 
 let bodySheet: ImageBitmap | null = null;
 let hairSheet: ImageBitmap | null = null;
-let outfitSheets: ImageBitmap[] = [];
+let outfitSheets: (ImageBitmap | null)[] = [];
 let shadowSheet: ImageBitmap | null = null;
 
 // ── Helpers ────────────────────────────────────────────────
@@ -166,12 +166,12 @@ export async function loadSourceSheets(
     ]);
 
     signal?.throwIfAborted();
-    const nextOutfits = outfits.filter((o): o is ImageBitmap => o !== null);
-    if (nextOutfits.length === 0) throw new Error('No source outfit sheets loaded');
+    if (!outfits.some(outfit => outfit !== null)) throw new Error('No source outfit sheets loaded');
     const previous = [bodySheet, hairSheet, ...outfitSheets];
     bodySheet = body;
     hairSheet = hair;
-    outfitSheets = nextOutfits;
+    // Recipe indices refer to asset filenames, including slots whose request failed.
+    outfitSheets = outfits;
     for (const bitmap of previous) bitmap?.close();
   } catch (err) {
     discard();
@@ -192,7 +192,9 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
     throw new Error('Source sheets not loaded. Call loadSourceSheets() first.');
   }
 
-  const outfit = outfitSheets[Math.min(recipe.outfitIndex, outfitSheets.length - 1)];
+  const outfit = outfitSheets[Math.min(recipe.outfitIndex, outfitSheets.length - 1)]
+    ?? outfitSheets.find((sheet): sheet is ImageBitmap => sheet !== null);
+  if (!outfit) throw new Error('No source outfit sheets loaded');
   const hairRow = resolveHairRow(recipe.hairIndex, hairSheet.height);
 
   // For each output direction, we need the corresponding source direction

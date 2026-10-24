@@ -1190,7 +1190,8 @@ function parseRateLimitMax(name: string, fallback: number): number {
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = parseRateLimitMax("RATE_LIMIT_MAX", 10);
 const PRE_AUTH_RATE_LIMIT_MAX = parseRateLimitMax("PRE_AUTH_RATE_LIMIT_MAX", 5);
-const PUBLIC_GET_RATE_LIMIT_MAX = parseRateLimitMax("PUBLIC_GET_RATE_LIMIT_MAX", 120);
+// A cold office loads roughly 80 static assets; allow several browsers sharing one IP.
+const PUBLIC_GET_RATE_LIMIT_MAX = parseRateLimitMax("PUBLIC_GET_RATE_LIMIT_MAX", 512);
 const PREFS_WRITE_RATE_LIMIT_MAX = parseRateLimitMax("PREFS_WRITE_RATE_LIMIT_MAX", 60);
 // The editor can autosave every two seconds (30/minute) and this bucket also
 // covers create/delete/keepalive writes, so keep 3x headroom for normal use.
