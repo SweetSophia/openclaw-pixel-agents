@@ -28,6 +28,8 @@ type AtomicWriteOptions = Readonly<{
   syncFile?: typeof fsyncSync;
   unlinkFile?: typeof unlinkSync;
   writeFile?: typeof writeFileSync;
+  /** Observe the replacement boundary even if directory durability confirmation later fails. */
+  onReplaced?: () => void;
 }>;
 
 export function isSafePersistedFilename(fileName: string): boolean {
@@ -79,6 +81,7 @@ export function atomicWriteFileSync(
     });
     renameFile(temporaryPath, filePath);
     renamed = true;
+    options.onReplaced?.();
 
     // Windows does not support opening directories as file descriptors.
     if (process.platform !== "win32") {

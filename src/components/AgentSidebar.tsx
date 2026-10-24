@@ -4,6 +4,7 @@ import { TAG_COLORS } from '../../shared/types';
 import { TagEditor } from './TagEditor';
 import { CharacterCustomizer } from './CharacterCustomizer';
 import { AgentPortrait } from './AgentPortrait';
+import { getRecipe } from '../../shared/characterRecipes';
 import './AgentSidebar.css';
 
 interface Props {
@@ -68,7 +69,7 @@ const AgentCard = React.memo<AgentCardProps>(({ agent, onToggle, onSelectAgent, 
       )}
       <div className="agent-card-inner">
         <div className="agent-portrait-wrapper">
-          <AgentPortrait recipe={agent.recipe} size={44} />
+          <AgentPortrait recipe={getRecipe(agent.id, agent.recipe)} size={44} />
         </div>
         <div className="agent-content">
           <div className="agent-header">
@@ -227,7 +228,7 @@ export const AgentSidebar: React.FC<Props> = React.memo(({ agents, onToggle, onT
         <CharacterCustomizer
           agentId={customizerAgent.id}
           agentName={customizerAgent.name}
-          currentRecipe={customizerAgent.recipe || { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 }}
+          currentRecipe={getRecipe(customizerAgent.id, customizerAgent.recipe)}
           onUpdateRecipe={onUpdateRecipe}
           onClose={() => setCustomizerAgent(null)}
         />

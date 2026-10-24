@@ -59,6 +59,7 @@ describe("atomic server persistence call paths", () => {
       dataDir,
       "agent-prefs.json",
       expect.any(String),
+      expect.objectContaining({ onReplaced: expect.any(Function) }),
     );
     expect(JSON.parse(readFileSync(target, "utf8"))).toMatchObject({
       main: { pixelEnabled: false },

@@ -18,6 +18,8 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
+import { updateAgentPreferences, type PreferenceSaveResult } from "./agentPreferences";
+import { getRecipe } from "../shared/characterRecipes";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import {
@@ -33,7 +35,7 @@ import {
   type CliPollHealth,
   type ConfiguredDataSource,
 } from "./dataSource";
-import { apiErrorHandler, registerProcessErrorHandlers } from "./errors";
+import { apiErrorHandler, registerProcessErrorHandlers, toError } from "./errors";
 import {
   isTranscriptPathContained,
   parseIngestSessions,
@@ -293,7 +295,7 @@ interface KnownAgent {
 
 /** Default agent definitions */
 function defaultRegistry(): Map<string, KnownAgent> {
-  return new Map([
+  const registry = new Map<string, KnownAgent>([
     ["main", { id: "main", name: "Shodan", pixelEnabled: true, tags: ["orchestration", "research"] }],
     ["miku", { id: "miku", name: "Miku", pixelEnabled: true, tags: ["creative", "media"] }],
     ["chi", { id: "chi", name: "Chi", pixelEnabled: true, tags: ["research", "analysis"] }],
@@ -303,6 +305,8 @@ function defaultRegistry(): Map<string, KnownAgent> {
     ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true, tags: ["coding", "frontend"] }],
     ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true, tags: ["coding", "infrastructure"] }],
   ]);
+  for (const agent of registry.values()) agent.recipe = getRecipe(agent.id);
+  return registry;
 }
 
 /** Load persisted agent preferences (pixelEnabled, spriteId, tags, recipe) from disk */
@@ -329,21 +333,27 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
 }
 
 /** Save agent preferences to disk */
-function savePersistedPrefs() {
-  try {
-    const prefs: Record<string, { pixelEnabled: boolean; characterSpriteId?: string; tags: AgentTag[]; recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number } }> = {};
-    for (const [id, agent] of AGENT_REGISTRY) {
-      prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
-    }
-    mkdirSync(DATA_DIR, { recursive: true });
-    atomicWriteFileSync(
-      dirname(PERSIST_PATH),
-      basename(PERSIST_PATH),
-      JSON.stringify(prefs, null, 2),
-    );
-  } catch (err) {
-    logger.error({ err, subsystem: "persist" }, "failed to save prefs");
+function savePersistedPrefs(onReplaced: () => void) {
+  const prefs: Record<string, PersistedPrefs> = {};
+  for (const [id, agent] of AGENT_REGISTRY) {
+    prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
   }
+  mkdirSync(DATA_DIR, { recursive: true });
+  atomicWriteFileSync(
+    dirname(PERSIST_PATH),
+    basename(PERSIST_PATH),
+    JSON.stringify(prefs, null, 2),
+    { onReplaced },
+  );
+}
+
+function finishPreferenceSave(res: Response, result: PreferenceSaveResult, body: Record<string, unknown>): void {
+  if (!result.saved) {
+    logger.error({ err: toError(result.error, "Unconfirmed preference durability"), subsystem: "persist" }, "preference replacement completed but durability could not be confirmed");
+    res.status(503).json({ error: "Preferences applied, but durable saving could not be confirmed. Retry saving." });
+    return;
+  }
+  res.json(body);
 }
 
 // Build registry from defaults + persisted prefs
@@ -1452,13 +1462,10 @@ app.post("/api/agents/:id/toggle", (req, res) => {
 
   const known = AGENT_REGISTRY.get(id);
   if (known) {
-    known.pixelEnabled = enabled;
-    const state = agentStates.get(id);
-    if (state) state.pixelEnabled = enabled;
-    savePersistedPrefs();
+    const saved = updateAgentPreferences(known, agentStates.get(id), { pixelEnabled: enabled }, savePersistedPrefs);
     // Broadcast the change
     io.emit("agents:update", Array.from(agentStates.values()));
-    res.json({ success: true, enabled });
+    finishPreferenceSave(res, saved, { success: true, enabled });
   } else {
     res.status(404).json({ error: "Agent not found" });
   }
@@ -1473,13 +1480,10 @@ app.post("/api/agents/:id/sprite", (req, res) => {
 
   const known = AGENT_REGISTRY.get(id);
   if (known) {
-    known.characterSpriteId = spriteId;
-    const state = agentStates.get(id);
-    if (state) state.characterSpriteId = spriteId;
-    savePersistedPrefs();
+    const saved = updateAgentPreferences(known, agentStates.get(id), { characterSpriteId: spriteId }, savePersistedPrefs);
     // Broadcast sprite change so other connected clients see the new sprite
     io.emit("agents:update", Array.from(agentStates.values()));
-    res.json({ success: true });
+    finishPreferenceSave(res, saved, { success: true });
   } else {
     res.status(404).json({ error: "Agent not found" });
   }
@@ -1500,15 +1504,12 @@ app.put("/api/agents/:id/recipe", (req, res) => {
     return;
   }
 
-  known.recipe = recipe;
-  const state = agentStates.get(id);
-  if (state) state.recipe = known.recipe;
-  savePersistedPrefs();
+  const saved = updateAgentPreferences(known, agentStates.get(id), { recipe }, savePersistedPrefs);
 
   // Broadcast recipe change to connected Socket.IO clients
   io.emit("recipe-update", { agentId: id, recipe: known.recipe });
 
-  res.json({ success: true, recipe: known.recipe });
+  finishPreferenceSave(res, saved, { success: true, recipe: known.recipe });
 });
 
 /** Get available recipe options (body/hair/outfit counts) */
@@ -1540,17 +1541,13 @@ app.put("/api/agents/:id/tags", (req, res) => {
     return res.status(404).json({ error: "Agent not found" });
   }
 
-  known.tags = tags;
   const state = agentStates.get(id);
-  if (state) {
-    state.tags = tags;
-    state.roomId = resolveRoom(tags);
-  }
-  savePersistedPrefs();
+  const saved = updateAgentPreferences(known, state, { tags }, savePersistedPrefs);
+  if (state) state.roomId = resolveRoom(tags);
 
   // Broadcast updated agent states
   io.emit("agents:update", Array.from(agentStates.values()));
-  res.json({ success: true, tags, roomId: resolveRoom(tags) });
+  finishPreferenceSave(res, saved, { success: true, tags, roomId: resolveRoom(tags) });
 });
 
 // ---- Room management ----

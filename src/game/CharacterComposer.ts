@@ -237,31 +237,5 @@ export function composeCharacter(recipe: CharacterRecipe): ComposedCharacter {
   return result;
 }
 
-// ── Default recipes for the agent roster ───────────────────
-
-// `Readonly<Record<...>>` prevents reassignment of the table (no
-// `delete recipes[k]`, no `recipes[k] = ...`), and `Readonly<CharacterRecipe>`
-// prevents mutation of any individual recipe (no `recipes.cybera.bodyIndex = ...`).
-// The table is effectively deep-immutable at the type level — `getRecipe` is
-// the only legitimate escape hatch and returns a fresh spread (issue #132).
-export const DEFAULT_RECIPES: Readonly<Record<string, Readonly<CharacterRecipe>>> = {
-  main:       { bodyIndex: 3, hairIndex: 0, outfitIndex: 2 },  // Shodan: darker skin, short hair, casual
-  cybera:     { bodyIndex: 1, hairIndex: 2, outfitIndex: 0 },  // Cybera: lighter skin, longer hair, shirt
-  chi:        { bodyIndex: 2, hairIndex: 5, outfitIndex: 3 },  // Chi: medium skin, styled hair, belt outfit
-  descartes:  { bodyIndex: 4, hairIndex: 1, outfitIndex: 1 },  // Descartes: darker skin, neat hair, formal
-  cyberlogis: { bodyIndex: 0, hairIndex: 3, outfitIndex: 4 },  // Cyberlogis: lightest skin, unique hair, full outfit
-  cylena:     { bodyIndex: 5, hairIndex: 7, outfitIndex: 5 },  // Cylena: darkest skin, styled hair, outfit 6
-  sysauxilia: { bodyIndex: 2, hairIndex: 4, outfitIndex: 2 },  // Sysauxilia: medium skin, different hair, casual
-  miku:       { bodyIndex: 1, hairIndex: 6, outfitIndex: 0 },  // Miku: lighter skin, long hair, shirt
-};
-
-/**
- * Get the recipe for an agent, falling back to defaults.
- */
-export function getRecipe(
-  agentId: string,
-  overrides?: Partial<CharacterRecipe>,
-): CharacterRecipe {
-  const base = DEFAULT_RECIPES[agentId] ?? { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 };
-  return { ...base, ...overrides };
-}
+// Preserve the compositor import surface while sharing defaults with persistence and portraits.
+export { DEFAULT_RECIPES, getRecipe } from '../../shared/characterRecipes';
