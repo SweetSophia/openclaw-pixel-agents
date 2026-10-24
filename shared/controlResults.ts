@@ -47,7 +47,7 @@ function source(value: unknown): ControlSource | null {
     && Number.isFinite(record.observedAt) && record.observedAt >= 0 && record.observedAt <= Number.MAX_SAFE_INTEGER
     ? { state: record.state, observedAt: record.observedAt } : null;
 }
-function summary(value: unknown): ControlArtifactSummary | null {
+export function parseControlArtifactSummary(value: unknown): ControlArtifactSummary | null {
   const record = exact(value, ['id', 'type', 'title', 'mimeType', 'sizeBytes', 'runId', 'messageSeq', 'download']);
   if (!record || !opaque(record.id, 512) || !opaque(record.type, 64) || !opaque(record.title, 512)
     || !oneOf(record.download, ['bytes', 'link', 'unavailable'])
@@ -75,7 +75,7 @@ export function parseControlResultsSnapshot(value: unknown): ControlResultsSnaps
     || (record.responseKind === 'result' && record.runState !== 'completed')) return null;
   const artifacts: ControlArtifactSummary[] = [];
   for (const item of record.artifacts) {
-    const parsed = summary(item);
+    const parsed = parseControlArtifactSummary(item);
     if (!parsed || (parsedScope.kind === 'run' && parsed.runId !== undefined && parsed.runId !== parsedScope.runId)) return null;
     artifacts.push(parsed);
   }

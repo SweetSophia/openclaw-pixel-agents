@@ -27,6 +27,27 @@ function fixture(registeredIds = ['cylena']) {
 }
 afterEach(() => vi.useRealTimers());
 describe('verified task reads', () => {
+  it('bypasses successful cache reuse for fresh canonical run verification', async () => {
+    const f = fixture(); const original = f.history.getMockImplementation()!;
+    expect((await f.tasks.getTask(target)).runId).toBe('run-1');
+    f.history.mockImplementation(async offset => ({ ...await original(offset), inFlightRun: { runId: 'run-2' } }));
+    f.setRow({ snapshotAt: 200 });
+    expect((await f.tasks.getTask(target, undefined, { fresh: true })).runId).toBe('run-2');
+    f.tasks.close();
+  });
+  it('coalesces fresh verification only with equivalent fresh reads', async () => {
+    const f = fixture(); await f.tasks.getTask(target); const original = f.history.getMockImplementation()!;
+    let release: () => void = () => {}; const gate = new Promise<void>(resolve => { release = resolve; }); let waiting = false;
+    f.history.mockImplementation(async offset => { waiting = true; await gate; return { ...await original(offset), inFlightRun: { runId: 'run-2' } }; });
+    const first = f.tasks.getTask(target, undefined, { fresh: true }); const second = f.tasks.getTask(target, undefined, { fresh: true });
+    try {
+      await vi.waitFor(() => expect(waiting).toBe(true));
+      const regular = f.tasks.getTask(target);
+      expect(await Promise.race([regular.then(value => value.runId), new Promise(resolve => setTimeout(() => resolve('still-waiting'), 100))])).toBe('run-1');
+    } finally { release(); }
+    expect((await first).runId).toBe('run-2'); expect((await second).runId).toBe('run-2');
+    expect(f.history).toHaveBeenCalledTimes(8); f.tasks.close();
+  });
   it('keeps cursor discovery at least as fresh as the latest verified tail', async () => {
     const f = fixture(); const original = f.history.getMockImplementation()!; let text = 'original tail';
     f.history.mockImplementation(async offset => ({ ...await original(offset), ...(offset === 0 ? { messages: [{ role: 'assistant', content: text, __openclaw: { id: 'tail', runId: 'run-1' } }] } : {}) } as never));
