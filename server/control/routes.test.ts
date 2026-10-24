@@ -7,18 +7,90 @@ import { loadControlConfig } from './config';
 import type { ControlGateway } from './gatewayClient';
 import { ControlError, createTaskService } from './taskService';
 import type { ControlErrorCode } from '../../shared/control';
+import type { ArtifactService } from './artifactService';
+import type { ArtifactContent } from './artifactTransfer';
+import { createServer, request as httpRequest } from 'node:http';
 
 describe('private control routes', () => {
-  function fixture(enabled = true, sendFailure?: ControlErrorCode) {
+  function fixture(enabled = true, sendFailure?: ControlErrorCode, artifacts?: ArtifactService) {
     const config = loadControlConfig(enabled ? { OPENCLAW_GATEWAY_URL: 'ws://localhost:18789', PIXEL_CONTROL_TOKEN: 'fixture-key' } : {}, '/tmp/fixture');
     const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: enabled, state: enabled ? 'ready' : 'disabled', canRead: enabled, canSend: false }), request: vi.fn(async () => ({ sessions: [] })), onEvent: () => () => {} };
     const tasks = createTaskService(gateway, () => new Set(['cylena']));
     const sends = sendFailure ? { send: vi.fn(async () => { throw new ControlError(sendFailure); }), close() {} } : undefined;
     if (sends) config.sendEnabled = true;
     vi.mocked(gateway.request).mockClear();
-    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, sends }));
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, sends, artifacts }));
     return { app, gateway, tasks };
   }
+  const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1' };
+  const fileInput = { target, scope: { kind: 'run', runId: 'run-1' }, artifactId: 'artifact-1', intent: 'download' };
+  function filesFixture() {
+    const bytes: ArtifactContent = { kind: 'bytes', data: Buffer.from('{"ok":true}'), mimeType: 'application/json', filename: 'Résumé 🧪.json', truncated: false };
+    const artifacts: ArtifactService = { read: vi.fn<ArtifactService['read']>(async () => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 123 },
+      runState: 'unknown', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false })),
+      file: vi.fn<ArtifactService['file']>(async () => bytes), clear() {}, close() {} };
+    return { ...fixture(true, undefined, artifacts), artifacts };
+  }
+  it('authenticates private results and file routes before reading content', async () => {
+    const f = filesFixture();
+    for (const path of ['results', 'results/file']) expect((await request(f.app).post(`/api/control/agents/cylena/${path}`).send(path === 'results' ? target : fileInput)).status).toBe(401);
+    expect(f.artifacts.read).not.toHaveBeenCalled(); expect(f.artifacts.file).not.toHaveBeenCalled(); f.tasks.close();
+  });
+  it('retains the actual transport guard for file requests despite a forwarded client address', async () => {
+    const f = filesFixture(); f.app.set('trust proxy', 1);
+    const response = await request(f.app).post('/api/control/agents/cylena/results/file').set('X-Forwarded-For', '198.51.100.8').auth('fixture-key', { type: 'bearer' }).send(fileInput);
+    expect(response.status).toBe(403); expect(response.body.code).toBe('transport-required'); expect(f.artifacts.file).not.toHaveBeenCalled(); f.tasks.close();
+  });
+  it('validates exact target/scope and route identity without accepting host paths or URLs', async () => {
+    for (const body of [{ ...fileInput, path: '/fake-host-file' }, { ...fileInput, url: 'https://example.com/file' },
+      { ...fileInput, target: { ...target, agentId: 'other' } }, { ...fileInput, scope: { kind: 'workspace' } },
+      JSON.parse(JSON.stringify(fileInput).replace('"target":', '"constructor":{},"target":'))]) {
+      const f = filesFixture(); expect((await request(f.app).post('/api/control/agents/cylena/results/file').auth('fixture-key', { type: 'bearer' }).send(body)).status).toBe(400);
+      expect(f.artifacts.file).not.toHaveBeenCalled(); f.tasks.close();
+    }
+    const f = filesFixture(); expect((await request(f.app).post('/api/control/agents/cylena/results').auth('fixture-key', { type: 'bearer' }).send({ ...target, cursor: 'not-a-results-field' })).status).toBe(400);
+    expect(f.artifacts.read).not.toHaveBeenCalled(); f.tasks.close();
+  });
+  it('keeps JSON file bytes distinct from link descriptors and error JSON with safe download headers', async () => {
+    const f = filesFixture();
+    const bytes = await request(f.app).post('/api/control/agents/cylena/results/file').auth('fixture-key', { type: 'bearer' }).send(fileInput);
+    expect(bytes.status).toBe(200); expect(bytes.text).toBe('{"ok":true}'); expect(bytes.headers['x-pixel-control-file']).toBe('bytes');
+    expect(bytes.headers['content-disposition']).toContain('attachment;'); expect(bytes.headers['content-disposition']).toContain("filename*=UTF-8''R%C3%A9sum%C3%A9%20%F0%9F%A7%AA.json");
+    expect(bytes.headers['cache-control']).toBe('no-store'); expect(bytes.headers['x-content-type-options']).toBe('nosniff');
+    vi.mocked(f.artifacts.file).mockResolvedValue({ kind: 'external', url: 'https://example.com/report', host: 'example.com', title: 'Shared report' });
+    const link = await request(f.app).post('/api/control/agents/cylena/results/file').auth('fixture-key', { type: 'bearer' }).send(fileInput);
+    expect(link.status).toBe(200); expect(link.headers['x-pixel-control-file']).toBe('link'); expect(link.body.host).toBe('example.com');
+    f.tasks.close();
+  });
+  it.each([['file-unavailable', 404], ['file-too-large', 413], ['preview-unsupported', 415]] as const)('maps %s to %s without a successful-file discriminator', async (code, status) => {
+    const f = filesFixture(); vi.mocked(f.artifacts.file).mockRejectedValue(new ControlError(code));
+    const response = await request(f.app).post('/api/control/agents/cylena/results/file').auth('fixture-key', { type: 'bearer' }).send(fileInput);
+    expect(response.status).toBe(status); expect(response.body.code).toBe(code); expect(response.headers['x-pixel-control-file']).toBeUndefined(); f.tasks.close();
+  });
+  it('labels shortened previews explicitly without marking a full download as shortened', async () => {
+    const f = filesFixture(); vi.mocked(f.artifacts.file).mockResolvedValue({ kind: 'bytes', data: Buffer.from('short prefix'), mimeType: 'text/plain; charset=utf-8', filename: 'report.txt', truncated: true });
+    const preview = await request(f.app).post('/api/control/agents/cylena/results/file').auth('fixture-key', { type: 'bearer' }).send({ ...fileInput, intent: 'preview' });
+    expect(preview.status).toBe(200); expect(preview.headers['x-pixel-preview-truncated']).toBe('true'); expect(preview.headers['content-type']).toContain('charset=utf-8');
+    const download = await request(f.app).post('/api/control/agents/cylena/results/file').auth('fixture-key', { type: 'bearer' }).send(fileInput);
+    expect(download.headers['x-pixel-preview-truncated']).toBeUndefined(); f.tasks.close();
+  });
+  it('keeps content admission independent of the metadata request budget, including case-insensitive route matching', async () => {
+    const f = filesFixture();
+    for (let index = 0; index < 120; index++) expect((await request(f.app).get('/api/control/status').auth('fixture-key', { type: 'bearer' })).status).toBe(200);
+    expect((await request(f.app).get('/api/control/status').auth('fixture-key', { type: 'bearer' })).status).toBe(429);
+    expect((await request(f.app).post('/api/control/agents/cylena/Results/File').auth('fixture-key', { type: 'bearer' }).send(fileInput)).status).toBe(200); f.tasks.close();
+  });
+  it('aborts file work when the browser disconnects', async () => {
+    const f = filesFixture(); let aborted = false;
+    vi.mocked(f.artifacts.file).mockImplementation((_input, signal) => new Promise((_resolve, reject) => signal?.addEventListener('abort', () => { aborted = true; reject(new ControlError('unavailable')); })));
+    const server = createServer(f.app); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address(); if (!address || typeof address === 'string') throw Error('fixture listener');
+    try {
+      const client = httpRequest({ hostname: '127.0.0.1', port: address.port, path: '/api/control/agents/cylena/results/file', method: 'POST',
+        headers: { Authorization: 'Bearer fixture-key', 'Content-Type': 'application/json' } }); client.on('error', () => {}); client.end(JSON.stringify(fileInput));
+      await vi.waitFor(() => expect(f.artifacts.file).toHaveBeenCalledTimes(1)); client.destroy(); await vi.waitFor(() => expect(aborted).toBe(true));
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); f.tasks.close(); }
+  });
   it.each([['outcome-unknown', 409], ['pairing-required', 403]] as const)('maps %s explicitly without inviting generic service-unavailable retries', async (code, status) => {
     const f = fixture(true, code); const response = await request(f.app).post('/api/control/agents/cylena/send').auth('fixture-key', { type: 'bearer' }).send({ newConversation: true, message: 'ordinary text', idempotencyKey: 'send-fixture' });
     expect(response.status).toBe(status); expect(response.body.code).toBe(code); f.tasks.close();
@@ -59,6 +131,7 @@ describe('private control routes', () => {
     const { app, server, io } = await import('../index');
     try {
       expect((await request(app).post('/api/control/agents/main/task').set('Origin', 'https://other.test').send({})).status).toBe(403);
+      for (const path of ['results', 'results/file']) expect((await request(app).post(`/api/control/agents/main/${path}`).set('Origin', 'https://other.test').send({})).status).toBe(403);
       expect((await request(app).get('/api/control/status')).body.state).toBe('disabled');
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
       expect(start).toHaveBeenCalled();

@@ -3,26 +3,36 @@ import type { ControlConfig } from './config';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import { createControlAccess } from './access';
 import { ControlError, type TaskService } from './taskService';
-import { parseSendRequest, parseTaskRequest } from './validation';
+import { parseResultsTarget, parseSendRequest, parseTaskRequest } from './validation';
 import type { SendService } from './sendService';
 import type { ConversationService } from './conversation';
 import { controlRecord } from '../../shared/control';
+import { CONTROL_RESULT_LIMITS, parseControlExternalFile, parseControlFileRequest } from '../../shared/controlResults';
+import type { ArtifactService } from './artifactService';
+import type { ArtifactContent } from './artifactTransfer';
+import { createContentBudget } from './contentBudget';
+import { artifactMime, safeArtifactFilename } from './previewPolicy';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService }): Router {
-  const { gateway, tasks, config, sends, conversations } = options; const router = Router();
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService }): Router {
+  const { gateway, tasks, config, sends, conversations, artifacts } = options; const router = Router();
+  const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
   router.use(createControlAccess(config));
   router.get('/status', (_req, res) => res.json(gateway.status()));
-  function run(req: Request, res: Response, action: (signal: AbortSignal) => Promise<unknown>): void {
+  function run<T>(req: Request, res: Response, action: (signal: AbortSignal) => Promise<T>, success: (result: T) => void = result => { res.json(result); }): void {
     const controller = new AbortController();
     const close = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', close); req.once('aborted', close);
-    void Promise.resolve().then(() => action(controller.signal)).then(result => { if (!controller.signal.aborted) res.json(result); }, error => {
+    void Promise.resolve().then(() => action(controller.signal)).then(result => { if (!controller.signal.aborted) success(result); }).catch(error => {
       if (controller.signal.aborted) return;
+      if (res.headersSent) { res.destroy(); return; }
+      res.removeHeader('X-Pixel-Control-File'); res.removeHeader('X-Pixel-Preview-Truncated'); res.removeHeader('Content-Disposition');
       const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
-      const status = code === 'scope-required' || code === 'pairing-required' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400 : code === 'invalid-target' ? 404 : code === 'session-changed' || code === 'outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
-      res.status(status).json({ code, error: code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The conversation request could not be completed.' });
+      const status = code === 'scope-required' || code === 'pairing-required' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
+        : code === 'invalid-target' || code === 'file-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
+          : code === 'session-changed' || code === 'outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
+      res.type('json').status(status).json({ code, error: code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The conversation request could not be completed.' });
     }).finally(() => { res.off('close', close); req.off('aborted', close); });
   }
   router.get('/agents/:id/sessions', (req, res) => {
@@ -43,6 +53,32 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
     if (!input) { res.status(400).json({ code: 'invalid-request', error: 'Invalid task selection.' }); return; }
     run(req, res, signal => tasks.getTask(input, signal));
   });
+  router.post('/agents/:id/results', (req, res) => {
+    const target = parseResultsTarget(String(req.params.id), req.body);
+    if (!target) { res.status(400).json({ code: 'invalid-request', error: 'Invalid result selection.' }); return; }
+    run(req, res, signal => { if (!artifacts) throw new ControlError('unsupported'); return artifacts.read(target, signal); });
+  });
+  router.post('/agents/:id/results/file', contentBudget, (req, res) => {
+    const input = parseControlFileRequest(req.body);
+    if (!input || input.target.agentId !== String(req.params.id)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid file selection.' }); return; }
+    run(req, res, signal => { if (!artifacts) throw new ControlError('unsupported'); return artifacts.file(input, signal); }, content => sendFile(res, content, input.intent));
+  });
+  function sendFile(res: Response, content: ArtifactContent, intent: 'preview' | 'download'): void {
+    if (content.kind === 'external') {
+      const link = parseControlExternalFile(content); if (!link) throw new ControlError('invalid-source');
+      res.setHeader('X-Pixel-Control-File', 'link'); res.json(link); return;
+    }
+    if (!(content.data instanceof Uint8Array)) throw new ControlError('invalid-source');
+    if (content.data.byteLength > CONTROL_RESULT_LIMITS.transferBytes) throw new ControlError('file-too-large');
+    const filename = safeArtifactFilename(content.filename);
+    const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, value => `%${value.charCodeAt(0).toString(16).toUpperCase()}`);
+    const fallback = filename.replace(/[^\x20-\x7e]/g, '_');
+    res.setHeader('Content-Disposition', `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`);
+    res.setHeader('Content-Type', intent === 'preview' && content.mimeType.startsWith('text/plain') ? 'text/plain; charset=utf-8' : artifactMime(content.mimeType));
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('X-Pixel-Control-File', 'bytes');
+    if (intent === 'preview' && content.truncated) res.setHeader('X-Pixel-Preview-Truncated', 'true');
+    res.send(Buffer.from(content.data.buffer, content.data.byteOffset, content.data.byteLength));
+  }
   router.post('/agents/:id/send', (req, res) => {
     const input = parseSendRequest(String(req.params.id), req.body);
     if (!input) { res.status(400).json({ code: 'invalid-request', error: 'Invalid submission.' }); return; }

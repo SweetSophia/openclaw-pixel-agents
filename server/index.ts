@@ -53,6 +53,7 @@ import { createTaskService } from "./control/taskService";
 import { createSendService } from "./control/sendService";
 import { createConversationService, mountControlNamespace } from "./control/conversation";
 import { createControlRouter } from "./control/routes";
+import { createArtifactService } from "./control/artifactService";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -181,7 +182,7 @@ const CSP_DIRECTIVES = {
   // tracked for future hardening. Google Fonts CSS is loaded via <link> in index.html.
   styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
   fontSrc: ["'self'", "https://fonts.gstatic.com"],
-  imgSrc: ["'self'", "data:"],
+  imgSrc: ["'self'", "data:", "blob:"],
   // WebSocket scheme-source. Per CSP3, the ws scheme-source token covers both
   // plain and TLS WebSocket connections; the standalone secure variant is
   // technically redundant but kept for defensive clarity and CSP-linter
@@ -1849,11 +1850,12 @@ const controlGateway = createControlGateway(controlConfig);
 const controlTasks = createTaskService(controlGateway, () => new Set(AGENT_REGISTRY.keys()));
 const controlSends = createSendService(controlGateway, controlTasks);
 const controlConversations = createConversationService(controlGateway, controlTasks);
+const controlArtifacts = createArtifactService(controlGateway, controlTasks);
 const closeControlNamespace = mountControlNamespace(io, { config: controlConfig, tasks: controlTasks, conversations: controlConversations,
   originAllowed: origin => isOriginAllowed(origin, corsConfig), trustProxy: app.get("trust proxy fn") });
-app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations }));
+app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts }));
 server.on("listening", () => controlGateway.start());
-server.on("close", () => { closeControlNamespace(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close(); });
+server.on("close", () => { closeControlNamespace(); controlArtifacts.close(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close(); });
 
 // Unmatched requests that reach the end of the API route chain keep the API
 // representation/status contract. In particular, an unknown GET must not fall

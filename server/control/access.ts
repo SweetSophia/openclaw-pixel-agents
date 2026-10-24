@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import type { RequestHandler } from 'express';
 import type { ControlConfig } from './config';
+import { isResultContentRequest } from './contentBudget';
 
 export function matchesControlToken(supplied: string, configured: string): boolean {
   if (!supplied || supplied.length > 4096) return false;
@@ -50,7 +51,7 @@ export function createControlAccess(config: ControlConfig): RequestHandler {
     if (typeof auth !== 'string' || !auth.startsWith('Bearer ') || !matchesControlToken(auth.slice(7), config.controlToken!)) {
       budget(failed, ip, 60, true); res.status(401).json({ code: 'locked', error: 'Unlock task details to continue.' }); return;
     }
-    if (!budget(reads, ip, 120, true)) { res.status(429).json({ code: 'rate-limited', error: 'Too many task requests.' }); return; }
+    if (!isResultContentRequest(req) && !budget(reads, ip, 120, true)) { res.status(429).json({ code: 'rate-limited', error: 'Too many task requests.' }); return; }
     next();
   };
 }

@@ -1,4 +1,10 @@
-import { CONTROL_LIMITS, controlRecord, parseControlTarget, type ControlSendRequest, type ControlTaskRequest } from '../../shared/control';
+import { CONTROL_LIMITS, controlRecord, parseControlTarget, type ControlSendRequest, type ControlTarget, type ControlTaskRequest } from '../../shared/control';
+
+export function parseResultsTarget(agentId: string, body: unknown): ControlTarget | null {
+  const row = controlRecord(body);
+  if (!row || row.agentId !== agentId || Object.keys(row).some(key => !['agentId', 'sessionKey', 'sessionId', 'lifecycleRevision', 'branchId', 'activeLeafEntryId'].includes(key))) return null;
+  return parseControlTarget(row);
+}
 
 export function parseSendRequest(agentId: string, body: unknown): ControlSendRequest | null {
   const row = controlRecord(body);
