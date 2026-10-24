@@ -19,7 +19,8 @@ function grantOrLink(raw: unknown, expires: unknown, connection: Connection, inp
   let url: URL; try { url = new URL(raw, configured.origin); } catch { return invalid(); }
   if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) invalid();
   if (expires === undefined && absolute) {
-    if (url.pathname.startsWith('/api/artifacts/download/') || url.pathname.startsWith('/api/chat/media/outgoing/') || url.searchParams.has('mediaTicket')) invalid();
+    let decodedPath: string; try { decodedPath = decodeURIComponent(url.pathname); } catch { return invalid(); }
+    if (decodedPath.startsWith('/api/artifacts/download/') || decodedPath.startsWith('/api/chat/media/outgoing/') || url.searchParams.has('mediaTicket')) invalid();
     const external = parseControlExternalFile({ kind: 'external', url: raw, host: url.host, title });
     return external ?? invalid();
   }

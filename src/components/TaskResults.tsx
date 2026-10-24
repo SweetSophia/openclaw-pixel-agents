@@ -32,7 +32,7 @@ export function TaskResults({ state, active }: { state: TaskDetailsState; active
       <div className="results-heading"><h3>{result.responseKind === 'result' ? 'Result' : 'Latest response'}</h3>{result.response && <button type="button" onClick={() => { void copy(); }}>Copy displayed text</button>}</div>
       {result.responseKind === 'latest' && <p className="task-notice">Completion is not confirmed. This is the latest visible assistant response.</p>}
       {copyNote && <p role="status">{copyNote}</p>}
-      {result.response ? <p className="task-text results-text" tabIndex={0} aria-label="Response text">{result.response.text}</p> : <p className="task-muted">No visible assistant response yet.</p>}
+      {result.response ? <div role="region" className="task-text results-text" tabIndex={0} aria-label="Response text">{result.response.text}</div> : <p className="task-muted">No visible assistant response yet.</p>}
       {result.response?.truncated && <p className="task-muted">Response shortened for display. Copy includes only the displayed text.</p>}
     </section>
     <section className="task-block" aria-label="Delivered files">
