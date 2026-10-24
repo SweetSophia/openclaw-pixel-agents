@@ -1,4 +1,4 @@
-import { CONTROL_RESULT_LIMITS } from '../../shared/controlResults';
+import { CONTROL_RESULT_LIMITS, controlPreviewKind } from '../../shared/controlResults';
 import { ControlError } from './errors';
 
 const unsupported = (): never => { throw new ControlError('preview-unsupported'); };
@@ -77,14 +77,13 @@ export function artifactMime(value?: string): string {
 export function previewContent(input: Uint8Array, mimeType: string): { data: Uint8Array; mimeType: string; truncated: boolean } {
   const mime = artifactMime(mimeType);
   if (input.byteLength > CONTROL_RESULT_LIMITS.transferBytes) throw new ControlError('file-too-large');
-  if (['image/png', 'image/jpeg', 'image/webp'].includes(mime)) {
+  if (controlPreviewKind(mime) === 'image') {
     if (input.byteLength > CONTROL_RESULT_LIMITS.imageBytes) throw new ControlError('file-too-large');
     const data = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
     if (mime === 'image/png') png(data); else if (mime === 'image/jpeg') jpeg(data); else webp(data);
     return { data: input, mimeType: mime, truncated: false };
   }
-  if (['text/html', 'application/xhtml+xml', 'image/svg+xml'].includes(mime)
-    || !(mime.startsWith('text/') || /^application\/(json|[^/]+\+json|javascript|x-javascript|typescript|xml|[^/]+\+xml|toml|yaml|x-yaml)$/.test(mime))) unsupported();
+  if (controlPreviewKind(mime) !== 'text') unsupported();
   try {
     const decoder = new TextDecoder('utf-8', { fatal: true });
     for (let offset = 0; offset < input.byteLength; offset += 32768) decoder.decode(input.subarray(offset, offset + 32768), { stream: true });

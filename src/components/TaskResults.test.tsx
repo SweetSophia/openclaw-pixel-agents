@@ -10,7 +10,7 @@ import { ControlApiError } from '../control/api';
 const f = vi.hoisted(() => ({ requestFile: vi.fn(), state: 'unlocked', generation: 1, status: { canRead: true, state: 'ready' } }));
 vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => f }));
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:test', sessionId: 's1' };
-const snapshot = (changes: Partial<ControlResultsSnapshot> = {}): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'r1' }, source: { state: 'current', observedAt: 123 },
+const snapshot = (changes: Partial<ControlResultsSnapshot> = {}): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'r1' }, source: { state: 'current', observedAt: 123 }, sourceRevision: 'source-1',
   runState: 'completed', responseKind: 'result', response: { id: 'm1', role: 'assistant', text: 'Review complete.\n<script>literal</script>', truncated: false }, artifactState: 'ready',
   artifacts: [{ id: 'file-1', type: 'file', title: 'report.txt', mimeType: 'text/plain', download: 'bytes' }], artifactsTruncated: false, ...changes });
 const state = (results: ControlResultsSnapshot | null): TaskDetailsState => ({ results, selected: { ...target, name: 'Test', hasActiveRun: false, isChild: false }, sessions: [], task: null, loading: false, sessionsLoading: false, error: null,
@@ -18,6 +18,15 @@ const state = (results: ControlResultsSnapshot | null): TaskDetailsState => ({ r
 beforeEach(() => { f.state = 'unlocked'; f.status.canRead = true; vi.stubGlobal('Blob', NodeBlob); f.requestFile.mockReset(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe('Results and delivered Files', () => {
+  it.each(['application/typescript', 'application/x-javascript', 'application/ld+json'])('offers the supported %s code/text preview', mimeType => {
+    render(<TaskResults state={state(snapshot({ artifacts: [{ id: 'code', title: 'source-file', type: 'file', mimeType, download: 'bytes' }] }))} active />);
+    expect(screen.getByRole('button', { name: 'Preview source-file' })).toBeVisible();
+  });
+  it('announces a new followed task scope politely without moving focus', () => {
+    const { rerender } = render(<TaskResults state={state(snapshot())} active />); const copy = screen.getByRole('button', { name: 'Copy displayed text' }); copy.focus();
+    const announcement = screen.getByRole('status', { name: 'Results updates' }); expect(announcement).toHaveAttribute('aria-live', 'polite'); expect(announcement).toHaveTextContent('r1');
+    rerender(<TaskResults state={state(snapshot({ scope: { kind: 'run', runId: 'r2' } }))} active />); expect(announcement).toHaveTextContent('r2'); expect(copy).toHaveFocus();
+  });
   it('labels only verified results and renders response text literally', () => {
     render(<TaskResults state={state(snapshot())} active />);
     expect(screen.getByRole('heading', { name: /^Result$/ })).toBeVisible(); expect(screen.getByText(/<script>literal/)).toBeVisible(); expect(document.querySelector('script')).toBeNull();

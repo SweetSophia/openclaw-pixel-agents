@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { parseControlExternalFile, parseControlFileRequest, parseControlResultsSnapshot } from './controlResults';
+import { controlPreviewKind, parseControlExternalFile, parseControlFileRequest, parseControlResultsSnapshot } from './controlResults';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 'life-1', branchId: 'branch-1' };
 const artifact = { id: 'artifact-1', type: 'text', title: 'report.txt', mimeType: 'text/plain', runId: 'run-1', download: 'bytes' };
 const response = { id: 'answer-1', role: 'assistant', text: 'Finished\nThe report is attached.', truncated: false, runId: 'run-1' };
-const snapshot = () => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 123 },
+const snapshot = () => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 123 }, sourceRevision: 'source-1',
   runState: 'completed', responseKind: 'result', response, artifactState: 'ready', artifacts: [artifact], artifactsTruncated: false });
 const request = () => ({ target, scope: { kind: 'run', runId: 'run-1' }, artifactId: 'artifact-1', intent: 'preview' });
 
 describe('private Results contracts', () => {
+  it.each(['application/typescript', 'application/x-javascript', 'application/ld+json'])('offers text preview consistently for %s', mime => {
+    expect(controlPreviewKind(mime)).toBe('text');
+  });
   it('preserves validated result and explicit conversation scope without inventing a missing file size', () => {
     expect(parseControlResultsSnapshot(snapshot())).toEqual(snapshot());
     expect(parseControlResultsSnapshot(snapshot())?.artifacts[0]).not.toHaveProperty('sizeBytes');

@@ -48,6 +48,40 @@ function fixture() {
 
 describe('assistant-delivered results discovery', () => {
   const fileInput: ControlFileRequest = { target, scope: { kind: 'run', runId: 'run-1' }, artifactId: 'artifact-1', intent: 'preview' };
+  it('starts final content verification after transfer instead of joining an earlier fresh read', async () => {
+    const f = fixture(); const artifact = f.nativeArtifact(); let finishDownload: (value: unknown) => void = () => {};
+    f.download.mockImplementation(() => new Promise(resolve => { finishDownload = resolve; }));
+    const pending = f.artifacts.file(fileInput).catch(error => error); await vi.waitFor(() => expect(f.download).toHaveBeenCalledOnce());
+    const rpc = f.rpc.getMockImplementation()!; let finishChildren: (value: unknown) => void = () => {}; let held = false;
+    f.rpc.mockImplementation((method, params, signal) => {
+      if (method === 'sessions.list' && params.spawnedBy && !held) { held = true; return new Promise(resolve => { finishChildren = resolve; }); }
+      return rpc(method, params, signal);
+    });
+    const older = f.tasks.getTask(target, undefined, { fresh: true }); await vi.waitFor(() => expect(held).toBe(true));
+    f.setRun('run-2'); f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey, reason: 'activity' } });
+    finishDownload({ artifact, encoding: 'base64', data: Buffer.from('old private bytes').toString('base64') });
+    await new Promise(resolve => setImmediate(resolve)); finishChildren({ sessions: [], hasMore: false }); await older;
+    expect(await pending).toMatchObject({ code: 'session-changed' });
+  });
+  it('rejects a newly started content fence invalidated while its child lookup is pending', async () => {
+    const f = fixture(); const artifact = f.nativeArtifact(); const rpc = f.rpc.getMockImplementation()!;
+    let hold = false, held = false; let finishChildren: (value: unknown) => void = () => {};
+    f.rpc.mockImplementation((method, params, signal) => {
+      if (method === 'sessions.list' && params.spawnedBy && hold && !held) { held = true; return new Promise(resolve => { finishChildren = resolve; }); }
+      return rpc(method, params, signal);
+    });
+    f.download.mockImplementation(async () => { hold = true; return { artifact, encoding: 'base64', data: Buffer.from('old private bytes').toString('base64') }; });
+    const pending = f.artifacts.file(fileInput).catch(error => error); await vi.waitFor(() => expect(held).toBe(true));
+    f.setRun('run-2'); f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey, reason: 'activity' } }); finishChildren({ sessions: [], hasMore: false });
+    expect(await pending).toMatchObject({ code: 'session-changed' });
+  });
+  it('changes the opaque private source revision across a fast reconnect with identical task scope', async () => {
+    const f = fixture(); const first = await f.artifacts.read(target); f.reconnect();
+    f.event({ event: 'source.invalidated', payload: null }); f.event({ event: 'source.ready', payload: null });
+    const second = await f.artifacts.read(target); expect(second.sourceRevision).toEqual(expect.any(String)); expect(second.sourceRevision).not.toBe(first.sourceRevision);
+    expect(second.target).toEqual(first.target); expect(second.scope).toEqual(first.scope); expect(second.source.state).toBe('current');
+    expect(second.sourceRevision).not.toContain('fixture-');
+  });
   it('requires the displayed task scope to remain canonical before content reads', async () => {
     const f = fixture(); f.setRun('run-2');
     await expect(f.artifacts.file(fileInput)).rejects.toMatchObject({ code: 'session-changed' });

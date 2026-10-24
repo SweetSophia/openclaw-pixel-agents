@@ -5,6 +5,7 @@ import { ControlError } from './errors';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import type { TaskService } from './taskService';
 import { downloadArtifact, type ArtifactContent } from './artifactTransfer';
+import { randomUUID } from 'node:crypto';
 
 export interface ArtifactService {
   read(target: ControlTarget, signal?: AbortSignal): Promise<ControlResultsSnapshot>;
@@ -18,6 +19,8 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
   const contentWork = new Set<AbortController>();
   let closed = false; let epoch = 0;
   const stamp = () => { const connection = gateway.artifactConnection?.(); return JSON.stringify([epoch, connection?.id ?? null, connection?.generation ?? null]); };
+  let revisionStamp = ''; let sourceRevision = randomUUID();
+  const revision = () => { const current = stamp(); if (current !== revisionStamp) { revisionStamp = current; sourceRevision = randomUUID(); } return sourceRevision; };
   function denied(): void {
     if (gateway.status().state === 'auth-error') throw new ControlError('scope-required');
     if (gateway.status().state === 'pairing-required') throw new ControlError('pairing-required');
@@ -39,7 +42,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
   const stale = (entry: Cached): ControlResultsSnapshot => ({ ...structuredClone(entry.snapshot), artifactState: 'unavailable', source: { ...entry.snapshot.source, state: 'stale' } });
   function project(task: ControlTaskSnapshot, artifacts: ControlArtifactSummary[], artifactState: ControlResultsSnapshot['artifactState'], truncated = false): ControlResultsSnapshot {
     const response = task.result ?? task.latestResponse;
-    const snapshot: ControlResultsSnapshot = { target: task.target, scope: artifactScope(task), source: task.source, runState: task.runState,
+    const snapshot: ControlResultsSnapshot = { target: task.target, scope: artifactScope(task), source: task.source, sourceRevision: revision(), runState: task.runState,
       responseKind: task.result ? 'result' : response ? 'latest' : 'none', ...(response ? { response } : {}),
       artifacts, artifactState, artifactsTruncated: truncated };
     while (controlByteSize(snapshot) > CONTROL_LIMITS.responseBytes && snapshot.artifacts.length) { snapshot.artifacts.pop(); snapshot.artifactsTruncated = true; }
@@ -76,7 +79,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
       }
     }
     guard(signal, connection);
-    const current = await tasks.getTask(task.target, signal, { fresh: true });
+    const current = await tasks.getTask(task.target, signal, { fresh: true, coalesce: false });
     guard(signal, connection);
     if (artifactTargetIdentity(current.target) !== artifactTargetIdentity(task.target) || !sameArtifactScope(artifactScope(current), scope)) throw new ControlError('session-changed');
     if (current.source.state !== 'current') return old ? stale(old) : project(current, [], 'unavailable');
@@ -119,7 +122,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
       const combined = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]); const connection = stamp();
       const timer = setTimeout(() => controller.abort(), CONTROL_RESULT_LIMITS.contentDeadlineMs); timer.unref?.();
       const verify = async () => {
-        guard(combined, connection); const task = await tasks.getTask(input.target, combined, { fresh: true }); guard(combined, connection);
+        guard(combined, connection); const task = await tasks.getTask(input.target, combined, { fresh: true, coalesce: false, requireUnchangedObservation: true }); guard(combined, connection);
         if (task.source.state !== 'current') throw new ControlError('unavailable');
         if (!sameArtifactScope(artifactScope(task), input.scope)) throw new ControlError('session-changed');
       };

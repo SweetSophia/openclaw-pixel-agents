@@ -27,7 +27,7 @@ describe('private control routes', () => {
   function filesFixture() {
     const bytes: ArtifactContent = { kind: 'bytes', data: Buffer.from('{"ok":true}'), mimeType: 'application/json', filename: 'Résumé 🧪.json', truncated: false };
     const artifacts: ArtifactService = { read: vi.fn<ArtifactService['read']>(async () => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 123 },
-      runState: 'unknown', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false })),
+      sourceRevision: 'source-1', runState: 'unknown', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false })),
       file: vi.fn<ArtifactService['file']>(async () => bytes), clear() {}, close() {} };
     return { ...fixture(true, undefined, artifacts), artifacts };
   }

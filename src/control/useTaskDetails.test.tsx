@@ -17,7 +17,7 @@ function setup(sessions = [a, b]) {
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
-  const results = (target = a): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 100 }, runState: 'running', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false });
+  const results = (target = a): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 100 }, sourceRevision: 'source-1', runState: 'running', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false });
   it('shares selection across tabs and uses only one results read per visible five-second tick', async () => {
     setup(); vi.useFakeTimers(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
     const { result, rerender } = renderHook(({ resultsActive, active }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active, resultsActive, taskActive: !resultsActive }), { initialProps: { resultsActive: false, active: true } });

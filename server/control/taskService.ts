@@ -7,9 +7,10 @@ import { projectSession, projectTask } from './projection';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import { ControlError } from './errors';
 export { ControlError } from './errors';
+interface TaskReadOptions { fresh?: boolean; coalesce?: boolean; requireUnchangedObservation?: boolean }
 export interface TaskService {
   listSessions(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ControlSessionPage>;
-  getTask(input: ControlTaskRequest, signal?: AbortSignal, options?: { fresh?: boolean }): Promise<ControlTaskSnapshot>;
+  getTask(input: ControlTaskRequest, signal?: AbortSignal, options?: TaskReadOptions): Promise<ControlTaskSnapshot>;
   verifyTarget(target: ControlTarget, signal?: AbortSignal): Promise<Record<string, unknown>>;
   resolveSession(agentId: string, key: string, signal?: AbortSignal): Promise<ControlSession | null>;
   clear(): void; close(): void;
@@ -94,13 +95,13 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   function continuation(target: ControlTarget, snapshot: ControlTaskSnapshot, offset: number, leaf?: unknown): string {
     const token = randomUUID(); earlier.set(token, { target, snapshot: structuredClone(snapshot), offset, loaded: snapshot.loadedRecords, expires: Date.now() + 60000, leaf }); trim(); return token;
   }
-  async function read(input: ControlTaskRequest, signal: AbortSignal, observation: { dirty: boolean }, fresh: boolean): Promise<ControlTaskSnapshot> {
+  async function read(input: ControlTaskRequest, signal: AbortSignal, observation: { dirty: boolean }, options?: TaskReadOptions): Promise<ControlTaskSnapshot> {
     trim(); const key = identity(input); const previous = cache.get(key); const myEpoch = epoch; const myDestructiveEpoch = destructiveEpoch; const myOrder = ++order;
     const cursor = input.cursor ? earlier.get(input.cursor) : undefined;
     if (input.cursor && (!cursor || cursor.expires <= Date.now() || identity(cursor.target) !== key)) throw new ControlError('invalid-request');
     try {
       let row = await verifyTarget(input, signal);
-      if (!fresh && !input.cursor && previous?.valid && Date.now() - previous.at < 2000) return structuredClone(previous.snapshot);
+      if (!options?.fresh && !options?.requireUnchangedObservation && !input.cursor && previous?.valid && Date.now() - previous.at < 2000) return structuredClone(previous.snapshot);
       if (cursor && cursor.leaf !== undefined && row.activeLeafEntryId !== undefined && row.activeLeafEntryId !== cursor.leaf) throw new ControlError('invalid-request');
       let offset = cursor?.offset ?? 0; let loaded = cursor?.loaded ?? 0;
       const budget = cursor ? Math.min(CONTROL_LIMITS.historyPage, CONTROL_LIMITS.maximumHistory - loaded) : CONTROL_LIMITS.automaticHistory;
@@ -168,6 +169,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
       if (more && loaded < CONTROL_LIMITS.maximumHistory) result.nextCursor = continuation(target, result, offset, row.activeLeafEntryId);
       if (controlByteSize(result) > CONTROL_LIMITS.responseBytes) throw new ControlError('invalid-source');
       if (closed || signal.aborted || myEpoch !== epoch) throw new ControlError('unavailable');
+      if (options?.requireUnchangedObservation && observation.dirty) throw new ControlError('session-changed');
       const latest = cache.get(key);
       if (!latest || (result.source.observedAt >= latest.snapshot.source.observedAt && myOrder >= latest.order)) {
         cache.delete(key); cache.set(key, { snapshot: structuredClone(result), at: Date.now(), valid: !observation.dirty, order: myOrder, offset, total: typeof total === 'number' ? total : undefined }); trim();
@@ -229,10 +231,10 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     },
     getTask(input, signal, options) {
       registered(input.agentId); if (signal?.aborted) return Promise.reject(new ControlError('unavailable'));
-      const key = JSON.stringify([identity(input), input.cursor ?? null, options?.fresh === true]); let flight = flights.get(key);
+      const key = JSON.stringify([identity(input), input.cursor ?? null, options?.fresh === true, options?.requireUnchangedObservation === true, options?.coalesce === false ? randomUUID() : null]); let flight = flights.get(key);
       if (!flight) {
         const controller = new AbortController(); const observation = { dirty: false };
-        flight = { controller, users: 0, target: input, observation, promise: read(input, controller.signal, observation, options?.fresh === true) };
+        flight = { controller, users: 0, target: input, observation, promise: read(input, controller.signal, observation, options) };
         flights.set(key, flight); const current = flight;
         void current.promise.finally(() => { if (flights.get(key) === current) flights.delete(key); }).catch(() => {});
       }

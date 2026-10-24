@@ -82,7 +82,7 @@ describe('native filtered artifact transfer', () => {
     `/api/artifacts/download/wrong-connection/${ticket}`, `/api/artifacts/download/connection-1/../${ticket}`,
     `/non-root/api/artifacts/download/connection-1/${ticket}`, `/api/artifacts/download/connection-1/%2e%2e`,
     `/api/chat/media/outgoing/${encodeURIComponent('agent:other:secret')}/${uuid}/full?mediaTicket=v1.eA.${'s'.repeat(43)}`,
-    `/api/chat/media/outgoing/${encodeURIComponent(target.sessionKey).replace('%3A', '%253A')}/${uuid}/full?mediaTicket=v1.eA.${'s'.repeat(43)}`,
+    `/api/chat/media/outgoing/${encodeURIComponent(target.sessionKey).replace(/%3A/g, '%253A')}/${uuid}/full?mediaTicket=v1.eA.${'s'.repeat(43)}`,
   ])('rejects origin, credential, connection and raw-path broadening: %s', async url => {
     const f = fixture(); const fetchSpy = vi.spyOn(globalThis, 'fetch');
     f.transfer.mockResolvedValue({ artifact: { ...f.artifact(), download: { mode: 'url' } }, url, expiresAt: expiresAt() });

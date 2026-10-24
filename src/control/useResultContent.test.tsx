@@ -15,6 +15,13 @@ const create = vi.fn(() => 'blob:owned'); const revoke = vi.fn();
 beforeEach(() => { vi.stubGlobal('Blob', NodeBlob); vi.stubGlobal('URL', class extends URL { static createObjectURL = create; static revokeObjectURL = revoke; }); create.mockClear(); revoke.mockClear(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 describe('private result content lifecycle', () => {
+  it('revokes an existing image after a quick source reconnect even when access and task scope stay ready', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => path.endsWith('status') ? status() : file()));
+    const { result, rerender } = renderHook(props => ({ access: useControlAccess(), content: useResultContent(props) }), { wrapper, initialProps: { ...initial, sourceRevision: 'source-before' } });
+    await act(() => result.current.access.unlock('fixture-key')); await act(() => result.current.content.act('image', 'preview'));
+    expect(result.current.content.preview).toMatchObject({ kind: 'image' }); rerender({ ...initial, sourceRevision: 'source-after' });
+    expect(result.current.content.preview).toBeNull(); expect(revoke).toHaveBeenCalledWith('blob:owned'); expect(result.current.access.state).toBe('unlocked');
+  });
   it('reclaims image URLs on a scope change, close and loss of current verification', async () => {
     vi.stubGlobal('fetch', vi.fn(async (path: string) => path.endsWith('status') ? status() : file()));
     const { result, rerender } = renderHook(props => ({ access: useControlAccess(), content: useResultContent(props) }), { wrapper, initialProps: initial });

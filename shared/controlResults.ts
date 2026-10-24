@@ -12,7 +12,7 @@ export interface ControlArtifactSummary {
   runId?: string; messageSeq?: number; download: 'bytes' | 'link' | 'unavailable';
 }
 export interface ControlResultsSnapshot {
-  target: ControlTarget; scope: ControlArtifactScope; source: ControlSource; runState: ControlRunState;
+  target: ControlTarget; scope: ControlArtifactScope; source: ControlSource; sourceRevision: string; runState: ControlRunState;
   responseKind: 'result' | 'latest' | 'none'; response?: ControlMessage;
   artifactState: 'ready' | 'unsupported' | 'unavailable'; artifacts: ControlArtifactSummary[]; artifactsTruncated: boolean;
 }
@@ -20,6 +20,13 @@ export interface ControlFileRequest {
   target: ControlTarget; scope: ControlArtifactScope; artifactId: string; intent: 'preview' | 'download';
 }
 export interface ControlExternalFile { kind: 'external'; url: string; host: string; title: string }
+
+export function controlPreviewKind(mimeType = ''): 'text' | 'image' | null {
+  const mime = mimeType.split(';')[0].trim().toLowerCase();
+  if (['image/png', 'image/jpeg', 'image/webp'].includes(mime)) return 'image';
+  if (['text/html', 'application/xhtml+xml', 'image/svg+xml'].includes(mime)) return null;
+  return mime.startsWith('text/') || /^application\/(json|[^/]+\+json|javascript|x-javascript|typescript|xml|[^/]+\+xml|toml|yaml|x-yaml)$/.test(mime) ? 'text' : null;
+}
 
 function exact(value: unknown, keys: readonly string[]): Record<string, unknown> | null {
   const record = controlRecord(value);
@@ -63,10 +70,10 @@ export function parseControlArtifactSummary(value: unknown): ControlArtifactSumm
 }
 export function parseControlResultsSnapshot(value: unknown): ControlResultsSnapshot | null {
   if (controlByteSize(value) > CONTROL_LIMITS.responseBytes) return null;
-  const record = exact(value, ['target', 'scope', 'source', 'runState', 'responseKind', 'response', 'artifactState', 'artifacts', 'artifactsTruncated']);
+  const record = exact(value, ['target', 'scope', 'source', 'sourceRevision', 'runState', 'responseKind', 'response', 'artifactState', 'artifacts', 'artifactsTruncated']);
   if (!record) return null;
   const parsedTarget = target(record.target); const parsedScope = scope(record.scope); const parsedSource = source(record.source);
-  if (!parsedTarget || !parsedScope || !parsedSource || !oneOf(record.runState, ['running', 'completed', 'failed', 'aborted', 'not-running', 'unknown'])
+  if (!parsedTarget || !parsedScope || !parsedSource || !opaque(record.sourceRevision, 128) || !oneOf(record.runState, ['running', 'completed', 'failed', 'aborted', 'not-running', 'unknown'])
     || !oneOf(record.responseKind, ['result', 'latest', 'none']) || !oneOf(record.artifactState, ['ready', 'unsupported', 'unavailable'])
     || typeof record.artifactsTruncated !== 'boolean' || !Array.isArray(record.artifacts) || record.artifacts.length > CONTROL_RESULT_LIMITS.artifacts) return null;
   const parsedResponse = record.response === undefined ? undefined : exact(record.response, ['id', 'role', 'text', 'truncated', 'at', 'runId', 'messageSeq', 'submissionId']) && parseControlMessage(record.response);
@@ -79,7 +86,7 @@ export function parseControlResultsSnapshot(value: unknown): ControlResultsSnaps
     if (!parsed || (parsedScope.kind === 'run' && parsed.runId !== undefined && parsed.runId !== parsedScope.runId)) return null;
     artifacts.push(parsed);
   }
-  return { target: parsedTarget, scope: parsedScope, source: parsedSource, runState: record.runState,
+  return { target: parsedTarget, scope: parsedScope, source: parsedSource, sourceRevision: record.sourceRevision, runState: record.runState,
     responseKind: record.responseKind, ...(parsedResponse ? { response: parsedResponse } : {}),
     artifactState: record.artifactState, artifacts, artifactsTruncated: record.artifactsTruncated };
 }
