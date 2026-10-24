@@ -7,7 +7,7 @@ Thanks for your interest in contributing! This project is a pixel art office das
 ```bash
 git clone https://github.com/SweetSophia/openclaw-pixel-agents.git
 cd openclaw-pixel-agents
-npm install
+npm ci
 npm run dev
 ```
 
@@ -34,7 +34,7 @@ The dev server runs on `http://localhost:3000` and proxies API requests to the b
 │   ├── floors/          # Floor tile sprites
 │   └── source/          # Original asset packs (MetroCity by JIK-A-4)
 ├── shared/types.ts      # Shared TypeScript types (server ↔ client)
-└── data/                # Runtime data (layouts, agent prefs)
+└── server/data/         # Default dev data; set persistent DATA_DIR for production
 ```
 
 ## Development Workflow
@@ -49,6 +49,7 @@ The dev server runs on `http://localhost:3000` and proxies API requests to the b
    npm test
    npm run test:coverage
    npm run build
+   npm run test:package
    npm audit --omit=dev --audit-level=high
    npm audit --audit-level=moderate   # mirrors the CI full-tree audit gate (issue #168); without this, locally-passing PRs can still land red CI
    ```
@@ -95,6 +96,12 @@ remove private content and abort reads; closing, hiding the page or leaving Task
 must stop its refresh. Inspect browser errors/network traffic and confirm no private
 payload appears on the public socket or in browser storage. Use synthetic text in
 screenshots and committed fixtures. Never send a real task as an automated check.
+
+## npm package and releases
+
+`npm run test:package` installs the actual tarball with production dependencies in a disposable directory and checks startup, assets, key generation and restart persistence. It does not contact a real Gateway or publish anything. Run it after building whenever package files, startup or deployment setup changes.
+
+See [the release guide](docs/releases.md) for the `NPM_TOKEN` secret and stable GitHub Release publication. A pull request never publishes to npm.
 
 ## Code Style
 

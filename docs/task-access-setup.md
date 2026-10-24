@@ -12,6 +12,8 @@ From the repository directory, run:
 npm run --silent control:key
 ```
 
+With an npm installation, run `openclaw-pixel-agents --generate-key` instead. The installed launcher uses the same generator; no source checkout is needed.
+
 The command prints one new 64-character hexadecimal key using 32 cryptographically secure random bytes from Node's `crypto.randomBytes`. It works wherever the project's supported Node.js version runs, including Windows, macOS and Linux. It does not read an existing key, write a configuration file, or rotate a running server's credentials.
 
 Save the output in your private server configuration as `PIXEL_CONTROL_TOKEN`. Keep the same value to paste into **Unlock task details**. Share it only with people authorized to read private conversations and, when enabled, send messages. The current office uses one shared operator key rather than individual user accounts.
@@ -45,7 +47,9 @@ npm run build
 node --env-file=.env dist/server/server/index.js
 ```
 
-Open `http://localhost:3001` for this local example. For a remotely accessed office, use HTTPS and replace `CORS_ORIGIN` with its exact browser origin, such as `https://office.example.com`. Follow the [reverse-proxy instructions](../README.md#reverse-proxy-deployments) when TLS terminates at a proxy.
+For a global npm installation, create a private env file with the values above and start with `openclaw-pixel-agents --env-file /absolute/path/to/office.env`. The bundled server is already built. Set a stable absolute `DATA_DIR`, or omit it to use the launcher's `~/.openclaw-pixel-agents` default. The launcher always runs in production mode.
+
+Open `http://localhost:3001` for this local example. For a remotely accessed office, use HTTPS and replace `CORS_ORIGIN` with its exact browser origin, such as `https://office.example.com`. Follow the [reverse-proxy instructions](configuration.md#reverse-proxy-deployments) when TLS terminates at a proxy.
 
 ### Development
 
