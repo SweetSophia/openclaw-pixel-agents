@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useTaskDetails } from './useTaskDetails';
 import type { ControlSession, ControlTaskSnapshot } from '../../shared/control';
 import { ControlApiError } from './api';
+import type { ControlResultsSnapshot } from '../../shared/controlResults';
 
 const f = vi.hoisted(() => ({ request: vi.fn(), generation: 1, state: 'unlocked', sourceState: 'ready' }));
 vi.mock('./ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: f.sourceState, canRead: f.sourceState === 'ready', canSend: false } }) }));
@@ -16,6 +17,27 @@ function setup(sessions = [a, b]) {
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
+  const results = (target = a): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 100 }, runState: 'running', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false });
+  it('shares selection across tabs and uses only one results read per visible five-second tick', async () => {
+    setup(); vi.useFakeTimers(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(({ resultsActive, active }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active, resultsActive, taskActive: !resultsActive }), { initialProps: { resultsActive: false, active: true } });
+    await act(() => vi.advanceTimersByTimeAsync(0)); act(() => result.current.selectSession(b)); await act(() => vi.advanceTimersByTimeAsync(0));
+    rerender({ resultsActive: true, active: true }); await act(() => vi.advanceTimersByTimeAsync(0)); expect(result.current.results?.target.sessionId).toBe(b.sessionId);
+    f.request.mockClear(); await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/results'))).toHaveLength(1); expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/task'))).toHaveLength(0);
+    rerender({ resultsActive: true, active: false }); f.request.mockClear(); await act(() => vi.advanceTimersByTimeAsync(10000)); expect(f.request).not.toHaveBeenCalled();
+  });
+  it('coalesces manual Results refresh and preserves last-known timestamps while disabling current content', async () => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : results(JSON.parse(String(init?.body))));
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, resultsActive: true, taskActive: false }));
+    await waitFor(() => expect(result.current.results).toBeTruthy()); let finish: (value: unknown) => void = () => {};
+    f.request.mockImplementation(async (path: string) => path.includes('/sessions') ? page() : new Promise(done => { finish = done; })); f.request.mockClear();
+    let pending: Promise<void>; act(() => { pending = result.current.refresh(); }); await act(() => result.current.refresh());
+    expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/results'))).toHaveLength(1);
+    await act(async () => { finish(results()); await pending; });
+    f.request.mockRejectedValue(new ControlApiError('unavailable')); await act(() => result.current.refresh()); expect(result.current.results?.source).toEqual({ state: 'stale', observedAt: 100 });
+    f.request.mockRejectedValue(new ControlApiError('session-changed')); await act(() => result.current.refresh()); expect(result.current.results).toBeNull();
+  });
   it('retains loaded conversation pages and the advanced cursor across polling refreshes', async () => {
     setup(); const c = session('c');
     f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? path.includes('page-three') ? page([c]) : path.includes('page-two') ? page([b], 'page-three') : page([a], 'page-two') : task(JSON.parse(String(init?.body))));
