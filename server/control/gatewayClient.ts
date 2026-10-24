@@ -7,17 +7,19 @@ import { isDeviceStorageError } from './errors';
 const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'] as const;
 const WRITE_METHODS = ['chat.send', 'sessions.create'] as const;
 const STREAM_METHODS = ['sessions.messages.subscribe', 'sessions.messages.unsubscribe'] as const;
-export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number];
+const ARTIFACT_METHODS = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable' | 'session-changed') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
   request(method: ControlMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   onEvent(listener: (event: GatewayEvent) => void): () => void; close(): void;
+  artifactConnection?(): { id: string; generation: number; gatewayUrl: string } | null;
 }
-interface Pending { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
+interface Pending { method: ControlMethod; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
 export function gatewayReconnectDelay(attempt: number, random: () => number = Math.random): number {
   return Math.round(Math.min(30000, 500 * 2 ** Math.min(attempt, 6)) * (0.5 + random() * 0.5));
@@ -26,6 +28,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';
   let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined; let writeGranted = false;
   let negotiatedMethods: string[] = [];
+  let connectionId: string | undefined;
   let memoryGrant: DeviceGrant | undefined;
   let reconnect: ReturnType<typeof setTimeout> | undefined; let handshake: ReturnType<typeof setTimeout> | undefined;
   const pending = new Map<string, Pending>(); const listeners = new Set<(event: GatewayEvent) => void>();
@@ -35,7 +38,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     pending.clear();
   }
   function fail(next: ControlGatewayState, retryable = false): void {
-    generation++; state = next; writeGranted = false; negotiatedMethods = []; clearTimeout(handshake); handshake = undefined;
+    generation++; state = next; writeGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
     rejectPending('Task source connection changed'); emit({ event: 'source.invalidated', payload: null });
@@ -111,6 +114,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
         if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !grants.includes('operator.read')) { fail('auth-error'); return; }
         writeGranted = config.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write') && WRITE_METHODS.every(method => methods.includes(method));
         negotiatedMethods = methods.filter((method): method is string => typeof method === 'string');
+        connectionId = server.connId.length > 0 && server.connId.length <= 256 && !/[\u0000-\u001f\u007f]/.test(server.connId) ? server.connId : undefined;
         if (typeof auth.deviceToken === 'string' && auth.deviceToken.length > 0 && auth.deviceToken.length <= 16384) {
           const actualScopes = ['operator.read', 'operator.write'].filter(scope => grants.includes(scope));
           const retainedScopes = cached?.token === auth.deviceToken ? [...new Set([...cached.scopes, ...actualScopes])] : actualScopes;
@@ -126,16 +130,22 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       if (frame.ok) item.resolve(frame.payload);
       else {
         const error = controlRecord(frame.error);
-        item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST' ? 'invalid-source' : 'unavailable'));
+        item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST'
+          ? (ARTIFACT_METHODS as readonly string[]).includes(item.method) ? 'unsupported' : 'invalid-source' : 'unavailable'));
       }
     });
   }
   return {
     start() { if (stopped || !config.enabled || socket || reconnect) return; connect(); },
     status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: state === 'ready' && writeGranted }),
+    artifactConnection: () => state === 'ready' && socket?.readyState === WebSocket.OPEN && connectionId && config.url
+      ? { id: connectionId, generation, gatewayUrl: config.url } : null,
     request(method, params, signal) {
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
+      const artifact = (ARTIFACT_METHODS as readonly string[]).includes(method);
+      if (artifact && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
       const allowed = (READ_METHODS as readonly string[]).includes(method)
+        || artifact
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
       if (!allowed) return Promise.reject(new GatewayRequestError('scope-required'));
@@ -146,7 +156,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
         const cancel = () => { const item = pending.get(id); if (!item) return; clearTimeout(item.timer); item.cleanup(); pending.delete(id); reject(Error('Task request cancelled')); };
         const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(Error('Task request timed out')); }, 5000);
         const cleanup = () => signal?.removeEventListener('abort', cancel);
-        pending.set(id, { resolve, reject, timer, cleanup }); signal?.addEventListener('abort', cancel, { once: true });
+        pending.set(id, { method, resolve, reject, timer, cleanup }); signal?.addEventListener('abort', cancel, { once: true });
         try { socket!.send(JSON.stringify({ type: 'req', id, method, params })); }
         catch { clearTimeout(timer); cleanup(); pending.delete(id); reject(Error('Task source unavailable')); }
       });

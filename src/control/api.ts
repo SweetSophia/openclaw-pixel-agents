@@ -10,6 +10,9 @@ const messages: Partial<Record<ControlErrorCode, string>> = {
   'rate-limited': 'Too many requests. Wait a moment before retrying.',
   'outcome-unknown': 'The submission outcome is unknown. Keep your draft and use Retry original submission; do not create a replacement submission.',
   'command-not-supported': 'This composer accepts messages, not slash commands, shell commands or stop phrases. Your draft is kept.',
+  'file-unavailable': 'This shared file is no longer available. Refresh the file list.',
+  'file-too-large': 'This file exceeds the supported transfer or preview size.',
+  'preview-unsupported': 'This file cannot be previewed safely. Download it instead.',
 };
 export class ControlApiError extends Error {
   constructor(public readonly code: ControlErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
