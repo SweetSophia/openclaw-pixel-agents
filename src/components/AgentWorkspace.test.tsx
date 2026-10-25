@@ -64,13 +64,14 @@ it('accepts manual Refresh during a pending poll and ignores its late failure', 
   access.request.mockImplementation(async (path, init) => {
     if (String(path).endsWith('/status')) return access.status;
     if (first) { first = false; signal = init.signal; return new Promise((_resolve, reject) => { rejectPoll = reject; }); }
-    return changed;
+    return { ...changed, totalEntries: 5, entries: [...changed.entries, { path: 'refreshed', name: 'refreshed', kind: 'directory' }] };
   });
   await act(() => vi.advanceTimersByTimeAsync(5000));
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })); });
   expect(signal.aborted).toBe(true); expect(screen.queryByRole('alert')).toBeNull();
+  await screen.findByRole('button', { name: 'Open folder refreshed' });
   await act(async () => { rejectPoll(Error('superseded poll')); });
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull(); expect(screen.getByRole('button', { name: 'Open folder refreshed' })).toBeVisible();
 });
 it('shows overlong child paths without offering an unusable read', async () => {
   const parent = Array(8).fill('a'.repeat(254)).join('/');
