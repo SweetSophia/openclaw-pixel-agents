@@ -39,6 +39,9 @@ describe('agent workspace lifecycle', () => {
     access.request.mockResolvedValueOnce(page('', 0, change === 'source' ? { sourceRevision: 'source-2' } : { entries: [{ ...entry, updatedAtMs: 101 }] }));
     await act(() => vi.advanceTimersByTimeAsync(5000)); expect(result.current.preview).toBeNull(); expect(revoke).toHaveBeenCalledWith('blob:workspace');
     expect(result.current.error?.code).toBe('workspace-changed');
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(result.current.error?.code).toBe('workspace-changed');
+    await act(() => result.current.refresh()); expect(result.current.error).toBeNull();
   });
   it('retains an unchanged preview on a first-page manual refresh', async () => {
     const { result } = renderHook(() => useWorkspace({ agentId: 'cylena', active: true }));

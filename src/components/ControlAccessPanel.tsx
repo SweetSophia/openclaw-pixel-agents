@@ -1,13 +1,14 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { useControlAccess } from '../control/ControlAccess';
 import { ControlApiError } from '../control/api';
 import './TaskDetails.css';
 
-export function ControlAccessPanel({ active, loading, onRefresh, error, children }: React.PropsWithChildren<{
-  active: boolean; loading: boolean; onRefresh(): Promise<void>; error?: React.ReactNode;
+export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading = false, onRefresh, error, children }: React.PropsWithChildren<{
+  active: boolean; loading: boolean; allowRefreshWhileLoading?: boolean; onRefresh(): Promise<void>; error?: React.ReactNode;
 }>) {
   const access = useControlAccess(); const keyId = useId();
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false);
+  const refreshBusy = useRef(false); const [refreshing, setRefreshing] = useState(false);
   const [accessError, setAccessError] = useState<ControlApiError | null>(null); const [unlockError, setUnlockError] = useState<string | null>(null);
   useEffect(() => { setKey(''); }, [access.state]);
   useEffect(() => {
@@ -22,9 +23,11 @@ export function ControlAccessPanel({ active, loading, onRefresh, error, children
     return () => { disposed = true; controller.abort(); clearInterval(timer); };
   }, [active, access.state, access.request]);
   const refresh = async () => {
-    if (loading) return;
+    if (refreshBusy.current || (loading && !allowRefreshWhileLoading)) return;
+    refreshBusy.current = true; setRefreshing(true);
     try { await access.request('/api/control/status'); setAccessError(null); await onRefresh(); }
     catch (failure) { setAccessError(failure instanceof ControlApiError ? failure : new ControlApiError()); }
+    finally { refreshBusy.current = false; setRefreshing(false); }
   };
   if (access.state === 'locked') {
     if (!access.status && !accessError && !unlockError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
@@ -51,7 +54,7 @@ export function ControlAccessPanel({ active, loading, onRefresh, error, children
     </section>;
   }
   return <div className="task-details">
-    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={loading} onClick={() => { void refresh(); }}>Refresh</button></div>
+    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={refreshing || (loading && !allowRefreshWhileLoading)} onClick={() => { void refresh(); }}>Refresh</button></div>
     {access.status && !access.status.canRead && <p role="status">{new ControlApiError(access.status.state === 'pairing-required' ? 'pairing-required' : access.status.state === 'auth-error' ? 'scope-required' : access.status.state === 'unsupported' ? 'unsupported' : 'unavailable').message}</p>}
     {(error || accessError) && <p className="task-notice" role="alert">{error || accessError?.message}</p>}
     {children}

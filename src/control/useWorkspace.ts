@@ -28,12 +28,13 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
     setView(old => ({ ...old, preview: null, contentLoading: null }));
   }, [setView]);
   const stop = useCallback(() => { readRevision.current++; listing.current?.abort(); listing.current = null; clearPreview(); }, [clearPreview]);
-  const load = useCallback(async () => {
-    if (!permitted() || listing.current) return;
+  const load = useCallback(async (manual = false) => {
+    if (!permitted()) return;
+    if (listing.current) { if (!manual) return; listing.current.abort(); }
     const current = readRevision.current; const { options: target, selected: directory, access: authority } = context.current;
     const controller = new AbortController(); listing.current = controller;
     const deadline = setTimeout(() => controller.abort(), 10000);
-    setView(old => ({ ...old, loading: true }));
+    setView(old => ({ ...old, loading: true, error: manual ? null : old.error }));
     try {
       const page = parseWorkspacePage(await authority.request(`/api/control/agents/${encodeURIComponent(target.agentId)}/workspace`, {
         method: 'POST', signal: controller.signal, body: JSON.stringify({ path: directory.path, offset: directory.offset }) }));
@@ -43,9 +44,10 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
       const observed = file && page.entries.find(row => row.path === file.path);
       const changed = !!file && ((prior && prior.sourceRevision !== page.sourceRevision) || !observed || observed.kind !== 'file' || observed.size !== file.size || observed.updatedAtMs !== file.updatedAtMs);
       if (changed) clearPreview();
-      setView(old => ({ ...old, page, loading: false, error: changed ? new ControlApiError('workspace-changed') : null }));
+      setView(old => ({ ...old, page, loading: false, error: changed ? new ControlApiError('workspace-changed')
+        : !manual && old.error?.code === 'workspace-changed' ? old.error : null }));
     } catch (error) {
-      if (current !== readRevision.current || !permitted()) return;
+      if (current !== readRevision.current || listing.current !== controller || !permitted()) return;
       clearPreview(); setView(old => ({ ...old, loading: false, error: error instanceof ControlApiError ? error : new ControlApiError(),
         page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
     } finally {
@@ -76,10 +78,11 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
   const navigate = useCallback((path: string, offset = 0) => {
     if (!isWorkspacePath(path) || !Number.isSafeInteger(offset) || offset < 0 || offset > WORKSPACE_LIMITS.maxOffset) return;
     stop(); const current = context.current.selected;
+    setView(old => ({ ...old, error: null }));
     setLocation({ owner: current.owner, path, offset, nonce: current.nonce + 1 });
-  }, [stop]);
+  }, [setView, stop]);
   const refresh = useCallback(async () => {
-    if (context.current.selected.offset === 0) await load(); else navigate(context.current.selected.path);
+    if (context.current.selected.offset === 0) await load(true); else navigate(context.current.selected.path);
   }, [load, navigate]);
   const act = useCallback(async (entry: WorkspaceEntry, intent: 'preview' | 'download') => {
     const page = data.current.page;

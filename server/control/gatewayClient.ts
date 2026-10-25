@@ -133,7 +133,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
         if ((WORKSPACE_METHODS as readonly string[]).includes(item.method)) {
-          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? details?.type ? 'invalid-request' : 'scope-required' : error?.code !== 'INVALID_REQUEST' ? 'unavailable'
+          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? details?.type === 'workspace_path_invalid' ? 'invalid-request' : 'scope-required' : error?.code !== 'INVALID_REQUEST' ? 'unavailable'
             : details?.type === 'workspace_file_too_large' ? 'file-too-large' : details?.type === 'workspace_file_unsupported' ? 'preview-unsupported'
               : ['workspace_path_not_found', 'workspace_file_not_found'].includes(String(details?.type)) ? 'file-unavailable' : 'invalid-request'));
           return;
