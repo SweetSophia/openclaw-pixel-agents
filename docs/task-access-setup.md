@@ -96,7 +96,7 @@ Preview content stays in tab memory. Lock, close, hidden-page and selection/sour
 
 ## Read-only workspace browsing
 
-The source version's **Workspace** tab browses the selected agent's configured workspace. It does not depend on a conversation or prove that a file is a task result. Workspace uses the same office key and paired `operator.read` grant as Task and Results; no additional key or write permission is needed. Treat the office key as trusted operator access to these agent files. npm 1.5.0 does not include this panel yet.
+Available from version **1.6.0**, the **Workspace** tab browses the selected agent's configured workspace. It does not depend on a conversation or prove that a file is a task result. Workspace uses the same office key and paired `operator.read` grant as Task and Results; no additional key or write permission is needed. Treat the office key as trusted operator access to these agent files.
 
 Open folders through the list or breadcrumbs and use Previous/Next for 50-entry pages. Refresh starts the current folder at its first page; visible metadata also updates every five seconds. A failed refresh keeps its original observation time with a last-known label and disables file actions until a current read succeeds. No conversations is a valid state for workspace browsing.
 
