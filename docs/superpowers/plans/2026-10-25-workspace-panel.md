@@ -1,6 +1,6 @@
 # Workspace Panel Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Browse the selected agent's workspace, preview bounded text/images and download supported native files from the office.
 
@@ -34,12 +34,12 @@
 
 **Interfaces:** Export `WorkspaceEntry`, `WorkspacePage`, `WorkspaceListRequest`, `WorkspaceFileRequest`, `WORKSPACE_LIMITS`, `isWorkspacePath`, `parseWorkspaceListRequest`, `parseWorkspaceFileRequest`, `parseWorkspacePage`, and `workspaceFileLimit`. Page includes `agentId,path,offset,totalEntries,entries,source,sourceRevision`; file request includes `path,offset,sourceRevision,expected:{size,updatedAtMs},intent`. `createWorkspaceService(gateway, registeredAgentIds): WorkspaceService` exposes `list(agentId,input,signal?)`, `file(agentId,input,signal?)` and `close()`. File returns the existing bytes variant of `ArtifactContent` for the existing attachment writer. Router option is optional `workspace?: WorkspaceService`; production constructs/disposes it alongside artifacts.
 
-- [ ] Write failing contract tests for paths, closed bodies, root/Unicode/empty-file metadata and reply page identity/size; service tests for metadata-only listing, preflight before get, missing/oversized/unknown-size refusal, source/agent/metadata changes and byte/MIME validation.
-- [ ] Run `npm test -- shared/controlWorkspace.test.ts server/control/workspaceService.test.ts`; expected FAIL because workspace behavior is absent.
-- [ ] Implement parsers and native normalization. Permit only optional workspace methods in the Gateway client, preserve base handshake requirements, and normalize native workspace error detail types. Add `workspace-changed` error code without changing existing task errors.
-- [ ] Add routes behind current access/mutation guards and shared content budget. Reuse existing file response writer and preview policy; wire the service in server construction and shutdown.
-- [ ] Exercise real Gateway framing/service/router with a controlled fixture, including auth, older Gateway compatibility, exact RPC params, no history/send/fallback calls, cancellation and stale revision rejection. Run `npm test -- shared/controlWorkspace.test.ts server/control/workspaceService.test.ts server/control/workspaceIntegration.test.ts server/control/gatewayClient.test.ts server/control/routes.test.ts`; expected PASS.
-- [ ] Commit the backend slice.
+- [x] Write failing contract tests for paths, closed bodies, root/Unicode/empty-file metadata and reply page identity/size; service tests for metadata-only listing, preflight before get, missing/oversized/unknown-size refusal, source/agent/metadata changes and byte/MIME validation.
+- [x] Run `npm test -- shared/controlWorkspace.test.ts server/control/workspaceService.test.ts`; expected FAIL because workspace behavior is absent.
+- [x] Implement parsers and native normalization. Permit only optional workspace methods in the Gateway client, preserve base handshake requirements, and normalize native workspace error detail types. Add `workspace-changed` error code without changing existing task errors.
+- [x] Add routes behind current access/mutation guards and shared content budget. Reuse existing file response writer and preview policy; wire the service in server construction and shutdown.
+- [x] Exercise real Gateway framing/service/router with a controlled fixture, including auth, older Gateway compatibility, exact RPC params, no history/send/fallback calls, cancellation and stale revision rejection. Run `npm test -- shared/controlWorkspace.test.ts server/control/workspaceService.test.ts server/control/workspaceIntegration.test.ts server/control/gatewayClient.test.ts server/control/routes.test.ts`; expected PASS.
+- [x] Commit the backend slice.
 
 ### Task 2: accessible agent-level browsing and private preview lifecycle
 
@@ -47,12 +47,12 @@
 
 **Interfaces:** Shared access component takes `{active,loading,onRefresh,children}` and preserves existing setup/unlock/Lock/status behavior. `useWorkspace({agentId,active})` returns `page,path,offset,loading,error,preview,contentLoading,navigate(path,offset?),refresh(),act(entry,intent),clearPreview()`. Preview discriminates text/image and owns object URLs. `AgentWorkspace({agentId,active})` owns this hook and shared access component; no TaskDetailsState shim or conversation selector.
 
-- [ ] Write failing hook/UI tests for root/ancestor/pages, zero sessions, preserved path on refresh, explicit content actions, empty/stale/unsupported errors, Unicode names and empty files. Include out-of-order reads, file metadata changes, source revision changes and teardown on hidden/lock/tab/agent/navigation.
-- [ ] Run `npm test -- src/control/useWorkspace.test.tsx src/components/AgentWorkspace.test.tsx`; expected FAIL for missing workspace UI.
-- [ ] Extract only existing access/status presentation, keeping key ownership in ControlAccessProvider. Reuse it from TaskDetails and Workspace. Preserve visible controls and Task behavior.
-- [ ] Implement five-second visible directory refresh with one request in flight, exact response identity checks and original stale timestamps. Admit content only from the current page/revision; use shared file API/header handling, safe preview MIME validation and revocable explicit-download Blob URLs. Clear late file/preview work on all spec transitions.
-- [ ] Add Workspace before Agent in the tab list and stop task/session polling there. Wrap tabs at readable sizes; use existing modal/focus behavior and 44px actions. Render text safely and use native directory/page buttons rather than a new tree widget or overlay.
-- [ ] Run workspace UI/hook and existing private access/task/results/conversation/panel tests; expected PASS. Commit UI slice.
+- [x] Write failing hook/UI tests for root/ancestor/pages, zero sessions, preserved path on refresh, explicit content actions, empty/stale/unsupported errors, Unicode names and empty files. Include out-of-order reads, file metadata changes, source revision changes and teardown on hidden/lock/tab/agent/navigation.
+- [x] Run `npm test -- src/control/useWorkspace.test.tsx src/components/AgentWorkspace.test.tsx`; expected FAIL for missing workspace UI.
+- [x] Extract only existing access/status presentation, keeping key ownership in ControlAccessProvider. Reuse it from TaskDetails and Workspace. Preserve visible controls and Task behavior.
+- [x] Implement five-second visible directory refresh with one request in flight, exact response identity checks and original stale timestamps. Admit content only from the current page/revision; use shared file API/header handling, safe preview MIME validation and revocable explicit-download Blob URLs. Clear late file/preview work on all spec transitions.
+- [x] Add Workspace before Agent in the tab list and stop task/session polling there. Wrap tabs at readable sizes; use existing modal/focus behavior and 44px actions. Render text safely and use native directory/page buttons rather than a new tree widget or overlay.
+- [x] Run workspace UI/hook and existing private access/task/results/conversation/panel tests; expected PASS. Commit UI slice.
 
 ### Task 3: native/browser qualification, documentation and independent review
 
@@ -60,9 +60,9 @@
 
 **Interfaces:** Reuse shipped setup and runtime-only rollback conventions. No new key/grant, dependency, package version or npm publication.
 
-- [ ] Verify one native list/text read with an isolated synthetic Gateway or permitted fixture; no real task or agent workspace mutation. Record the actually verified contract and limitations.
-- [ ] Run native browser checks for desktop/phone/short viewport, keyboard tabs and modal restoration, empty/current/stale/unsupported states, text/image/download actions and cleanup. Use a controlled fixture to avoid exposing live private filenames/content in screenshots.
-- [ ] Document that Workspace is agent-wide, read-only, native-limited and independent of conversation selection; explain bounds and old Gateway behavior.
-- [ ] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm run test:package`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate`; expected all PASS and zero vulnerabilities.
+- [x] Verify one native list/text read with an isolated synthetic Gateway or permitted fixture; no real task or agent workspace mutation. Record the actually verified contract and limitations.
+- [x] Run native browser checks for desktop/phone/short viewport, keyboard tabs and modal restoration, empty/current/stale/unsupported states, text/image/download actions and cleanup. Use a controlled fixture to avoid exposing live private filenames/content in screenshots.
+- [x] Document that Workspace is agent-wide, read-only, native-limited and independent of conversation selection; explain bounds and old Gateway behavior.
+- [x] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm run test:package`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate`; expected all PASS and zero vulnerabilities.
 - [ ] Commit final evidence/docs, then request one fresh whole-branch review against this plan/spec and inspect current-head bot comments. Address valid findings with targeted regressions before merging under standing authorization.
 - [ ] Deploy through the existing backup/runtime-only path only after checks/review pass; preserve state and collector, keep retired previews disabled and verify fresh roster/private read availability. No new npm publication without release authorization.
