@@ -1,0 +1,40 @@
+import React from 'react';
+import { Blob as NodeBlob } from 'node:buffer';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { AgentWorkspace } from './AgentWorkspace';
+
+const access = vi.hoisted(() => ({ request: vi.fn(), requestFile: vi.fn(), lock: vi.fn(), unlock: vi.fn(), state: 'unlocked', generation: 1,
+  status: { configured: true, state: 'ready', canRead: true, canSend: false } }));
+vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => access }));
+const report = { path: '日本語.txt', name: '日本語.txt', kind: 'file', size: 0, updatedAtMs: 100 };
+const page = { agentId: 'cylena', path: '', offset: 0, totalEntries: 4, entries: [{ path: 'notes', name: 'notes', kind: 'directory' }, report,
+  { path: 'big.png', name: 'big.png', kind: 'file', size: 2000000, updatedAtMs: 100 }, { path: 'unknown.txt', name: 'unknown.txt', kind: 'file' }],
+  source: { state: 'current', observedAt: 100 }, sourceRevision: 'source-1' };
+beforeEach(() => {
+  access.state = 'unlocked'; access.request.mockReset().mockImplementation(async (path, init) => String(path).endsWith('/status') ? access.status
+    : JSON.parse(init.body).path ? { ...page, path: 'notes', totalEntries: 0, entries: [] } : page);
+  access.requestFile.mockReset().mockResolvedValue({ kind: 'bytes', blob: new NodeBlob([''], { type: 'text/plain' }), filename: '日本語.txt', truncated: false });
+  vi.stubGlobal('Blob', NodeBlob);
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+it('browses empty folders without conversations and explains unavailable file sizes', async () => {
+  render(<AgentWorkspace agentId="cylena" active />);
+  await screen.findByRole('button', { name: 'Open folder notes' }); expect(screen.queryByLabelText('Conversation')).toBeNull();
+  expect(screen.getByText(/^0 B/)).toBeVisible(); expect(screen.getByText(/size unknown/i)).toBeVisible(); expect(screen.getByText(/too large/i)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Open folder notes' })); await screen.findByText(/this folder is empty/i);
+  fireEvent.click(screen.getByRole('button', { name: 'Workspace root' })); await screen.findByRole('button', { name: 'Open folder notes' });
+});
+it('previews empty files and text literally without loading contents automatically', async () => {
+  render(<AgentWorkspace agentId="cylena" active />); const preview = await screen.findByRole('button', { name: 'Preview 日本語.txt' });
+  expect(access.requestFile).not.toHaveBeenCalled(); fireEvent.click(preview); await screen.findByText(/this file is empty/i);
+  access.requestFile.mockResolvedValueOnce({ kind: 'bytes', blob: new NodeBlob(['<script>literal</script>'], { type: 'text/plain' }), filename: '日本語.txt', truncated: false });
+  fireEvent.click(screen.getByRole('button', { name: 'Close preview' })); fireEvent.click(preview);
+  await screen.findByText('<script>literal</script>'); expect(document.querySelector('script')).toBeNull();
+});
+it('uses the existing unlock gate and performs no workspace RPCs while locked', async () => {
+  access.state = 'locked'; render(<AgentWorkspace agentId="cylena" active />);
+  await screen.findByRole('heading', { name: 'Unlock task details' });
+  await waitFor(() => expect(access.request.mock.calls.every(([path]) => String(path).endsWith('/status'))).toBe(true));
+  expect(screen.queryByLabelText('Conversation')).toBeNull(); expect(access.requestFile).not.toHaveBeenCalled();
+});

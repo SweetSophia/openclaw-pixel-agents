@@ -14,6 +14,7 @@ const messages: Partial<Record<ControlErrorCode, string>> = {
   'file-unavailable': 'This shared file is no longer available. Refresh the file list.',
   'file-too-large': 'This file exceeds the supported transfer or preview size.',
   'preview-unsupported': 'This file cannot be previewed safely. Download it instead.',
+  'workspace-changed': 'This workspace selection changed. Refresh the directory.',
 };
 export class ControlApiError extends Error {
   constructor(public readonly code: ControlErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

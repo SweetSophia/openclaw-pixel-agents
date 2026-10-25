@@ -1,9 +1,10 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useId } from 'react';
 import { type ControlRunState } from '../../shared/control';
 import { useControlAccess } from '../control/ControlAccess';
-import { ControlApiError, targetIdentity } from '../control/api';
+import { targetIdentity } from '../control/api';
 import { useTaskDetails, type TaskDetailsState } from '../control/useTaskDetails';
 import './TaskDetails.css';
+import { ControlAccessPanel } from './ControlAccessPanel';
 
 const runLabels: Record<ControlRunState, string> = { running: 'Running', completed: 'Completed', failed: 'Failed', aborted: 'Stopped', 'not-running': 'Not running', unknown: 'Unknown' };
 const outcomeLabels = { pending: 'No result recorded', success: 'Success recorded', error: 'Error recorded', unknown: 'Outcome unavailable' };
@@ -15,55 +16,10 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
 }
 export function TaskDetailsView({ agentId, active, state, children }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode }) {
   const access = useControlAccess();
-  const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false); const [accessError, setAccessError] = useState<ControlApiError | null>(null);
-  const [unlockError, setUnlockError] = useState<string | null>(null);
-  const keyId = useId(); const selectorId = useId();
+  const selectorId = useId();
   const task = state.task && access.status?.canRead === false
     ? { ...state.task, source: { ...state.task.source, state: 'stale' as const } } : state.task;
-  useEffect(() => {
-    if (!active) return;
-    let disposed = false; const controller = new AbortController();
-    const check = async () => {
-      if (document.visibilityState === 'hidden') return;
-      try { await access.request('/api/control/status', { signal: controller.signal }); if (!disposed) setAccessError(null); }
-      catch (error) { if (!disposed) setAccessError(error instanceof ControlApiError ? error : new ControlApiError()); }
-    };
-    void check(); const timer = access.state === 'unlocked' ? setInterval(() => { void check(); }, 5000) : undefined;
-    return () => { disposed = true; controller.abort(); clearInterval(timer); };
-  }, [active, access.state, access.request]);
-  const refresh = async () => {
-    if (state.loading || state.sessionsLoading) return;
-    try { await access.request('/api/control/status'); setAccessError(null); await state.refresh(); }
-    catch (error) { setAccessError(error instanceof ControlApiError ? error : new ControlApiError()); }
-  };
-  if (access.state === 'locked') {
-    if (!access.status && !accessError && !unlockError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
-    const setup = access.status?.configured === false;
-    const transport = accessError?.code === 'transport-required';
-    return <section className="task-details task-access" aria-label="Task access">
-      <p className="task-eyebrow">FROM OPENCLAW</p>
-      <h3>{setup ? 'Task access is not connected' : transport ? 'A secure connection is required' : 'Unlock task details'}</h3>
-      <p>{setup ? 'Connect the office to OpenClaw to see real requests, run state and recorded activity. Your office roster continues to update normally.'
-        : transport ? 'Use HTTPS or the office’s configured private Tailnet connection before entering an access key.' : 'Use the office task access key. It stays in this tab until you lock it or reload the page.'}</p>
-      <p>Ask the person who runs this office for its task access key. Hosting your own office? Follow the setup guide.</p>
-      <a className="task-setup-link" href="https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/task-access-setup.md" target="_blank" rel="noreferrer">Task access setup guide</a>
-      {!setup && !transport && <form onSubmit={async event => {
-        event.preventDefault(); if (unlocking) return; setUnlocking(true); setAccessError(null); setUnlockError(null);
-        try { await access.unlock(key); } catch (error) { setUnlockError(error instanceof ControlApiError && error.code !== 'locked' ? error.message : 'Unlock failed. Check your access key and try again.'); }
-        finally { setKey(''); setUnlocking(false); }
-      }}>
-        <label htmlFor={keyId}>Task access key</label>
-        <input id={keyId} type="password" autoComplete="off" value={key} maxLength={4096} onChange={event => setKey(event.target.value)} />
-        <button type="submit" disabled={!key || unlocking}>{unlocking ? 'Unlocking…' : 'Unlock task details'}</button>
-      </form>}
-      {unlockError && <p role="alert">{unlockError}</p>}
-      {accessError && !['locked', 'transport-required'].includes(accessError.code) && <p role="alert">{accessError.message}</p>}
-      {(setup || transport || accessError?.code === 'unavailable') && <button type="button" onClick={() => { void refresh(); }}>Check connection</button>}
-    </section>;
-  }
-  return <div className="task-details">
-    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={state.loading || state.sessionsLoading} onClick={() => { void refresh(); }}>Refresh</button></div>
-    {access.status && !access.status.canRead && <p role="status">{new ControlApiError(access.status.state === 'pairing-required' ? 'pairing-required' : access.status.state === 'auth-error' ? 'scope-required' : access.status.state === 'unsupported' ? 'unsupported' : 'unavailable').message}</p>}
+  return <ControlAccessPanel active={active} loading={state.loading || state.sessionsLoading} onRefresh={state.refresh} error={state.error?.message}>
     <div className="task-conversation">
       <label htmlFor={selectorId}>Conversation</label>
       <select id={selectorId} value={state.selected ? targetIdentity(state.selected) : ''} onChange={event => {
@@ -76,7 +32,6 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
       {state.nextSessionsCursor && <button type="button" aria-disabled={state.sessionsLoading} onClick={() => { if (!state.sessionsLoading) void state.loadMoreSessions(); }}>Load more conversations</button>}
       {!state.sessionsLoading && !state.sessions.length && !state.error && access.status?.canRead && <p>No visible conversations for this agent yet.</p>}
     </div>
-    {(state.error || accessError) && <p className="task-notice" role="alert">{(state.error ?? accessError)?.message}</p>}
     {children}
     {!children && state.loading && !task && <p role="status">Loading verified task facts…</p>}
     {!children && task && <>
@@ -107,5 +62,5 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
       </section>
       <p className="task-muted">Task facts follow this conversation. Office activity is a separate roster summary.</p>
     </>}
-  </div>;
+  </ControlAccessPanel>;
 }
