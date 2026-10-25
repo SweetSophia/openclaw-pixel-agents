@@ -10,6 +10,8 @@ export interface WorkspaceFileRequest extends WorkspaceListRequest {
 const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const closed = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).every(key => keys.includes(key));
 const revision = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\u0000-\u0020\u007f-\u009f]/.test(value);
+const workspaceName = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 255
+  && value !== '.' && value !== '..' && !/[/\\\u0000-\u001f\u007f-\u009f]/.test(value);
 export function isWorkspacePath(value: unknown): value is string {
   return typeof value === 'string' && value.length <= WORKSPACE_LIMITS.pathCharacters && !/[\\\u0000-\u001f\u007f-\u009f]/.test(value)
     && !/^[A-Za-z]:/.test(value) && (value === '' || value.split('/').every(part => !!part && part !== '.' && part !== '..'));
@@ -42,7 +44,7 @@ export function parseWorkspacePage(value: unknown): WorkspacePage | null {
   for (const raw of input.entries) {
     const row = controlRecord(raw);
     if (!row || !closed(row, ['path', 'name', 'kind', 'size', 'updatedAtMs']) || typeof row.path !== 'string'
-      || !isWorkspacePath(row.name) || !row.name || row.name.length > 255 || row.name.includes('/')
+      || !workspaceName(row.name)
       || row.path !== (page.path ? `${page.path}/` : '') + row.name || (row.kind !== 'file' && row.kind !== 'directory')
       || (row.size !== undefined && !integer(row.size)) || (row.updatedAtMs !== undefined && !integer(row.updatedAtMs)) || paths.has(row.path)) return null;
     paths.add(row.path); entries.push({ path: row.path, name: row.name, kind: row.kind,

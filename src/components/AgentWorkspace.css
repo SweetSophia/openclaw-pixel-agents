@@ -14,5 +14,6 @@
 .workspace-preview-title h4 { margin: 0; flex: 1 1 120px; }
 .workspace-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; line-height: 1.6; user-select: text; }
 .workspace-preview img { display: block; max-width: 100%; max-height: 420px; object-fit: contain; margin: 12px auto; }
+.workspace-preview-status { margin: 0; min-height: 0; }
 .agent-workspace button { min-width: 44px; min-height: 44px; box-sizing: border-box; }
 .agent-workspace button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }

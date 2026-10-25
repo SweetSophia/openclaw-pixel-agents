@@ -102,7 +102,7 @@ describe('scoped task Gateway client', () => {
     expect(host.frames.map(frame => frame.method).filter(method => method !== 'sessions.subscribe')).toEqual(['connect', 'agents.workspace.list', 'agents.workspace.list', 'agents.workspace.get']);
     expect(host.frames[0].params.scopes).toEqual(['operator.read']);
   });
-  it.each([['workspace_file_too_large', 'file-too-large'], ['workspace_file_unsupported', 'preview-unsupported'], ['workspace_path_not_found', 'file-unavailable'], ['workspace_path_invalid', 'invalid-request'], ['future_workspace_error', 'invalid-request'], ['workspace_path_invalid', 'invalid-request', 'FORBIDDEN'], [undefined, 'scope-required', 'FORBIDDEN']])('normalizes native workspace %s without raw diagnostics', async (type, code, nativeCode?: string) => {
+  it.each([['workspace_file_too_large', 'file-too-large'], ['workspace_file_unsupported', 'preview-unsupported'], ['workspace_path_not_found', 'file-unavailable'], ['workspace_path_invalid', 'invalid-request'], ['future_workspace_error', 'invalid-request'], ['workspace_path_invalid', 'invalid-request', 'FORBIDDEN'], ['future_grant_denied', 'scope-required', 'FORBIDDEN'], [undefined, 'scope-required', 'FORBIDDEN']])('normalizes native workspace %s without raw diagnostics', async (type, code, nativeCode?: string) => {
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
       features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'agents.workspace.get'], events: [] },
     }) : { type: 'res', id: frame.id, ok: false, error: { code: nativeCode ?? 'INVALID_REQUEST', message: 'private-host-path', details: { type } } })));

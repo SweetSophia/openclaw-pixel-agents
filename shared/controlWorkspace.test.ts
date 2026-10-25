@@ -9,6 +9,12 @@ describe('workspace boundary contracts', () => {
     expect(isWorkspacePath('notes/日本語.txt')).toBe(true);
     expect(parseWorkspacePage(page)).toEqual(page);
   });
+  it.each(['C:notes.txt', 'a:b', 'C:'])('admits the POSIX leaf %s inside a directory', name => {
+    const path = `notes/${name}`;
+    expect(parseWorkspacePage({ ...page, entries: [{ ...entry, name, path }] })?.entries[0].path).toBe(path);
+    expect(isWorkspacePath(path)).toBe(true);
+    expect(isWorkspacePath(name)).toBe(false);
+  });
   it.each(['/etc/passwd', '../secret', 'a/../b', 'a/./b', 'a//b', 'a\\b', 'C:secret', '//host/share', 'a\u0000b', 'a\u0085b', 'a/'])('rejects noncanonical path %s', path => {
     expect(isWorkspacePath(path)).toBe(false); expect(parseWorkspaceListRequest({ path })).toBeNull();
   });
