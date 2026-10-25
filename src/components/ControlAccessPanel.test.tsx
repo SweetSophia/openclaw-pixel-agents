@@ -48,6 +48,27 @@ it('announces an in-flight locked Check connection and coalesces retries', async
   await act(async () => { release({}); });
   expect(screen.getByRole('button', { name: 'Check connection' })).toHaveAttribute('aria-disabled', 'false');
 });
+it('bounds the whole reload after a successful status probe', async () => {
+  vi.useFakeTimers(); access.state = 'unlocked';
+  const refresh = vi.fn((_signal?: AbortSignal) => new Promise<void>(() => {}));
+  render(<ControlAccessPanel active loading={false} onRefresh={refresh} />);
+  await act(async () => {}); fireEvent.click(screen.getByRole('button', { name: 'Refresh' })); await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(refresh.mock.calls[0][0]?.aborted).toBe(true);
+  expect(screen.getByRole('button', { name: 'Refresh' })).toHaveAttribute('aria-disabled', 'false');
+  expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i);
+});
+it('keeps locked retry available when an aborted body read is reported as invalid-source', async () => {
+  vi.useFakeTimers(); access.request.mockRejectedValueOnce(new ControlApiError('unavailable'));
+  render(<ControlAccessPanel active loading={false} onRefresh={async () => {}} />);
+  await act(async () => {});
+  access.request.mockImplementationOnce((_path, init) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true });
+  }));
+  fireEvent.click(screen.getByRole('button', { name: 'Check connection' }));
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(screen.getByRole('button', { name: 'Check connection' })).toHaveAttribute('aria-disabled', 'false');
+});
 it('coalesces manual Refresh clicks while allowing the first to replace a background load', async () => {
   access.state = 'unlocked'; let release!: () => void;
   const refresh = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));

@@ -60,9 +60,11 @@ describe('agent workspace lifecycle', () => {
     let settled = false; let refreshing!: Promise<void>;
     act(() => { refreshing = result.current.refresh().then(() => { settled = true; }); });
     await act(async () => {});
-    expect(settled).toBe(false);
-    await act(async () => { release(page('notes', 0)); await refreshing; });
-    expect(settled).toBe(true); expect(result.current.page?.offset).toBe(0);
+    const reads = access.request.mock.calls.length; let secondSettled = false;
+    const second = result.current.refresh().then(() => { secondSettled = true; }); await act(async () => {});
+    expect(settled).toBe(false); expect(secondSettled).toBe(false); expect(access.request).toHaveBeenCalledTimes(reads);
+    await act(async () => { release(page('notes', 0)); await Promise.all([refreshing, second]); });
+    expect(settled).toBe(true); expect(secondSettled).toBe(true); expect(result.current.page?.offset).toBe(0);
   });
   it.each(['error', 'tab', 'agent', 'directory', 'hidden', 'unmount'] as const)('settles a paginated Refresh after %s', async reason => {
     const initial = { agentId: 'cylena', active: true };
@@ -81,6 +83,19 @@ describe('agent workspace lifecycle', () => {
     if (reason === 'hidden') act(() => { vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden'); document.dispatchEvent(new Event('visibilitychange')); });
     if (reason === 'unmount') unmount();
     await act(async () => { await refreshing; }); expect(settled).toBe(true);
+  });
+  it('forwards the whole-refresh deadline to the first-page read after navigation', async () => {
+    const { result } = renderHook(() => useWorkspace({ agentId: 'cylena', active: true }));
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    act(() => result.current.navigate('notes', 50)); await waitFor(() => expect(result.current.page?.offset).toBe(50));
+    let signal!: AbortSignal;
+    access.request.mockImplementationOnce((_path, init) => {
+      signal = init.signal; return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true }));
+    });
+    const controller = new AbortController(); let refreshing!: Promise<void>;
+    act(() => { refreshing = result.current.refresh(controller.signal); }); await act(async () => {});
+    act(() => controller.abort()); await act(async () => { await refreshing; });
+    expect(signal.aborted).toBe(true); expect(result.current.loading).toBe(false); expect(result.current.error?.code).toBe('unavailable');
   });
   it.each(['tab', 'agent', 'lock', 'hidden', 'directory'] as const)('aborts file reads and drops late bytes on %s', async reason => {
     let release!: (value: unknown) => void; access.requestFile.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));

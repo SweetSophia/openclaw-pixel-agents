@@ -18,6 +18,52 @@ function setup(sessions = [a, b]) {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
   const results = (target = a): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 100 }, sourceRevision: 'source-1', runState: 'running', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false });
+  it.each(['sessions', 'task', 'results'])('times out a stalled %s read and frees its request slot', async stalled => {
+    setup(); vi.useFakeTimers();
+    const normal = async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : stalled === 'results' ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body)));
+    f.request.mockImplementation(normal);
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, resultsActive: stalled === 'results' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    let signal!: AbortSignal;
+    f.request.mockImplementation((path: string, init?: RequestInit) => {
+      if (!path.endsWith(`/${stalled}`)) return normal(path, init);
+      signal = init!.signal!; return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true }));
+    });
+    let pending!: Promise<void>; act(() => { pending = result.current.refresh(); });
+    await act(() => vi.advanceTimersByTimeAsync(10000)); await act(async () => { await pending; });
+    expect(signal.aborted).toBe(true); expect(result.current.loading).toBe(false); expect(result.current.sessionsLoading).toBe(false);
+    expect(result.current.error?.code).toBe('unavailable');
+    if (stalled !== 'sessions') expect((stalled === 'results' ? result.current.results : result.current.task)?.source).toEqual({ state: 'stale', observedAt: 100 });
+    f.request.mockImplementation(normal); f.request.mockClear(); await act(() => result.current.refresh());
+    expect(f.request.mock.calls.some(([path]) => String(path).endsWith(`/${stalled}`))).toBe(true);
+  });
+  it('forwards manual cancellation to both Task refresh reads', async () => {
+    setup(); vi.useFakeTimers();
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
+    await act(() => vi.advanceTimersByTimeAsync(0)); const signals: AbortSignal[] = [];
+    f.request.mockImplementation((_path: string, init?: RequestInit) => {
+      const signal = init!.signal!; signals.push(signal);
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true }));
+    });
+    const controller = new AbortController(); let pending!: Promise<void>;
+    act(() => { pending = result.current.refresh(controller.signal); controller.abort(); });
+    await act(async () => { await pending; });
+    expect(signals).toHaveLength(2); expect(signals.every(signal => signal.aborted)).toBe(true);
+    expect(result.current.loading).toBe(false); expect(result.current.sessionsLoading).toBe(false);
+  });
+  it('clears a timed-out session-list error after a successful empty-list retry', async () => {
+    setup([]); vi.useFakeTimers();
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: '', active: true }));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    f.request.mockImplementationOnce((_path: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true });
+    }));
+    let pending!: Promise<void>; act(() => { pending = result.current.refresh(); });
+    await act(() => vi.advanceTimersByTimeAsync(10000)); await act(async () => { await pending; });
+    expect(result.current.error?.code).toBe('unavailable');
+    await act(() => result.current.refresh()); expect(result.current.error).toBeNull(); expect(result.current.sessions).toEqual([]);
+  });
   it('shares selection across tabs and uses only one results read per visible five-second tick', async () => {
     setup(); vi.useFakeTimers(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
     const { result, rerender } = renderHook(({ resultsActive, active }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active, resultsActive, taskActive: !resultsActive }), { initialProps: { resultsActive: false, active: true } });

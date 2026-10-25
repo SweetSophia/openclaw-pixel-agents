@@ -1,10 +1,11 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useControlAccess } from '../control/ControlAccess';
 import { ControlApiError } from '../control/api';
+import { controlReadDeadline } from '../control/readDeadline';
 import './TaskDetails.css';
 
 export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading = false, onRefresh, error, children }: React.PropsWithChildren<{
-  active: boolean; loading: boolean; allowRefreshWhileLoading?: boolean; onRefresh(): Promise<void>; error?: React.ReactNode;
+  active: boolean; loading: boolean; allowRefreshWhileLoading?: boolean; onRefresh(signal?: AbortSignal): Promise<void>; error?: React.ReactNode;
 }>) {
   const access = useControlAccess(); const keyId = useId();
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false);
@@ -27,10 +28,20 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
   const refresh = async () => {
     if (refreshBusy.current || (loading && !allowRefreshWhileLoading)) return;
     refreshBusy.current = true; setRefreshing(true); setRefreshError(null);
-    const controller = new AbortController(); const deadline = setTimeout(() => controller.abort(), 10000);
-    try { await access.request('/api/control/status', { signal: controller.signal }); setAccessError(null); await onRefresh(); }
-    catch (failure) { setRefreshError(failure instanceof ControlApiError ? failure : new ControlApiError()); }
-    finally { clearTimeout(deadline); refreshBusy.current = false; setRefreshing(false); }
+    const controller = new AbortController(); const dispose = controlReadDeadline(controller);
+    let abort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(new ControlApiError('unavailable'));
+      controller.signal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      await Promise.race([aborted, (async () => {
+        await access.request('/api/control/status', { signal: controller.signal });
+        if (controller.signal.aborted) throw new ControlApiError('unavailable');
+        setAccessError(null); await onRefresh(controller.signal);
+      })()]);
+    } catch (failure) { setRefreshError(controller.signal.aborted ? new ControlApiError('unavailable') : failure instanceof ControlApiError ? failure : new ControlApiError()); }
+    finally { dispose(); controller.signal.removeEventListener('abort', abort); refreshBusy.current = false; setRefreshing(false); }
   };
   if (access.state === 'locked') {
     if (!access.status && !statusError && !unlockError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
