@@ -10,7 +10,9 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false);
   const refreshBusy = useRef(false); const [refreshing, setRefreshing] = useState(false);
   const [accessError, setAccessError] = useState<ControlApiError | null>(null); const [unlockError, setUnlockError] = useState<string | null>(null);
-  useEffect(() => { setKey(''); }, [access.state]);
+  const [refreshError, setRefreshError] = useState<ControlApiError | null>(null);
+  const statusError = refreshError ?? accessError;
+  useEffect(() => { setKey(''); setRefreshError(null); }, [access.state]);
   useEffect(() => {
     if (!active) return;
     let disposed = false; const controller = new AbortController();
@@ -24,14 +26,15 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
   }, [active, access.state, access.request]);
   const refresh = async () => {
     if (refreshBusy.current || (loading && !allowRefreshWhileLoading)) return;
-    refreshBusy.current = true; setRefreshing(true);
-    try { await access.request('/api/control/status'); setAccessError(null); await onRefresh(); }
-    catch (failure) { setAccessError(failure instanceof ControlApiError ? failure : new ControlApiError()); }
-    finally { refreshBusy.current = false; setRefreshing(false); }
+    refreshBusy.current = true; setRefreshing(true); setRefreshError(null);
+    const controller = new AbortController(); const deadline = setTimeout(() => controller.abort(), 10000);
+    try { await access.request('/api/control/status', { signal: controller.signal }); setAccessError(null); await onRefresh(); }
+    catch (failure) { setRefreshError(failure instanceof ControlApiError ? failure : new ControlApiError()); }
+    finally { clearTimeout(deadline); refreshBusy.current = false; setRefreshing(false); }
   };
   if (access.state === 'locked') {
-    if (!access.status && !accessError && !unlockError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
-    const setup = access.status?.configured === false; const transport = accessError?.code === 'transport-required';
+    if (!access.status && !statusError && !unlockError && !unlocking) return <section className="task-details task-access" aria-label="Task access"><p role="status">Checking task access…</p></section>;
+    const setup = access.status?.configured === false; const transport = statusError?.code === 'transport-required';
     return <section className="task-details task-access" aria-label="Task access">
       <p className="task-eyebrow">FROM OPENCLAW</p>
       <h3>{setup ? 'Task access is not connected' : transport ? 'A secure connection is required' : 'Unlock task details'}</h3>
@@ -49,14 +52,14 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
         <button type="submit" disabled={!key || unlocking}>{unlocking ? 'Unlocking…' : 'Unlock task details'}</button>
       </form>}
       {unlockError && <p role="alert">{unlockError}</p>}
-      {accessError && !['locked', 'transport-required'].includes(accessError.code) && <p role="alert">{accessError.message}</p>}
-      {(setup || transport || accessError?.code === 'unavailable') && <button type="button" onClick={() => { void refresh(); }}>Check connection</button>}
+      {statusError && !['locked', 'transport-required'].includes(statusError.code) && <p role="alert">{statusError.message}</p>}
+      {(setup || transport || statusError?.code === 'unavailable') && <button type="button" aria-disabled={refreshing} onClick={() => { void refresh(); }}>{refreshing ? 'Checking…' : 'Check connection'}</button>}
     </section>;
   }
   return <div className="task-details">
     <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={refreshing || (loading && !allowRefreshWhileLoading)} onClick={() => { void refresh(); }}>Refresh</button></div>
     {access.status && !access.status.canRead && <p role="status">{new ControlApiError(access.status.state === 'pairing-required' ? 'pairing-required' : access.status.state === 'auth-error' ? 'scope-required' : access.status.state === 'unsupported' ? 'unsupported' : 'unavailable').message}</p>}
-    {(error || accessError) && <p className="task-notice" role="alert">{error || accessError?.message}</p>}
+    {(refreshError || error || accessError) && <p className="task-notice" role="alert">{refreshError?.message || error || accessError?.message}</p>}
     {children}
   </div>;
 }

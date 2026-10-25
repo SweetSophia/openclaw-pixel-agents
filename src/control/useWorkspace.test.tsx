@@ -22,7 +22,8 @@ describe('agent workspace lifecycle', () => {
     const { result } = renderHook(() => useWorkspace({ agentId: 'cylena', active: true }));
     await waitFor(() => expect(result.current.page?.path).toBe('')); expect(access.requestFile).not.toHaveBeenCalled();
     act(() => result.current.navigate('notes', 50)); await waitFor(() => expect(result.current.page?.offset).toBe(50));
-    await act(() => result.current.refresh()); await waitFor(() => expect(result.current.page?.offset).toBe(0)); expect(result.current.path).toBe('notes');
+    let refreshing!: Promise<void>; act(() => { refreshing = result.current.refresh(); });
+    await act(async () => { await refreshing; }); expect(result.current.page?.offset).toBe(0); expect(result.current.path).toBe('notes');
     expect(access.request.mock.calls.every(([path]) => String(path).endsWith('/workspace'))).toBe(true);
   });
   it('retains the original stale observation and disables file actions after failed refresh', async () => {
@@ -49,6 +50,37 @@ describe('agent workspace lifecycle', () => {
     await act(() => result.current.act(entry, 'preview'));
     await act(() => result.current.refresh());
     expect(result.current.preview).toMatchObject({ kind: 'text', text: 'hello' });
+  });
+  it('keeps a paginated Refresh pending until the first-page listing is applied', async () => {
+    const { result } = renderHook(() => useWorkspace({ agentId: 'cylena', active: true }));
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    act(() => result.current.navigate('notes', 50)); await waitFor(() => expect(result.current.page?.offset).toBe(50));
+    let release!: (value: unknown) => void;
+    access.request.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    let settled = false; let refreshing!: Promise<void>;
+    act(() => { refreshing = result.current.refresh().then(() => { settled = true; }); });
+    await act(async () => {});
+    expect(settled).toBe(false);
+    await act(async () => { release(page('notes', 0)); await refreshing; });
+    expect(settled).toBe(true); expect(result.current.page?.offset).toBe(0);
+  });
+  it.each(['error', 'tab', 'agent', 'directory', 'hidden', 'unmount'] as const)('settles a paginated Refresh after %s', async reason => {
+    const initial = { agentId: 'cylena', active: true };
+    const { result, rerender, unmount } = renderHook(props => useWorkspace(props), { initialProps: initial });
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    act(() => result.current.navigate('notes', 50)); await waitFor(() => expect(result.current.page?.offset).toBe(50));
+    let reject!: (error: Error) => void;
+    access.request.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    let refreshing!: Promise<void>; let settled = false;
+    act(() => { refreshing = result.current.refresh().then(() => { settled = true; }); });
+    await act(async () => {}); expect(settled).toBe(false);
+    if (reason === 'error') act(() => { reject(new ControlApiError()); });
+    if (reason === 'tab') rerender({ ...initial, active: false });
+    if (reason === 'agent') rerender({ ...initial, agentId: 'other' });
+    if (reason === 'directory') act(() => result.current.navigate('other'));
+    if (reason === 'hidden') act(() => { vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden'); document.dispatchEvent(new Event('visibilitychange')); });
+    if (reason === 'unmount') unmount();
+    await act(async () => { await refreshing; }); expect(settled).toBe(true);
   });
   it.each(['tab', 'agent', 'lock', 'hidden', 'directory'] as const)('aborts file reads and drops late bytes on %s', async reason => {
     let release!: (value: unknown) => void; access.requestFile.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));

@@ -18,6 +18,14 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
   const context = useRef({ options, access, selected }); context.current = { options, access, selected };
   const readRevision = useRef(0); const contentRevision = useRef(0);
   const listing = useRef<AbortController | null>(null); const content = useRef<AbortController | null>(null);
+  // Returning to page one must await the matching load, rather than just scheduling React navigation.
+  const pendingRefresh = useRef<{ owner: string; nonce: number; promise: Promise<void>; resolve(): void } | null>(null);
+  const finishRefresh = useCallback((directory?: { owner: string; nonce: number }) => {
+    const pending = pendingRefresh.current;
+    if (pending && (!directory || (pending.owner === directory.owner && pending.nonce === directory.nonce))) {
+      pendingRefresh.current = null; pending.resolve();
+    }
+  }, []);
   const previewEntry = useRef<WorkspaceEntry | null>(null); const urls = useRef(new Set<string>()); const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const [visible, setVisible] = useState(document.visibilityState !== 'hidden');
   const permitted = () => context.current.options.active && context.current.access.state === 'unlocked' && context.current.access.status?.canRead && document.visibilityState !== 'hidden';
@@ -58,23 +66,27 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
           clearPreview(); setView(old => ({ ...old, loading: false, error: new ControlApiError(), page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
         }
       }
+      finishRefresh(directory);
     }
-  }, [clearPreview, setView]);
+  }, [clearPreview, finishRefresh, setView]);
   useLayoutEffect(() => {
+    const pending = pendingRefresh.current;
+    if (pending && (pending.owner !== owner || pending.nonce !== selected.nonce)) finishRefresh();
     stop();
-    if (!options.active || !visible || access.state !== 'unlocked' || ['auth-error', 'pairing-required'].includes(access.status?.state ?? '')) { setView(empty); return; }
+    if (!options.active || !visible || access.state !== 'unlocked' || ['auth-error', 'pairing-required'].includes(access.status?.state ?? '')) { finishRefresh(); setView(empty); return; }
     const page = data.current.page;
     if (!page || page.agentId !== options.agentId || page.path !== selected.path || page.offset !== selected.offset) setView(empty);
     if (!access.status?.canRead) {
+      finishRefresh();
       setView(old => ({ ...old, loading: false, error: new ControlApiError(), page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null })); return;
     }
     void load(); const timer = setInterval(() => { void load(); }, 5000);
     return () => { clearInterval(timer); stop(); };
-  }, [owner, selected.path, selected.offset, selected.nonce, options.active, visible, access.state, access.status?.canRead, access.status?.state, load, setView, stop]);
+  }, [owner, selected.path, selected.offset, selected.nonce, options.active, visible, access.state, access.status?.canRead, access.status?.state, finishRefresh, load, setView, stop]);
   useEffect(() => {
-    const change = () => { if (document.visibilityState === 'hidden') { stop(); setView(empty); } setVisible(document.visibilityState !== 'hidden'); };
-    document.addEventListener('visibilitychange', change); return () => { document.removeEventListener('visibilitychange', change); stop(); };
-  }, [setView, stop]);
+    const change = () => { if (document.visibilityState === 'hidden') { stop(); finishRefresh(); setView(empty); } setVisible(document.visibilityState !== 'hidden'); };
+    document.addEventListener('visibilitychange', change); return () => { document.removeEventListener('visibilitychange', change); stop(); finishRefresh(); };
+  }, [finishRefresh, setView, stop]);
   const navigate = useCallback((path: string, offset = 0) => {
     if (!isWorkspacePath(path) || !Number.isSafeInteger(offset) || offset < 0 || offset > WORKSPACE_LIMITS.maxOffset) return;
     stop(); const current = context.current.selected;
@@ -82,7 +94,13 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
     setLocation({ owner: current.owner, path, offset, nonce: current.nonce + 1 });
   }, [setView, stop]);
   const refresh = useCallback(async () => {
-    if (context.current.selected.offset === 0) await load(true); else navigate(context.current.selected.path);
+    if (!permitted()) return;
+    if (pendingRefresh.current) return pendingRefresh.current.promise;
+    const directory = context.current.selected;
+    if (directory.offset === 0) { await load(true); return; }
+    let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; });
+    pendingRefresh.current = { owner: directory.owner, nonce: directory.nonce + 1, promise, resolve };
+    navigate(directory.path); await promise;
   }, [load, navigate]);
   const act = useCallback(async (entry: WorkspaceEntry, intent: 'preview' | 'download') => {
     const page = data.current.page;
