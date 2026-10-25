@@ -12,6 +12,7 @@
 .task-details label { display: block; font-weight: 600; margin-bottom: 8px; }
 .task-details select, .task-access input { width: 100%; min-width: 0; margin-bottom: 8px; }
 .task-access p { color: var(--text-muted); }
+.task-access .task-notice { color: var(--text-muted); margin: 12px 0; }
 .task-access form { margin: 24px 0; }
 .task-setup-link { display: inline-block; box-sizing: border-box; min-height: 44px; padding: 10px 0; color: var(--acc-cyan); }
 .task-state { padding: 16px; margin-bottom: 24px; border: 1px solid rgba(0,240,255,.2); background: rgba(0,240,255,.03); border-radius: 8px; }

@@ -78,6 +78,24 @@ it('keeps locked retry available when an aborted body read is reported as invali
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(screen.getByRole('button', { name: 'Check connection' })).toHaveAttribute('aria-disabled', 'false');
 });
+it.each(['transport-required', 'locked'] as const)('keeps a manual timeout visible and retryable beside a %s access failure', async code => {
+  vi.useFakeTimers(); access.request.mockRejectedValueOnce(new ControlApiError('transport-required'));
+  const refresh = vi.fn(async () => {});
+  const { rerender } = render(<ControlAccessPanel active loading={false} onRefresh={refresh} />);
+  await act(async () => {});
+  access.request.mockImplementationOnce(() => new Promise(() => {}));
+  fireEvent.click(screen.getByRole('button', { name: 'Check connection' }));
+  access.request.mockRejectedValueOnce(new ControlApiError(code));
+  rerender(<ControlAccessPanel active={false} loading={false} onRefresh={refresh} />);
+  rerender(<ControlAccessPanel active loading={false} onRefresh={refresh} />);
+  await act(async () => {}); await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(screen.getByRole('alert')).toHaveTextContent('The request timed out. Try again.');
+  expect(screen.getByRole('alert')).not.toHaveTextContent(new ControlApiError(code).message);
+  const button = screen.getByRole('button', { name: 'Check connection' });
+  expect(button).toHaveAttribute('aria-disabled', 'false');
+  await act(async () => { fireEvent.click(button); });
+  expect(refresh).toHaveBeenCalledOnce(); expect(screen.queryByRole('alert')).toBeNull();
+});
 it('coalesces manual Refresh clicks while allowing the first to replace a background load', async () => {
   access.state = 'unlocked'; let release!: () => void;
   const refresh = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
