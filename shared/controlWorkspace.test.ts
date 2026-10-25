@@ -18,6 +18,10 @@ describe('workspace boundary contracts', () => {
     expect(parseWorkspacePage({ ...page, entries: [{ ...entry, path: 'other/日本語.txt' }] })).toBeNull();
     expect(parseWorkspacePage({ ...page, entries: [entry, entry], totalEntries: 2 })).toBeNull();
     expect(parseWorkspacePage({ ...page, root: '/private/host' })).toBeNull();
+    expect(parseWorkspaceListRequest({ path: null })).toBeNull();
+    expect(parseWorkspaceListRequest({ offset: null })).toBeNull();
+    expect(parseWorkspacePage({ ...page, path: undefined })).toBeNull();
+    expect(parseWorkspacePage({ ...page, offset: undefined })).toBeNull();
   });
   it('requires an exact file observation and closed intent', () => {
     const input = { path: entry.path, offset: 0, sourceRevision: 'revision-1', expected: { size: 0, updatedAtMs: 100 }, intent: 'download' };

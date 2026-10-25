@@ -37,9 +37,9 @@ describe('native workspace ownership and content', () => {
     if (value.kind === 'bytes') expect(Buffer.from(value.data).toString()).toBe('hello');
     expect(f.request.mock.calls.map(call => call[0])).toEqual(['agents.workspace.list', 'agents.workspace.get']);
   });
-  it.each(['oversized', 'unknown', 'changed'] as const)('refuses %s metadata before any content RPC', async mode => {
+  it.each(['oversized', 'unknown', 'changed', 'moved'] as const)('refuses %s metadata before any content RPC', async mode => {
     const f = fixture(); const input = await f.input();
-    f.setEntry(mode === 'oversized' ? { size: 262145 } : mode === 'unknown' ? { size: undefined as unknown as number } : { updatedAtMs: 101 });
+    f.setEntry(mode === 'oversized' ? { size: 262145 } : mode === 'unknown' ? { size: undefined as unknown as number } : mode === 'moved' ? { path: 'notes/other.txt', name: 'other.txt' } : { updatedAtMs: 101 });
     await expect(f.service.file('cylena', input)).rejects.toBeDefined();
     expect(f.request.mock.calls.some(call => call[0] === 'agents.workspace.get')).toBe(false);
   });

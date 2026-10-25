@@ -20,7 +20,7 @@ export function workspaceFileLimit(path: string): number {
 }
 export function parseWorkspaceListRequest(value: unknown): WorkspaceListRequest | null {
   const input = controlRecord(value); if (!input || !closed(input, ['path', 'offset'])) return null;
-  const path = input.path ?? ''; const offset = input.offset ?? 0;
+  const path = input.path === undefined ? '' : input.path; const offset = input.offset === undefined ? 0 : input.offset;
   return isWorkspacePath(path) && integer(offset) && offset <= WORKSPACE_LIMITS.maxOffset ? { path, offset } : null;
 }
 export function parseWorkspaceFileRequest(value: unknown): WorkspaceFileRequest | null {
@@ -32,7 +32,7 @@ export function parseWorkspaceFileRequest(value: unknown): WorkspaceFileRequest 
 }
 export function parseWorkspacePage(value: unknown): WorkspacePage | null {
   const input = controlRecord(value); if (!input || controlByteSize(input) > CONTROL_LIMITS.responseBytes
-    || !closed(input, ['agentId', 'path', 'offset', 'totalEntries', 'entries', 'source', 'sourceRevision'])) return null;
+    || !closed(input, ['agentId', 'path', 'offset', 'totalEntries', 'entries', 'source', 'sourceRevision']) || typeof input.path !== 'string' || !integer(input.offset)) return null;
   const page = parseWorkspaceListRequest({ path: input.path, offset: input.offset }); const source = controlRecord(input.source);
   if (!page || typeof input.agentId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(input.agentId) || !revision(input.sourceRevision)
     || !source || !closed(source, ['state', 'observedAt']) || !integer(source.observedAt) || !['current', 'stale'].includes(String(source.state))
