@@ -1,10 +1,14 @@
 import { Blob as NodeBlob } from 'node:buffer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { controlFetch, controlFetchFile } from './api';
+import type { ControlErrorBody } from '../../shared/control';
 import { CONTROL_RESULT_LIMITS } from '../../shared/controlResults';
 
 afterEach(() => vi.unstubAllGlobals());
 const headers = { 'X-Pixel-Control-File': 'bytes', 'Content-Type': 'application/json', 'Content-Disposition': "attachment; filename=report.json; filename*=UTF-8''R%C3%A9sum%C3%A9.json" };
+it('excludes browser deadlines from the declared server error contract', () => {
+  expectTypeOf<Extract<ControlErrorBody['code'], 'timed-out'>>().toEqualTypeOf<never>();
+});
 it('does not accept a browser-only timeout as a server rejection code', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{"code":"timed-out"}', { status: 504 })));
   await expect(controlFetch('/api/control/agents/cylena/send', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'unavailable' });

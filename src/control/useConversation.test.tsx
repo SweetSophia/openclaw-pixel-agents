@@ -72,6 +72,8 @@ describe('manual conversation submissions', () => {
     act(() => result.current.setDraft('edited')); await act(() => result.current.send());
     expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1);
     await act(() => result.current.retryPending());
+    expect(result.current.submission?.phase).toBe('unknown'); expect(result.current.submission?.input.message).toBe('original');
+    expect(result.current.draft).toBe('edited');
     const sends = f.request.mock.calls.filter(([path]) => String(path).endsWith('/send')).map(([, init]) => JSON.parse(String(init.body)));
     expect(sends).toHaveLength(2); expect(sends[1]).toEqual(sends[0]); expect(sends[1].message).toBe('original');
   });

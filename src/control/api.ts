@@ -1,7 +1,8 @@
 import { CONTROL_LIMITS, controlRecord, type ControlErrorCode, type ControlTarget } from '../../shared/control';
 import { CONTROL_RESULT_LIMITS, parseControlExternalFile, type ControlExternalFile } from '../../shared/controlResults';
 
-const messages: Partial<Record<ControlErrorCode, string>> = {
+type ClientErrorCode = ControlErrorCode | 'timed-out';
+const messages: Partial<Record<ClientErrorCode, string>> = {
   disabled: 'Task access is not connected. Ask the office operator to configure the Gateway connection.',
   locked: 'Unlock task details to continue.', 'transport-required': 'Task access requires HTTPS or the configured private Tailnet connection.',
   'pairing-required': 'The office task device needs approval in OpenClaw.', 'scope-required': 'OpenClaw has not granted the required task access.',
@@ -25,7 +26,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'workspace-changed', 'unavailable', 'invalid-source',
 ]);
 export class ControlApiError extends Error {
-  constructor(public readonly code: ControlErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
+  constructor(public readonly code: ClientErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
 }
 export function targetIdentity(target: ControlTarget): string {
   return JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
