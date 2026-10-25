@@ -6,7 +6,7 @@ A live pixel-art office for [OpenClaw](https://github.com/openclaw/openclaw): se
 [![CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/codeql.yml/badge.svg)](https://github.com/SweetSophia/openclaw-pixel-agents/actions/workflows/codeql.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-<img width="482" height="315" alt="Pixel office with agents" src="https://raw.githubusercontent.com/SweetSophia/openclaw-pixel-agents/refs/heads/main/docs/pixel-agents-1.png" /> <img width="482" height="315"  alt="Pixel office with agents - Tasks" src="https://raw.githubusercontent.com/SweetSophia/openclaw-pixel-agents/refs/heads/main/docs/pixel-agents-1.png" />
+<img width="482" height="315" alt="Pixel office with agents" src="https://raw.githubusercontent.com/SweetSophia/openclaw-pixel-agents/refs/heads/main/docs/pixel-agents-1.png" /> <img width="482" height="315"  alt="Pixel office with agents - Tasks" src="https://raw.githubusercontent.com/SweetSophia/openclaw-pixel-agents/refs/heads/main/docs/pixel-agents-2.png" />
 
 
 ## What you can do
