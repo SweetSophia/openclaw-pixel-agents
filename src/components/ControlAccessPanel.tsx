@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useControlAccess } from '../control/ControlAccess';
 import { ControlApiError } from '../control/api';
-import { controlReadDeadline } from '../control/readDeadline';
+import { controlReadDeadline, controlReadError } from '../control/readDeadline';
 import './TaskDetails.css';
 
 export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading = false, onRefresh, error, children }: React.PropsWithChildren<{
@@ -31,7 +31,7 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
     const controller = new AbortController(); const dispose = controlReadDeadline(controller);
     let abort!: () => void;
     const aborted = new Promise<never>((_resolve, reject) => {
-      abort = () => reject(new ControlApiError('unavailable'));
+      abort = () => reject(controlReadError(controller));
       controller.signal.addEventListener('abort', abort, { once: true });
     });
     try {
@@ -40,7 +40,7 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
         if (controller.signal.aborted) throw new ControlApiError('unavailable');
         setAccessError(null); await onRefresh(controller.signal);
       })()]);
-    } catch (failure) { setRefreshError(controller.signal.aborted ? new ControlApiError('unavailable') : failure instanceof ControlApiError ? failure : new ControlApiError()); }
+    } catch (failure) { setRefreshError(controlReadError(controller, failure)); }
     finally { dispose(); controller.signal.removeEventListener('abort', abort); refreshBusy.current = false; setRefreshing(false); }
   };
   if (access.state === 'locked') {

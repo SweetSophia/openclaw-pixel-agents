@@ -29,7 +29,7 @@ it('unlocks Refresh after a stalled status request times out and permits retry',
   const button = screen.getByRole('button', { name: 'Refresh' }); fireEvent.click(button);
   expect(button).toHaveAttribute('aria-disabled', 'true');
   await act(() => vi.advanceTimersByTimeAsync(10000));
-  expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i);
+  expect(screen.getByRole('alert')).toHaveTextContent(/timed out/i);
   expect(button).toHaveAttribute('aria-disabled', 'false'); expect(refresh).not.toHaveBeenCalled();
   const requestsBeforeRetry = access.request.mock.calls.length;
   await act(async () => { fireEvent.click(button); });
@@ -56,7 +56,7 @@ it('bounds the whole reload after a successful status probe', async () => {
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(refresh.mock.calls[0][0]?.aborted).toBe(true);
   expect(screen.getByRole('button', { name: 'Refresh' })).toHaveAttribute('aria-disabled', 'false');
-  expect(screen.getByRole('alert')).toHaveTextContent(/temporarily unavailable/i);
+  expect(screen.getByRole('alert')).toHaveTextContent(/timed out/i);
 });
 it('keeps locked retry available when an aborted body read is reported as invalid-source', async () => {
   vi.useFakeTimers(); access.request.mockRejectedValueOnce(new ControlApiError('unavailable'));

@@ -31,7 +31,7 @@ describe('task selection and refresh lifecycle', () => {
       signal = init!.signal!; return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true }));
     });
     let pending!: Promise<void>; act(() => { pending = result.current.refresh(); });
-    await act(() => vi.advanceTimersByTimeAsync(10000)); await act(async () => { await pending; });
+    await act(() => vi.advanceTimersByTimeAsync(60000)); await act(async () => { await pending; });
     expect(signal.aborted).toBe(true); expect(result.current.loading).toBe(false); expect(result.current.sessionsLoading).toBe(false);
     expect(result.current.error?.code).toBe('unavailable');
     if (stalled !== 'sessions') expect((stalled === 'results' ? result.current.results : result.current.task)?.source).toEqual({ state: 'stale', observedAt: 100 });
@@ -60,9 +60,36 @@ describe('task selection and refresh lifecycle', () => {
       init?.signal?.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true });
     }));
     let pending!: Promise<void>; act(() => { pending = result.current.refresh(); });
-    await act(() => vi.advanceTimersByTimeAsync(10000)); await act(async () => { await pending; });
+    await act(() => vi.advanceTimersByTimeAsync(60000)); await act(async () => { await pending; });
     expect(result.current.error?.code).toBe('unavailable');
     await act(() => result.current.refresh()); expect(result.current.error).toBeNull(); expect(result.current.sessions).toEqual([]);
+  });
+  it('allows a slow session list and gives its nested task read a fresh budget', async () => {
+    setup(); vi.useFakeTimers(); let firstList = true;
+    const delayed = (value: unknown, milliseconds: number, signal?: AbortSignal | null) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve(value), milliseconds);
+      signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new ControlApiError('invalid-source')); }, { once: true });
+    });
+    f.request.mockImplementation((path: string, init?: RequestInit) => {
+      if (path.includes('/sessions')) { if (firstList) { firstList = false; return delayed(page(), 55000, init?.signal); } return Promise.resolve(page()); }
+      return delayed(task(JSON.parse(String(init?.body))), 12000, init?.signal);
+    });
+    const { result } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true }));
+    await act(() => vi.advanceTimersByTimeAsync(67000));
+    expect(result.current.task?.target.sessionId).toBe(a.sessionId); expect(result.current.error).toBeNull();
+  });
+  it('does not let an aborted session read overwrite the replacement tab read', async () => {
+    setup(); const initial = { taskActive: true };
+    const { result, rerender } = renderHook(({ taskActive }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, taskActive }), { initialProps: initial });
+    await waitFor(() => expect(result.current.task).toBeTruthy()); let release!: (value: unknown) => void;
+    f.request.mockImplementation((path: string, init?: RequestInit) => {
+      if (!path.includes('/sessions')) return Promise.resolve(task(JSON.parse(String(init?.body))));
+      return new Promise((resolve, reject) => { release = resolve; init?.signal?.addEventListener('abort', () => reject(new ControlApiError('invalid-source')), { once: true }); });
+    });
+    let pending!: Promise<void>; act(() => { pending = result.current.refresh(); }); await act(async () => {});
+    rerender({ taskActive: false }); await act(async () => {});
+    expect(result.current.error).toBeNull(); expect(result.current.sessionsLoading).toBe(true);
+    await act(async () => { release(page()); await pending; }); expect(result.current.sessionsLoading).toBe(false);
   });
   it('shares selection across tabs and uses only one results read per visible five-second tick', async () => {
     setup(); vi.useFakeTimers(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));

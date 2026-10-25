@@ -3,7 +3,9 @@ import { controlRecord, parseControlSession, parseControlSessionPage, parseContr
 import { parseControlResultsSnapshot, type ControlResultsSnapshot } from '../../shared/controlResults';
 import { useControlAccess } from './ControlAccess';
 import { ControlApiError, targetIdentity } from './api';
-import { controlReadDeadline } from './readDeadline';
+import { controlReadDeadline, controlReadError } from './readDeadline';
+
+const TASK_READ_TIMEOUT_MS = 60000;
 
 export interface TaskDetailsState {
   sessions: ControlSession[]; selected: ControlSession | null; task: ControlTaskSnapshot | null; results: ControlResultsSnapshot | null;
@@ -34,7 +36,7 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     const resultsMode = context.current.resultsActive === true;
     if (!permitted() || (!resultsMode && context.current.taskActive === false) || taskRead.current) return;
     const controller = new AbortController(); taskRead.current = controller;
-    const dispose = controlReadDeadline(controller, signal);
+    const dispose = controlReadDeadline(controller, signal, TASK_READ_TIMEOUT_MS);
     const current = selection.current; const currentScope = scopeRef.current;
     setView(old => ({ ...old, loading: true }));
     try {
@@ -52,7 +54,7 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
       }
     } catch (error) {
       if (current !== selection.current || currentScope !== scopeRef.current || !permitted()) return;
-      const failure = controller.signal.aborted ? new ControlApiError('unavailable') : error instanceof ControlApiError ? error : new ControlApiError();
+      const failure = controlReadError(controller, error);
       const denied = ['session-changed', 'invalid-target', 'scope-required', 'pairing-required', 'locked'].includes(failure.code);
       setView(old => ({ ...old, loading: false, error: failure, task: denied ? null : old.task ? { ...old.task, source: { ...old.task.source, state: 'stale' } } : null,
         results: denied ? null : old.results ? { ...old.results, source: { ...old.results.source, state: 'stale' } } : null }));
@@ -61,7 +63,7 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
   const loadSessions = useCallback(async (more = false, signal?: AbortSignal) => {
     if (!permitted() || sessionRead.current) return;
     const controller = new AbortController(); sessionRead.current = controller; const currentScope = scopeRef.current;
-    const dispose = controlReadDeadline(controller, signal);
+    const dispose = controlReadDeadline(controller, signal, TASK_READ_TIMEOUT_MS);
     setView(old => ({ ...old, sessionsLoading: true }));
     const cursor = more ? data.current.nextSessionsCursor : undefined;
     try {
@@ -95,11 +97,13 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
         error: data.current.error === sessionError.current ? null : data.current.error };
       sessionError.current = null;
       data.current = next; setView(next);
-      if (selected && !(context.current.resultsActive ? data.current.results : data.current.task)) await readTask(selected, undefined, controller.signal);
+      // Session metadata is complete; the detail read owns its own budget and cancellation slot.
+      dispose(); if (sessionRead.current === controller) sessionRead.current = null;
+      if (selected && !(context.current.resultsActive ? data.current.results : data.current.task)) await readTask(selected, undefined, signal);
     } catch (error) {
-      const failure = controller.signal.aborted ? new ControlApiError('unavailable') : error instanceof ControlApiError ? error : new ControlApiError();
+      const failure = controlReadError(controller, error);
       if (more && failure.code === 'invalid-request') pagedSessions.current = false;
-      if (currentScope === scopeRef.current && permitted()) { sessionError.current = failure; setView(old => ({ ...old, sessionsLoading: false, error: failure })); }
+      if (sessionRead.current === controller && currentScope === scopeRef.current && permitted()) { sessionError.current = failure; setView(old => ({ ...old, sessionsLoading: false, error: failure })); }
     } finally { dispose(); if (sessionRead.current === controller) sessionRead.current = null; }
   }, [readTask]);
   const refresh = useCallback(async (signal?: AbortSignal) => {

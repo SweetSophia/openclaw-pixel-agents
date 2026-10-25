@@ -3,7 +3,7 @@ import { WORKSPACE_LIMITS, isWorkspacePath, parseWorkspacePage, workspaceFileLim
 import { CONTROL_RESULT_LIMITS } from '../../shared/controlResults';
 import { useControlAccess } from './ControlAccess';
 import { ControlApiError } from './api';
-import { controlReadDeadline } from './readDeadline';
+import { controlReadDeadline, controlReadError } from './readDeadline';
 
 type Preview = { path: string; name: string } & ({ kind: 'text'; text: string } | { kind: 'image'; url: string });
 interface WorkspaceView { page: WorkspacePage | null; loading: boolean; error: ControlApiError | null; preview: Preview | null; contentLoading: string | null }
@@ -57,14 +57,14 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
         : !manual && old.error?.code === 'workspace-changed' ? old.error : null }));
     } catch (error) {
       if (current !== readRevision.current || listing.current !== controller || !permitted()) return;
-      clearPreview(); setView(old => ({ ...old, loading: false, error: error instanceof ControlApiError ? error : new ControlApiError(),
+      clearPreview(); setView(old => ({ ...old, loading: false, error: controlReadError(controller, error),
         page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
     } finally {
       dispose();
       if (listing.current === controller) {
         listing.current = null;
         if (current === readRevision.current && controller.signal.aborted) {
-          clearPreview(); setView(old => ({ ...old, loading: false, error: new ControlApiError(), page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
+          clearPreview(); setView(old => ({ ...old, loading: false, error: controlReadError(controller), page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
         }
       }
       finishRefresh(directory);
