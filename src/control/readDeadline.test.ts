@@ -14,6 +14,16 @@ it('does not label ordinary cancellation as a timeout', () => {
   const error = controlReadError(controller, new ControlApiError('invalid-source'));
   expect(error.code).toBe('unavailable'); expect(error.message).not.toMatch(/timed out/i);
 });
+it('does not label a typed non-timeout cancellation as a timeout', () => {
+  const controller = new AbortController(); controller.abort(new ControlApiError('locked'));
+  expect(controlReadError(controller).code).toBe('unavailable');
+});
+it('propagates a parent timeout to the child read', () => {
+  const parent = new AbortController(); const child = new AbortController();
+  const dispose = controlReadDeadline(child, parent.signal, 25);
+  parent.abort(new ControlApiError('timed-out'));
+  expect(controlReadError(child).code).toBe('timed-out'); dispose();
+});
 it('preserves a typed failure when the request was not aborted', () => {
   const error = new ControlApiError('session-changed'); expect(controlReadError(new AbortController(), error)).toBe(error);
 });

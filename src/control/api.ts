@@ -17,6 +17,13 @@ const messages: Partial<Record<ControlErrorCode, string>> = {
   'workspace-changed': 'This workspace selection changed. Refresh the directory.',
   'timed-out': 'The request timed out. Try again.',
 };
+// Browser-only error copy must not expand the server's rejection vocabulary.
+const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
+  'disabled', 'locked', 'transport-required', 'pairing-required', 'scope-required', 'unsupported',
+  'session-changed', 'invalid-target', 'invalid-request', 'rate-limited', 'outcome-unknown',
+  'command-not-supported', 'file-unavailable', 'file-too-large', 'preview-unsupported',
+  'workspace-changed', 'unavailable', 'invalid-source',
+]);
 export class ControlApiError extends Error {
   constructor(public readonly code: ControlErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
 }
@@ -60,7 +67,7 @@ async function readJson(response: Response, signal?: AbortSignal): Promise<unkno
   catch { throw new ControlApiError('invalid-source'); }
   if (!response.ok) {
     const code = controlRecord(value)?.code;
-    throw new ControlApiError(typeof code === 'string' && (Object.prototype.hasOwnProperty.call(messages, code) || ['unavailable', 'invalid-source', 'outcome-unknown'].includes(code)) ? code as ControlErrorCode : 'unavailable');
+    throw new ControlApiError(typeof code === 'string' && serverCodes.has(code) ? code as ControlErrorCode : 'unavailable');
   }
   return value;
 }

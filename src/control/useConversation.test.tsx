@@ -63,6 +63,18 @@ describe('manual conversation submissions', () => {
     expect(sends).toHaveLength(2); expect(sends[0]).toEqual(sends[1]); expect(sends[0].message).toBe('original');
     expect(result.current.submission?.phase).toBe('persisted'); expect(result.current.draft).toBe('edited');
   });
+  it('keeps a timed-out submission unknown and retries its original identity and text', async () => {
+    setup(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation((path, init) => path.endsWith('/send') ? Promise.reject(new ControlApiError('timed-out')) : original(path, init));
+    const { result } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.setDraft('original')); await act(() => result.current.send());
+    expect(result.current.submission?.phase).toBe('unknown'); expect(result.current.draft).toBe('original');
+    act(() => result.current.setDraft('edited')); await act(() => result.current.send());
+    expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1);
+    await act(() => result.current.retryPending());
+    const sends = f.request.mock.calls.filter(([path]) => String(path).endsWith('/send')).map(([, init]) => JSON.parse(String(init.body)));
+    expect(sends).toHaveLength(2); expect(sends[1]).toEqual(sends[0]); expect(sends[1].message).toBe('original');
+  });
   it('does not replay after reconnect, keeps rejected drafts and enforces limits', async () => {
     setup(); const { result, rerender } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.ready).toBe(true));
     act(() => result.current.setDraft('x'.repeat(8001))); await act(() => result.current.send()); expect(f.request.mock.calls.filter(([p]) => String(p).endsWith('/send'))).toHaveLength(0);

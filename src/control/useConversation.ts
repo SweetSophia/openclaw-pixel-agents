@@ -85,7 +85,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
     } catch (failure) {
       const problem = failure instanceof ControlApiError ? failure : new ControlApiError();
       if (['locked', 'scope-required', 'pairing-required'].includes(problem.code) || current.access.generation !== context.current.access.generation) return;
-      const unknown = ['unavailable', 'invalid-source', 'outcome-unknown'].includes(problem.code);
+      const unknown = ['unavailable', 'invalid-source', 'outcome-unknown', 'timed-out'].includes(problem.code);
       mutate(key, value => { value.submission = { input, phase: unknown ? 'unknown' : 'rejected' }; });
       if (current.scope === context.current.scope) { setError(problem); if (['session-changed', 'invalid-target'].includes(problem.code)) setPage(null); }
     }

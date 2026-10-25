@@ -13,7 +13,8 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
   const [accessError, setAccessError] = useState<ControlApiError | null>(null); const [unlockError, setUnlockError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<ControlApiError | null>(null);
   const statusError = accessError ?? refreshError;
-  const liveError = error || accessError?.message;
+  const accessMessage = accessError && (access.state !== 'locked' || !['locked', 'transport-required'].includes(accessError.code)) ? accessError.message : undefined;
+  const liveError = error || accessMessage;
   const notice = (liveError || refreshError) && <div className="task-notice" role="alert">
     {liveError || refreshError?.message}
     {liveError && refreshError && liveError !== refreshError.message && <p className="task-muted">Last manual refresh: {refreshError.message}</p>}
@@ -68,8 +69,8 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
         <button type="submit" disabled={!key || unlocking}>{unlocking ? 'Unlocking…' : 'Unlock task details'}</button>
       </form>}
       {unlockError && <p role="alert">{unlockError}</p>}
-      {statusError && !['locked', 'transport-required'].includes(statusError.code) && notice}
-      {(setup || transport || statusError?.code === 'unavailable' || statusError?.code === 'timed-out') && <button type="button" aria-disabled={refreshing} onClick={() => { void refresh(); }}>{refreshing ? 'Checking…' : 'Check connection'}</button>}
+      {notice}
+      {(setup || transport || statusError?.code === 'unavailable' || refreshError) && <button type="button" aria-disabled={refreshing} onClick={() => { void refresh(); }}>{refreshing ? 'Checking…' : 'Check connection'}</button>}
     </section>;
   }
   return <div className="task-details">
