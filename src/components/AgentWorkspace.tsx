@@ -22,28 +22,29 @@ export function AgentWorkspace({ agentId, active }: { agentId: string; active: b
   type Trigger = { path: string; element: HTMLButtonElement };
   const previewTrigger = useRef<Trigger | null>(null); const previewOrigin = useRef<Trigger | null>(null);
   const rootRef = useRef<HTMLButtonElement>(null); const pageRef = useRef(page); pageRef.current = page;
-  const bindPreview = useCallback((node: HTMLElement | null) => {
-    const previous = previewRef.current; const origin = previewOrigin.current;
-    if (!node && previous?.contains(document.activeElement)) {
-      const remains = origin?.element.isConnected && pageRef.current?.entries.some(entry => entry.path === origin.path);
-      const fallback = rootRef.current?.isConnected ? rootRef.current : previous.closest('[role="dialog"]')?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
-      (remains ? origin.element : fallback)?.focus();
-    }
-    previewRef.current = node; previewOrigin.current = node ? previewTrigger.current : null;
+  const restorePreviewFocus = useCallback(() => {
+    const origin = previewOrigin.current;
+    const remains = origin?.element.isConnected && pageRef.current?.entries.some(entry => entry.path === origin.path);
+    const fallback = rootRef.current?.isConnected ? rootRef.current : previewRef.current?.closest('[role="dialog"]')?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
+    (remains ? origin.element : fallback)?.focus();
   }, []);
+  const bindPreview = useCallback((node: HTMLElement | null) => {
+    if (!node && previewRef.current?.contains(document.activeElement)) restorePreviewFocus();
+    previewRef.current = node; previewOrigin.current = node ? previewTrigger.current : null;
+  }, [restorePreviewFocus]);
   useEffect(() => {
     if (workspace.preview) previewRef.current?.scrollIntoView?.({ block: 'nearest' });
     else if (!workspace.contentLoading) previewTrigger.current = null;
   }, [workspace.preview, workspace.contentLoading]);
   const current = page?.source.state === 'current'; const parts = workspace.path ? workspace.path.split('/') : [];
   const preview = workspace.preview && <section ref={bindPreview} className="workspace-preview" aria-label="Workspace file preview">
-    <div className="workspace-preview-title"><h4>{workspace.preview.name}</h4><button type="button" onClick={workspace.clearPreview}>Close preview</button></div>
+    <div className="workspace-preview-title"><h4>{workspace.preview.name}</h4><button type="button" onClick={() => { restorePreviewFocus(); workspace.clearPreview(); }}>Close preview</button></div>
     {workspace.preview.kind === 'text' ? workspace.preview.text ? <pre>{workspace.preview.text}</pre> : <p>This file is empty.</p> : <img src={workspace.preview.url} alt={`Preview of ${workspace.preview.name}`} />}
   </section>;
-  return <ControlAccessPanel active={active} loading={workspace.loading} onRefresh={workspace.refresh} error={workspaceError(workspace.error)}>
+  return <ControlAccessPanel active={active} loading={workspace.loading} allowRefreshWhileLoading onRefresh={workspace.refresh} error={workspaceError(workspace.error)}>
     <section className="agent-workspace" aria-label="Agent workspace">
       <h3>Workspace</h3><p className="task-muted">Read-only files for this agent. Files may belong to any conversation.</p>
-      <p role="status" className="task-muted workspace-preview-status">{workspace.preview ? `Preview ready: ${workspace.preview.name}` : ''}</p>
+      <p role="status" aria-label="Preview status" className="task-muted workspace-preview-status">{workspace.preview ? `Preview ready: ${workspace.preview.name}` : ''}</p>
       <nav className="workspace-breadcrumbs" aria-label="Workspace folders">
         <button ref={rootRef} type="button" aria-label="Workspace root" onClick={() => workspace.navigate('')}>Workspace root</button>
         {parts.map((part, index) => <React.Fragment key={index}><span aria-hidden="true">/</span><button type="button" onClick={() => workspace.navigate(parts.slice(0, index + 1).join('/'))} aria-current={index === parts.length - 1 ? 'location' : undefined}>{part}</button></React.Fragment>)}
@@ -55,7 +56,7 @@ export function AgentWorkspace({ agentId, active }: { agentId: string; active: b
         <ul className="workspace-entries" aria-label="Workspace entries">
           {page.entries.map(entry => {
             const pathAllowed = isWorkspacePath(entry.path);
-            const pathNotice = !pathAllowed && <p className="task-muted">{entry.path.length > WORKSPACE_LIMITS.pathCharacters ? 'This path exceeds the 2,048-character browsing limit.' : 'This filename is unsupported for workspace browsing.'}</p>;
+            const pathNotice = !pathAllowed && <p className="task-muted">{entry.path.length > WORKSPACE_LIMITS.pathCharacters ? 'This path exceeds the 2,048-character browsing limit.' : `This ${entry.kind === 'directory' ? 'folder' : 'file'} name looks like a Windows drive path and cannot be opened from the workspace root.`}</p>;
             if (entry.kind === 'directory') return <li key={entry.path}><button className="workspace-folder" type="button" aria-disabled={!pathAllowed} aria-label={`Open folder ${entry.name}`} onClick={() => { if (pathAllowed) workspace.navigate(entry.path); }}><span aria-hidden="true">📁</span> {entry.name}</button>{pathNotice}</li>;
             const known = entry.size !== undefined && entry.updatedAtMs !== undefined;
             const oversized = known && entry.size! > workspaceFileLimit(entry.path);

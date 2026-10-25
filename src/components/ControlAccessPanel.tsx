@@ -3,8 +3,8 @@ import { useControlAccess } from '../control/ControlAccess';
 import { ControlApiError } from '../control/api';
 import './TaskDetails.css';
 
-export function ControlAccessPanel({ active, loading, onRefresh, error, children }: React.PropsWithChildren<{
-  active: boolean; loading: boolean; onRefresh(): Promise<void>; error?: React.ReactNode;
+export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading = false, onRefresh, error, children }: React.PropsWithChildren<{
+  active: boolean; loading: boolean; allowRefreshWhileLoading?: boolean; onRefresh(): Promise<void>; error?: React.ReactNode;
 }>) {
   const access = useControlAccess(); const keyId = useId();
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false);
@@ -22,7 +22,7 @@ export function ControlAccessPanel({ active, loading, onRefresh, error, children
     return () => { disposed = true; controller.abort(); clearInterval(timer); };
   }, [active, access.state, access.request]);
   const refresh = async () => {
-    if (loading) return;
+    if (loading && !allowRefreshWhileLoading) return;
     try { await access.request('/api/control/status'); setAccessError(null); await onRefresh(); }
     catch (failure) { setAccessError(failure instanceof ControlApiError ? failure : new ControlApiError()); }
   };
@@ -51,7 +51,7 @@ export function ControlAccessPanel({ active, loading, onRefresh, error, children
     </section>;
   }
   return <div className="task-details">
-    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={loading} onClick={() => { void refresh(); }}>Refresh</button></div>
+    <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={loading && !allowRefreshWhileLoading} onClick={() => { void refresh(); }}>Refresh</button></div>
     {access.status && !access.status.canRead && <p role="status">{new ControlApiError(access.status.state === 'pairing-required' ? 'pairing-required' : access.status.state === 'auth-error' ? 'scope-required' : access.status.state === 'unsupported' ? 'unsupported' : 'unavailable').message}</p>}
     {(error || accessError) && <p className="task-notice" role="alert">{error || accessError?.message}</p>}
     {children}

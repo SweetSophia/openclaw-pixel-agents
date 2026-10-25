@@ -29,11 +29,12 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
   }, [setView]);
   const stop = useCallback(() => { readRevision.current++; listing.current?.abort(); listing.current = null; clearPreview(); }, [clearPreview]);
   const load = useCallback(async (manual = false) => {
-    if (!permitted() || listing.current) return;
+    if (!permitted()) return;
+    if (listing.current) { if (!manual) return; listing.current.abort(); }
     const current = readRevision.current; const { options: target, selected: directory, access: authority } = context.current;
     const controller = new AbortController(); listing.current = controller;
     const deadline = setTimeout(() => controller.abort(), 10000);
-    setView(old => ({ ...old, loading: true }));
+    setView(old => ({ ...old, loading: true, error: manual ? null : old.error }));
     try {
       const page = parseWorkspacePage(await authority.request(`/api/control/agents/${encodeURIComponent(target.agentId)}/workspace`, {
         method: 'POST', signal: controller.signal, body: JSON.stringify({ path: directory.path, offset: directory.offset }) }));
@@ -46,7 +47,7 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
       setView(old => ({ ...old, page, loading: false, error: changed ? new ControlApiError('workspace-changed')
         : !manual && old.error?.code === 'workspace-changed' ? old.error : null }));
     } catch (error) {
-      if (current !== readRevision.current || !permitted()) return;
+      if (current !== readRevision.current || listing.current !== controller || !permitted()) return;
       clearPreview(); setView(old => ({ ...old, loading: false, error: error instanceof ControlApiError ? error : new ControlApiError(),
         page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
     } finally {
