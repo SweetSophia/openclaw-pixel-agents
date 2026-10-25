@@ -9,6 +9,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadControlConfig } from './config';
 import { createControlGateway, gatewayReconnectDelay, type ControlGateway } from './gatewayClient';
 import * as devices from './deviceIdentity';
+import express from 'express';
+import request from 'supertest';
+import { createWorkspaceService } from './workspaceService';
+import { createTaskService } from './taskService';
+import { createControlRouter } from './routes';
 
 type Frame = { type: string; id: string; method: string; params: Record<string, any> };
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -73,6 +78,38 @@ function client(url?: string, sendEnabled = false, options?: { directory: string
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 
 describe('scoped task Gateway client', () => {
+  it('keeps workspace methods optional and old task connections usable', async () => {
+    const host = await fixture(); const gateway = client(host.url); await ready(gateway);
+    for (const method of ['agents.workspace.list', 'agents.workspace.get'] as const) await expect(gateway.request(method, { agentId: 'cylena', path: '' })).rejects.toMatchObject({ code: 'unsupported' });
+    expect(gateway.status().canRead).toBe(true); expect(host.frames.some(frame => frame.method.startsWith('agents.workspace.'))).toBe(false);
+  });
+  it('reads native workspace bytes through the real adapter, service and authenticated router without sessions', async () => {
+    const entry = { path: 'report.txt', name: 'report.txt', kind: 'file', size: 5, updatedAtMs: 100 };
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'agents.workspace.list', 'agents.workspace.get'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'agents.workspace.list'
+      ? { agentId: 'cylena', path: '', entries: [entry], offset: 0, totalEntries: 1 }
+      : { agentId: 'cylena', file: { ...entry, encoding: 'utf8', mimeType: 'text/plain', content: 'hello' } } })));
+    const gateway = client(host.url); await ready(gateway);
+    const tasks = createTaskService(gateway, () => new Set(['cylena'])); const workspace = createWorkspaceService(gateway, () => new Set(['cylena']));
+    cleanups.push(() => { workspace.close(); tasks.close(); });
+    const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: host.url, PIXEL_CONTROL_TOKEN: 'fixture-key' }, '/tmp/workspace-fixture');
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, workspace, config }));
+    const page = await request(app).post('/api/control/agents/cylena/workspace').auth('fixture-key', { type: 'bearer' }).send({ path: '', offset: 0 });
+    expect(page.status).toBe(200);
+    const file = await request(app).post('/api/control/agents/cylena/workspace/file').auth('fixture-key', { type: 'bearer' }).send({ path: 'report.txt', offset: 0, sourceRevision: page.body.sourceRevision, expected: { size: 5, updatedAtMs: 100 }, intent: 'download' });
+    expect(file.status).toBe(200); expect(file.text).toBe('hello'); expect(file.headers['cache-control']).toBe('no-store');
+    expect(host.frames.map(frame => frame.method).filter(method => method !== 'sessions.subscribe')).toEqual(['connect', 'agents.workspace.list', 'agents.workspace.list', 'agents.workspace.get']);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+  });
+  it.each([['workspace_file_too_large', 'file-too-large'], ['workspace_file_unsupported', 'preview-unsupported'], ['workspace_path_not_found', 'file-unavailable']])('normalizes native workspace %s without raw diagnostics', async (type, code) => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'agents.workspace.get'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'private-host-path', details: { type } } })));
+    const gateway = client(host.url); await ready(gateway);
+    const error = await gateway.request('agents.workspace.get', { agentId: 'cylena', path: 'file' }).catch(error => error);
+    expect(error).toMatchObject({ code }); expect((error as Error).message).not.toContain('private-host-path');
+  });
   const assistantSelection = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', runId: 'run-1', messageRole: 'assistant' };
   const artifactMethods = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
   it.each([['artifact_not_found', 'file-unavailable'], ['artifact_download_unsupported', 'file-unavailable'], ['artifact_scope_not_found', 'session-changed']])('preserves native %s as %s without private diagnostics', async (type, code) => {

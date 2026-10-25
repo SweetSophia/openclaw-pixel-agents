@@ -12,9 +12,11 @@ import type { ArtifactService } from './artifactService';
 import type { ArtifactContent } from './artifactTransfer';
 import { createContentBudget } from './contentBudget';
 import { artifactMime, safeArtifactFilename } from './previewPolicy';
+import type { WorkspaceService } from './workspaceService';
+import { parseWorkspaceFileRequest, parseWorkspaceListRequest } from '../../shared/controlWorkspace';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService }): Router {
-  const { gateway, tasks, config, sends, conversations, artifacts } = options; const router = Router();
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService }): Router {
+  const { gateway, tasks, config, sends, conversations, artifacts, workspace } = options; const router = Router();
   const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
@@ -31,8 +33,8 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
       const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
       const status = code === 'scope-required' || code === 'pairing-required' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
         : code === 'invalid-target' || code === 'file-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
-          : code === 'session-changed' || code === 'outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
-      res.type('json').status(status).json({ code, error: code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The conversation request could not be completed.' });
+          : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
+      res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.' });
     }).finally(() => { res.off('close', close); req.off('aborted', close); });
   }
   router.get('/agents/:id/sessions', (req, res) => {
@@ -62,6 +64,16 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
     const input = parseControlFileRequest(req.body);
     if (!input || input.target.agentId !== String(req.params.id)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid file selection.' }); return; }
     run(req, res, signal => { if (!artifacts) throw new ControlError('unsupported'); return artifacts.file(input, signal); }, content => sendFile(res, content, input.intent));
+  });
+  router.post('/agents/:id/workspace', (req, res) => {
+    const input = parseWorkspaceListRequest(req.body);
+    if (!input) { res.status(400).json({ code: 'invalid-request', error: 'Invalid workspace directory.' }); return; }
+    run(req, res, signal => { if (!workspace) throw new ControlError('unsupported'); return workspace.list(String(req.params.id), input, signal); });
+  });
+  router.post('/agents/:id/workspace/file', contentBudget, (req, res) => {
+    const input = parseWorkspaceFileRequest(req.body);
+    if (!input) { res.status(400).json({ code: 'invalid-request', error: 'Invalid workspace file.' }); return; }
+    run(req, res, signal => { if (!workspace) throw new ControlError('unsupported'); return workspace.file(String(req.params.id), input, signal); }, content => sendFile(res, content, input.intent));
   });
   function sendFile(res: Response, content: ArtifactContent, intent: 'preview' | 'download'): void {
     if (content.kind === 'external') {
