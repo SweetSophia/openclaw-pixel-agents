@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { WORKSPACE_LIMITS, workspaceFileLimit } from '../../shared/controlWorkspace';
 import { useWorkspace } from '../control/useWorkspace';
 import { ControlApiError } from '../control/api';
@@ -16,7 +16,13 @@ function workspaceError(error: ControlApiError | null): string | undefined {
 function size(value: number): string { return value < 1024 ? `${value} B` : value < 1048576 ? `${(value / 1024).toFixed(1)} KiB` : `${(value / 1048576).toFixed(1)} MiB`; }
 export function AgentWorkspace({ agentId, active }: { agentId: string; active: boolean }) {
   const workspace = useWorkspace({ agentId, active }); const page = workspace.page;
+  const previewRef = useRef<HTMLElement>(null);
+  useEffect(() => { if (workspace.preview) previewRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [workspace.preview]);
   const current = page?.source.state === 'current'; const parts = workspace.path ? workspace.path.split('/') : [];
+  const preview = workspace.preview && <section ref={previewRef} className="workspace-preview" aria-label="Workspace file preview">
+    <div className="workspace-preview-title"><h4>{workspace.preview.name}</h4><button type="button" onClick={workspace.clearPreview}>Close preview</button></div>
+    {workspace.preview.kind === 'text' ? workspace.preview.text ? <pre>{workspace.preview.text}</pre> : <p>This file is empty.</p> : <img src={workspace.preview.url} alt={`Preview of ${workspace.preview.name}`} />}
+  </section>;
   return <ControlAccessPanel active={active} loading={workspace.loading} onRefresh={workspace.refresh} error={workspaceError(workspace.error)}>
     <section className="agent-workspace" aria-label="Agent workspace">
       <h3>Workspace</h3><p className="task-muted">Read-only files for this agent. Files may belong to any conversation.</p>
@@ -26,7 +32,7 @@ export function AgentWorkspace({ agentId, active }: { agentId: string; active: b
       </nav>
       {workspace.loading && !page && <p role="status">Loading workspace…</p>}
       {page && <>
-        <p className="task-muted" role="status">{current ? 'Checked by OpenClaw' : 'Last known — connection unavailable'} · {new Date(page.source.observedAt).toLocaleString()}</p>
+        <p className="task-muted">{current ? 'Checked by OpenClaw' : 'Last known — connection unavailable'} · {new Date(page.source.observedAt).toLocaleString()}</p>
         {page.totalEntries === 0 && <p>This folder is empty.</p>}
         <ul className="workspace-entries" aria-label="Workspace entries">
           {page.entries.map(entry => {
@@ -46,6 +52,7 @@ export function AgentWorkspace({ agentId, active }: { agentId: string; active: b
                 <button type="button" aria-label={`Download ${entry.name}`} aria-disabled={!available} onClick={() => { if (available) void workspace.act(entry, 'download'); }}>Download</button>
                 {workspace.contentLoading === entry.path && <span role="status">Loading file…</span>}
               </div>
+              {workspace.preview?.path === entry.path && preview}
             </li>;
           })}
         </ul>
@@ -58,10 +65,6 @@ export function AgentWorkspace({ agentId, active }: { agentId: string; active: b
         </div>
         {page.offset >= WORKSPACE_LIMITS.maxOffset && page.offset + page.entries.length < page.totalEntries && <p className="task-muted">Workspace browsing limit reached. Open a smaller subfolder.</p>}
       </>}
-      {workspace.preview && <section className="workspace-preview" aria-label="Workspace file preview">
-        <div className="workspace-preview-title"><h4>{workspace.preview.name}</h4><button type="button" onClick={workspace.clearPreview}>Close preview</button></div>
-        {workspace.preview.kind === 'text' ? workspace.preview.text ? <pre>{workspace.preview.text}</pre> : <p>This file is empty.</p> : <img src={workspace.preview.url} alt={`Preview of ${workspace.preview.name}`} />}
-      </section>}
       <p className="task-muted">Text up to 256 KiB; images up to 1 MiB. Other binary files are unavailable through this read-only interface. Folder contents can change while agents work.</p>
     </section>
   </ControlAccessPanel>;
