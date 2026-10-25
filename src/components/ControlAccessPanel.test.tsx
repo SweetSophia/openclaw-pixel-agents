@@ -58,6 +58,15 @@ it('bounds the whole reload after a successful status probe', async () => {
   expect(screen.getByRole('button', { name: 'Refresh' })).toHaveAttribute('aria-disabled', 'false');
   expect(screen.getByRole('alert')).toHaveTextContent(/timed out/i);
 });
+it('shows a current failure before the previous manual timeout', async () => {
+  vi.useFakeTimers(); access.state = 'unlocked'; const refresh = () => new Promise<void>(() => {});
+  const { rerender } = render(<ControlAccessPanel active loading={false} onRefresh={refresh} />);
+  await act(async () => {}); fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  rerender(<ControlAccessPanel active loading={false} onRefresh={refresh} error="This conversation changed. Select it again." />);
+  expect(screen.getByRole('alert').textContent).toMatch(/^This conversation changed/);
+  expect(screen.getByRole('alert')).toHaveTextContent(/last manual refresh.*timed out/i);
+});
 it('keeps locked retry available when an aborted body read is reported as invalid-source', async () => {
   vi.useFakeTimers(); access.request.mockRejectedValueOnce(new ControlApiError('unavailable'));
   render(<ControlAccessPanel active loading={false} onRefresh={async () => {}} />);

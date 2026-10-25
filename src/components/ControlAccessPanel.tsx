@@ -12,7 +12,12 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
   const refreshBusy = useRef(false); const [refreshing, setRefreshing] = useState(false);
   const [accessError, setAccessError] = useState<ControlApiError | null>(null); const [unlockError, setUnlockError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<ControlApiError | null>(null);
-  const statusError = refreshError ?? accessError;
+  const statusError = accessError ?? refreshError;
+  const liveError = error || accessError?.message;
+  const notice = (liveError || refreshError) && <div className="task-notice" role="alert">
+    {liveError || refreshError?.message}
+    {liveError && refreshError && liveError !== refreshError.message && <p className="task-muted">Last manual refresh: {refreshError.message}</p>}
+  </div>;
   useEffect(() => { setKey(''); setRefreshError(null); }, [access.state]);
   useEffect(() => {
     if (!active) return;
@@ -63,14 +68,14 @@ export function ControlAccessPanel({ active, loading, allowRefreshWhileLoading =
         <button type="submit" disabled={!key || unlocking}>{unlocking ? 'Unlocking…' : 'Unlock task details'}</button>
       </form>}
       {unlockError && <p role="alert">{unlockError}</p>}
-      {statusError && !['locked', 'transport-required'].includes(statusError.code) && <p role="alert">{statusError.message}</p>}
-      {(setup || transport || statusError?.code === 'unavailable') && <button type="button" aria-disabled={refreshing} onClick={() => { void refresh(); }}>{refreshing ? 'Checking…' : 'Check connection'}</button>}
+      {statusError && !['locked', 'transport-required'].includes(statusError.code) && notice}
+      {(setup || transport || statusError?.code === 'unavailable' || statusError?.code === 'timed-out') && <button type="button" aria-disabled={refreshing} onClick={() => { void refresh(); }}>{refreshing ? 'Checking…' : 'Check connection'}</button>}
     </section>;
   }
   return <div className="task-details">
     <div className="task-tools"><span className="task-eyebrow">FROM OPENCLAW</span><button type="button" onClick={access.lock}>Lock</button><button type="button" aria-disabled={refreshing || (loading && !allowRefreshWhileLoading)} onClick={() => { void refresh(); }}>Refresh</button></div>
     {access.status && !access.status.canRead && <p role="status">{new ControlApiError(access.status.state === 'pairing-required' ? 'pairing-required' : access.status.state === 'auth-error' ? 'scope-required' : access.status.state === 'unsupported' ? 'unsupported' : 'unavailable').message}</p>}
-    {(refreshError || error || accessError) && <p className="task-notice" role="alert">{refreshError?.message || error || accessError?.message}</p>}
+    {notice}
     {children}
   </div>;
 }

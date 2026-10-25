@@ -33,7 +33,7 @@ describe('task selection and refresh lifecycle', () => {
     let pending!: Promise<void>; act(() => { pending = result.current.refresh(); });
     await act(() => vi.advanceTimersByTimeAsync(60000)); await act(async () => { await pending; });
     expect(signal.aborted).toBe(true); expect(result.current.loading).toBe(false); expect(result.current.sessionsLoading).toBe(false);
-    expect(result.current.error?.code).toBe('unavailable');
+    expect(result.current.error?.code).toBe('timed-out');
     if (stalled !== 'sessions') expect((stalled === 'results' ? result.current.results : result.current.task)?.source).toEqual({ state: 'stale', observedAt: 100 });
     f.request.mockImplementation(normal); f.request.mockClear(); await act(() => result.current.refresh());
     expect(f.request.mock.calls.some(([path]) => String(path).endsWith(`/${stalled}`))).toBe(true);
@@ -61,7 +61,7 @@ describe('task selection and refresh lifecycle', () => {
     }));
     let pending!: Promise<void>; act(() => { pending = result.current.refresh(); });
     await act(() => vi.advanceTimersByTimeAsync(60000)); await act(async () => { await pending; });
-    expect(result.current.error?.code).toBe('unavailable');
+    expect(result.current.error?.code).toBe('timed-out');
     await act(() => result.current.refresh()); expect(result.current.error).toBeNull(); expect(result.current.sessions).toEqual([]);
   });
   it('allows a slow session list and gives its nested task read a fresh budget', async () => {
