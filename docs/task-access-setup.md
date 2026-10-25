@@ -94,6 +94,16 @@ The visible Results tab refreshes metadata every five seconds. It retains at mos
 
 Preview content stays in tab memory. Lock, close, hidden-page and selection/source changes cancel transfers, clear previews and revoke owned image URLs. Saved downloads remain ordinary user files. Native Gateway tickets stay on the server; external HTTP(S) references are shown with their host and require an explicit click. No workspace browser or additional permission is needed.
 
+## Read-only workspace browsing
+
+The source version's **Workspace** tab browses the selected agent's configured workspace. It does not depend on a conversation or prove that a file is a task result. Workspace uses the same office key and paired `operator.read` grant as Task and Results; no additional key or write permission is needed. Treat the office key as trusted operator access to these agent files. npm 1.5.0 does not include this panel yet.
+
+Open folders through the list or breadcrumbs and use Previous/Next for 50-entry pages. Refresh starts the current folder at its first page; visible metadata also updates every five seconds. A failed refresh keeps its original observation time with a last-known label and disables file actions until a current read succeeds. No conversations is a valid state for workspace browsing.
+
+Preview and Download load bytes only after an explicit action. Native `agents.workspace.list` and `agents.workspace.get` must be advertised by the Gateway; older versions show an unsupported message while other tabs remain usable. The API exposes UTF-8 text and common images, rather than arbitrary binary downloads. The office caps text at 256 KiB and images at 1 MiB to retain the existing Gateway frame budget. Still PNG/JPEG/WebP images can be previewed; other supported native images are download-only. HTML/SVG source is shown as plain text. Unknown metadata, larger files and unsupported binary formats remain unavailable with an explanation.
+
+Requests stay relative to the agent's workspace. The Gateway owns filesystem confinement; the office never reads host paths as a fallback. Each file action freshly checks the current parent page, size, modification time, agent and connection revision before exposing bytes. Folder changes, observed file/source changes, closing, Lock and hidden pages cancel work and clear previews. Workspace content stays out of public sockets and browser storage. Native list/get behavior was checked with installed OpenClaw handlers against isolated synthetic files; real framing, service and authenticated-route integration are also covered by controlled fixtures. No real agent task was submitted.
+
 ## Docker
 
 The runtime image includes the key generator. From the repository root, build your image with an explicit tag, then generate a key without needing Node on the host:
