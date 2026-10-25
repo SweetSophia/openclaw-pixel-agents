@@ -3,6 +3,7 @@ import { Blob as NodeBlob } from 'node:buffer';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AgentWorkspace } from './AgentWorkspace';
+import { ControlApiError } from '../control/api';
 
 const access = vi.hoisted(() => ({ request: vi.fn(), requestFile: vi.fn(), lock: vi.fn(), unlock: vi.fn(), state: 'unlocked', generation: 1,
   status: { configured: true, state: 'ready', canRead: true, canSend: false } }));
@@ -40,6 +41,11 @@ it('uses the existing unlock gate and performs no workspace RPCs while locked', 
   await screen.findByRole('heading', { name: 'Unlock task details' });
   await waitFor(() => expect(access.request.mock.calls.every(([path]) => String(path).endsWith('/status'))).toBe(true));
   expect(screen.queryByLabelText('Conversation')).toBeNull(); expect(access.requestFile).not.toHaveBeenCalled();
+});
+it('preserves a timeout diagnosis instead of displaying a generic workspace outage', async () => {
+  access.request.mockImplementation(async path => { if (String(path).endsWith('/status')) return access.status; throw new ControlApiError('timed-out'); });
+  render(<AgentWorkspace agentId="cylena" active />);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/timed out/i);
 });
 it.each([false, true])('restores focused previews after automatic invalidation (removed=%s)', async removed => {
   vi.useFakeTimers({ shouldAdvanceTime: true });

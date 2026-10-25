@@ -64,7 +64,7 @@ export interface ControlSendReceipt {
   runId?: string; messageId?: string; messageSeq?: number;
 }
 export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'pairing-required' | 'scope-required'
-  | 'unsupported' | 'unavailable' | 'invalid-source' | 'invalid-target' | 'session-changed'
+  | 'unsupported' | 'unavailable' | 'timed-out' | 'invalid-source' | 'invalid-target' | 'session-changed'
   | 'invalid-request' | 'rate-limited' | 'outcome-unknown' | 'command-not-supported'
   | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }

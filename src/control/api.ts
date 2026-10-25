@@ -15,6 +15,7 @@ const messages: Partial<Record<ControlErrorCode, string>> = {
   'file-too-large': 'This file exceeds the supported transfer or preview size.',
   'preview-unsupported': 'This file cannot be previewed safely. Download it instead.',
   'workspace-changed': 'This workspace selection changed. Refresh the directory.',
+  'timed-out': 'The request timed out. Try again.',
 };
 export class ControlApiError extends Error {
   constructor(public readonly code: ControlErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

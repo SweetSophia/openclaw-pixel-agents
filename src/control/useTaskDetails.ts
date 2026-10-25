@@ -3,11 +3,14 @@ import { controlRecord, parseControlSession, parseControlSessionPage, parseContr
 import { parseControlResultsSnapshot, type ControlResultsSnapshot } from '../../shared/controlResults';
 import { useControlAccess } from './ControlAccess';
 import { ControlApiError, targetIdentity } from './api';
+import { controlReadDeadline, controlReadError } from './readDeadline';
+
+const TASK_READ_TIMEOUT_MS = 60000;
 
 export interface TaskDetailsState {
   sessions: ControlSession[]; selected: ControlSession | null; task: ControlTaskSnapshot | null; results: ControlResultsSnapshot | null;
   loading: boolean; sessionsLoading: boolean; error: ControlApiError | null; selectionNote?: string; nextSessionsCursor?: string;
-  selectSession(target: ControlTarget): void; refresh(): Promise<void>; loadMoreSessions(): Promise<void>; loadEarlier(): Promise<void>;
+  selectSession(target: ControlTarget): void; refresh(signal?: AbortSignal): Promise<void>; loadMoreSessions(): Promise<void>; loadEarlier(): Promise<void>;
   selectCreatedSession(target: ControlTarget): void;
 }
 export function useTaskDetails(options: { agentId: string; initialSessionKey: string; active: boolean; taskActive?: boolean; resultsActive?: boolean }): TaskDetailsState {
@@ -24,14 +27,16 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
   const scope = `${options.agentId}:${access.generation}`; const scopeRef = useRef(scope);
   const selection = useRef(0); const everSelected = useRef(false);
   const pagedSessions = useRef(false);
+  const sessionError = useRef<ControlApiError | null>(null);
   const taskRead = useRef<AbortController | null>(null); const sessionRead = useRef<AbortController | null>(null);
   const [visible, setVisible] = useState(document.visibilityState !== 'hidden');
   const permitted = () => context.current.active && context.current.access.state === 'unlocked' && context.current.access.status?.canRead && document.visibilityState !== 'hidden';
   const stop = useCallback(() => { selection.current++; taskRead.current?.abort(); sessionRead.current?.abort(); taskRead.current = null; sessionRead.current = null; }, []);
-  const readTask = useCallback(async (target: ControlTarget, cursor?: string) => {
+  const readTask = useCallback(async (target: ControlTarget, cursor?: string, signal?: AbortSignal) => {
     const resultsMode = context.current.resultsActive === true;
     if (!permitted() || (!resultsMode && context.current.taskActive === false) || taskRead.current) return;
     const controller = new AbortController(); taskRead.current = controller;
+    const dispose = controlReadDeadline(controller, signal, TASK_READ_TIMEOUT_MS);
     const current = selection.current; const currentScope = scopeRef.current;
     setView(old => ({ ...old, loading: true }));
     try {
@@ -48,16 +53,17 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
         setView(old => old.task && old.task.source.observedAt > task.source.observedAt ? { ...old, loading: false } : { ...old, task, loading: false, error: null });
       }
     } catch (error) {
-      if (controller.signal.aborted || current !== selection.current || currentScope !== scopeRef.current) return;
-      const failure = error instanceof ControlApiError ? error : new ControlApiError();
+      if (current !== selection.current || currentScope !== scopeRef.current || !permitted()) return;
+      const failure = controlReadError(controller, error);
       const denied = ['session-changed', 'invalid-target', 'scope-required', 'pairing-required', 'locked'].includes(failure.code);
       setView(old => ({ ...old, loading: false, error: failure, task: denied ? null : old.task ? { ...old.task, source: { ...old.task.source, state: 'stale' } } : null,
         results: denied ? null : old.results ? { ...old.results, source: { ...old.results.source, state: 'stale' } } : null }));
-    } finally { if (taskRead.current === controller) taskRead.current = null; }
+    } finally { dispose(); if (taskRead.current === controller) taskRead.current = null; }
   }, []);
-  const loadSessions = useCallback(async (more = false) => {
+  const loadSessions = useCallback(async (more = false, signal?: AbortSignal) => {
     if (!permitted() || sessionRead.current) return;
     const controller = new AbortController(); sessionRead.current = controller; const currentScope = scopeRef.current;
+    const dispose = controlReadDeadline(controller, signal, TASK_READ_TIMEOUT_MS);
     setView(old => ({ ...old, sessionsLoading: true }));
     const cursor = more ? data.current.nextSessionsCursor : undefined;
     try {
@@ -87,18 +93,23 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
       if (more) pagedSessions.current = true;
       if (selected && !all.some(item => targetIdentity(item) === targetIdentity(selected!))) all.unshift(selected);
       const sessions = [...new Map(all.map(item => [targetIdentity(item), item])).values()];
-      const next = { ...data.current, sessions, selected, selectionNote: note, nextSessionsCursor: nextCursor, sessionsLoading: false };
+      const next = { ...data.current, sessions, selected, selectionNote: note, nextSessionsCursor: nextCursor, sessionsLoading: false,
+        error: data.current.error === sessionError.current ? null : data.current.error };
+      sessionError.current = null;
       data.current = next; setView(next);
-      if (selected && !(context.current.resultsActive ? data.current.results : data.current.task)) await readTask(selected);
+      // Session metadata is complete; the detail read owns its own budget and cancellation slot.
+      dispose(); if (sessionRead.current === controller) sessionRead.current = null;
+      if (selected && !(context.current.resultsActive ? data.current.results : data.current.task)) await readTask(selected, undefined, signal);
     } catch (error) {
-      if (more && error instanceof ControlApiError && error.code === 'invalid-request') pagedSessions.current = false;
-      if (!controller.signal.aborted && currentScope === scopeRef.current) setView(old => ({ ...old, sessionsLoading: false, error: error instanceof ControlApiError ? error : new ControlApiError() }));
-    } finally { if (sessionRead.current === controller) sessionRead.current = null; }
+      const failure = controlReadError(controller, error);
+      if (more && failure.code === 'invalid-request') pagedSessions.current = false;
+      if (sessionRead.current === controller && currentScope === scopeRef.current && permitted()) { sessionError.current = failure; setView(old => ({ ...old, sessionsLoading: false, error: failure })); }
+    } finally { dispose(); if (sessionRead.current === controller) sessionRead.current = null; }
   }, [readTask]);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!permitted()) return;
     const selected = data.current.selected;
-    await Promise.allSettled([loadSessions(), selected ? readTask(selected) : Promise.resolve()]);
+    await Promise.allSettled([loadSessions(false, signal), selected ? readTask(selected, undefined, signal) : Promise.resolve()]);
   }, [loadSessions, readTask]);
   const selectSession = useCallback((target: ControlTarget) => {
     const selected = data.current.sessions.find(item => targetIdentity(item) === targetIdentity(target)); if (!selected) return;
@@ -107,13 +118,13 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     void readTask(selected);
   }, [readTask]);
   useEffect(() => {
-    stop(); scopeRef.current = scope; everSelected.current = false; pagedSessions.current = false;
+    stop(); scopeRef.current = scope; everSelected.current = false; pagedSessions.current = false; sessionError.current = null;
     const empty = { sessions: [], selected: null, task: null, results: null, loading: false, sessionsLoading: false, error: null };
     data.current = empty; setView(empty);
   }, [scope, stop]);
   useEffect(() => {
     if (!sourceDenied) return;
-    stop(); everSelected.current = true; pagedSessions.current = false;
+    stop(); everSelected.current = true; pagedSessions.current = false; sessionError.current = null;
     setView({ sessions: [], selected: null, task: null, results: null, loading: false, sessionsLoading: false, error: null });
   }, [sourceDenied, stop, setView]);
   useEffect(() => {
