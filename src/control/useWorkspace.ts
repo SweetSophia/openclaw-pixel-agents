@@ -41,8 +41,9 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
       if (controller.signal.aborted || current !== readRevision.current || !permitted()) return;
       const prior = data.current.page; const file = previewEntry.current;
       const observed = file && page.entries.find(row => row.path === file.path);
-      if ((prior && prior.sourceRevision !== page.sourceRevision) || (file && (!observed || observed.kind !== 'file' || observed.size !== file.size || observed.updatedAtMs !== file.updatedAtMs))) clearPreview();
-      setView(old => ({ ...old, page, loading: false, error: null }));
+      const changed = !!file && ((prior && prior.sourceRevision !== page.sourceRevision) || !observed || observed.kind !== 'file' || observed.size !== file.size || observed.updatedAtMs !== file.updatedAtMs);
+      if (changed) clearPreview();
+      setView(old => ({ ...old, page, loading: false, error: changed ? new ControlApiError('workspace-changed') : null }));
     } catch (error) {
       if (current !== readRevision.current || !permitted()) return;
       clearPreview(); setView(old => ({ ...old, loading: false, error: error instanceof ControlApiError ? error : new ControlApiError(),
@@ -77,11 +78,13 @@ export function useWorkspace(options: { agentId: string; active: boolean }) {
     stop(); const current = context.current.selected;
     setLocation({ owner: current.owner, path, offset, nonce: current.nonce + 1 });
   }, [stop]);
-  const refresh = useCallback(async () => { navigate(context.current.selected.path); }, [navigate]);
+  const refresh = useCallback(async () => {
+    if (context.current.selected.offset === 0) await load(); else navigate(context.current.selected.path);
+  }, [load, navigate]);
   const act = useCallback(async (entry: WorkspaceEntry, intent: 'preview' | 'download') => {
     const page = data.current.page;
     const currentEntry = page?.entries.find(row => row.path === entry.path && row.kind === 'file' && row.size === entry.size && row.updatedAtMs === entry.updatedAtMs);
-    if (!permitted() || page?.source.state !== 'current' || !currentEntry || entry.size === undefined || entry.updatedAtMs === undefined || entry.size > workspaceFileLimit(entry.path)) return;
+    if (!permitted() || page?.source.state !== 'current' || !currentEntry || !isWorkspacePath(entry.path) || entry.size === undefined || entry.updatedAtMs === undefined || entry.size > workspaceFileLimit(entry.path)) return;
     clearPreview(); const current = contentRevision.current; const read = readRevision.current;
     const controller = new AbortController(); content.current = controller; previewEntry.current = entry;
     const deadline = setTimeout(() => controller.abort(), CONTROL_RESULT_LIMITS.contentDeadlineMs);

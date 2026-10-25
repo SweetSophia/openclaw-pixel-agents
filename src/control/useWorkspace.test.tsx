@@ -38,6 +38,14 @@ describe('agent workspace lifecycle', () => {
     await act(() => result.current.act(entry, 'preview')); expect(result.current.preview?.kind).toBe('image');
     access.request.mockResolvedValueOnce(page('', 0, change === 'source' ? { sourceRevision: 'source-2' } : { entries: [{ ...entry, updatedAtMs: 101 }] }));
     await act(() => vi.advanceTimersByTimeAsync(5000)); expect(result.current.preview).toBeNull(); expect(revoke).toHaveBeenCalledWith('blob:workspace');
+    expect(result.current.error?.code).toBe('workspace-changed');
+  });
+  it('retains an unchanged preview on a first-page manual refresh', async () => {
+    const { result } = renderHook(() => useWorkspace({ agentId: 'cylena', active: true }));
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    await act(() => result.current.act(entry, 'preview'));
+    await act(() => result.current.refresh());
+    expect(result.current.preview).toMatchObject({ kind: 'text', text: 'hello' });
   });
   it.each(['tab', 'agent', 'lock', 'hidden', 'directory'] as const)('aborts file reads and drops late bytes on %s', async reason => {
     let release!: (value: unknown) => void; access.requestFile.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));

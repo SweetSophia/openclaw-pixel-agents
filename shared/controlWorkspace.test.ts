@@ -30,6 +30,17 @@ describe('workspace boundary contracts', () => {
     expect(parseWorkspaceFileRequest({ ...input, expected: { size: 0 } })).toBeNull();
     expect(parseWorkspaceFileRequest({ ...input, intent: 'write' })).toBeNull();
   });
+  it('rejects coerced source states and agent IDs rejected by task controls', () => {
+    expect(parseWorkspacePage({ ...page, source: { state: ['current'], observedAt: 100 } })).toBeNull();
+    expect(parseWorkspacePage({ ...page, agentId: '_agent' })).toBeNull();
+  });
+  it('lists children past the request path budget without admitting overlong requests', () => {
+    const parent = Array(8).fill('a'.repeat(254)).join('/');
+    const path = `${parent}/child.txt`;
+    expect(parent.length).toBeLessThanOrEqual(2048); expect(path.length).toBeGreaterThan(2048);
+    expect(parseWorkspacePage({ ...page, path: parent, entries: [{ ...entry, path, name: 'child.txt' }] })).not.toBeNull();
+    expect(parseWorkspaceFileRequest({ path, offset: 0, sourceRevision: 'revision-1', expected: { size: 0, updatedAtMs: 100 }, intent: 'download' })).toBeNull();
+  });
   it('bounds native text and images without trusting unknown sizes', () => {
     expect(workspaceFileLimit('notes.txt')).toBe(262144);
     expect(workspaceFileLimit('photo.PNG')).toBe(1048576);

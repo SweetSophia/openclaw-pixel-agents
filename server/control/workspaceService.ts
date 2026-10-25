@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { controlRecord } from '../../shared/control';
+import { controlRecord, isControlAgentId } from '../../shared/control';
 import { WORKSPACE_LIMITS, parseWorkspaceFileRequest, parseWorkspaceListRequest, parseWorkspacePage, workspaceFileLimit, workspaceParent,
   type WorkspaceFileRequest, type WorkspaceListRequest, type WorkspacePage } from '../../shared/controlWorkspace';
 import type { ArtifactContent } from './artifactTransfer';
@@ -14,9 +14,10 @@ export interface WorkspaceService {
 }
 export function createWorkspaceService(gateway: ControlGateway, registeredAgentIds: () => ReadonlySet<string>): WorkspaceService {
   let revision = randomUUID(); let closed = false;
-  const unsubscribe = gateway.onEvent(event => { if (['source.invalidated', 'source.ready', 'agents.changed', 'config.changed'].includes(event.event)) revision = randomUUID(); });
+  // Native config.changed is global and carries no agent identity; any workspace root may have changed.
+  const unsubscribe = gateway.onEvent(event => { if (['source.invalidated', 'source.ready', 'config.changed'].includes(event.event)) revision = randomUUID(); });
   function guard(agentId: string, expected: string, signal?: AbortSignal): void {
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(agentId) || !registeredAgentIds().has(agentId)) throw new ControlError('invalid-target');
+    if (!isControlAgentId(agentId) || !registeredAgentIds().has(agentId)) throw new ControlError('invalid-target');
     if (closed || signal?.aborted) throw new ControlError('unavailable');
     const status = gateway.status();
     if (status.state === 'pairing-required') throw new ControlError('pairing-required');

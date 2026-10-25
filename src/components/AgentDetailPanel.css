@@ -48,7 +48,7 @@
 .detail-close:hover { background: rgba(255, 0, 85, 0.2); color: var(--acc-pink); border-color: var(--acc-pink); }
 .detail-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 12px; border-bottom: 1px solid rgba(255,255,255,.12); margin-bottom: 24px; }
 .detail-tabs button { min-height: 44px; min-width: 64px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; color: var(--text-muted); background: transparent; font: 600 14px var(--font-body); cursor: pointer; }
-.detail-tabs button[aria-selected="true"] { color: var(--acc-cyan); border-bottom-color: var(--acc-cyan); }
+.detail-tabs button[aria-selected="true"] { color: var(--acc-cyan); background: rgba(0, 240, 255, .08); border-radius: 4px; }
 
 /* Header */
 .detail-header {

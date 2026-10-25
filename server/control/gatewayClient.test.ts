@@ -102,10 +102,10 @@ describe('scoped task Gateway client', () => {
     expect(host.frames.map(frame => frame.method).filter(method => method !== 'sessions.subscribe')).toEqual(['connect', 'agents.workspace.list', 'agents.workspace.list', 'agents.workspace.get']);
     expect(host.frames[0].params.scopes).toEqual(['operator.read']);
   });
-  it.each([['workspace_file_too_large', 'file-too-large'], ['workspace_file_unsupported', 'preview-unsupported'], ['workspace_path_not_found', 'file-unavailable']])('normalizes native workspace %s without raw diagnostics', async (type, code) => {
+  it.each([['workspace_file_too_large', 'file-too-large'], ['workspace_file_unsupported', 'preview-unsupported'], ['workspace_path_not_found', 'file-unavailable'], ['workspace_path_invalid', 'invalid-request'], ['future_workspace_error', 'invalid-request'], ['workspace_path_invalid', 'invalid-request', 'FORBIDDEN'], [undefined, 'scope-required', 'FORBIDDEN']])('normalizes native workspace %s without raw diagnostics', async (type, code, nativeCode?: string) => {
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
       features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'agents.workspace.get'], events: [] },
-    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'private-host-path', details: { type } } })));
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: nativeCode ?? 'INVALID_REQUEST', message: 'private-host-path', details: { type } } })));
     const gateway = client(host.url); await ready(gateway);
     const error = await gateway.request('agents.workspace.get', { agentId: 'cylena', path: 'file' }).catch(error => error);
     expect(error).toMatchObject({ code }); expect((error as Error).message).not.toContain('private-host-path');

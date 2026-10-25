@@ -1,4 +1,4 @@
-import { CONTROL_LIMITS, controlByteSize, controlRecord, type ControlSource } from './control';
+import { CONTROL_LIMITS, controlByteSize, controlRecord, isControlAgentId, type ControlSource } from './control';
 
 export const WORKSPACE_LIMITS = { pageSize: 50, maxOffset: 10000, pathCharacters: 2048, textBytes: 256 * 1024, imageBytes: 1024 * 1024 } as const;
 export interface WorkspaceEntry { path: string; name: string; kind: 'file' | 'directory'; size?: number; updatedAtMs?: number }
@@ -34,19 +34,20 @@ export function parseWorkspacePage(value: unknown): WorkspacePage | null {
   const input = controlRecord(value); if (!input || controlByteSize(input) > CONTROL_LIMITS.responseBytes
     || !closed(input, ['agentId', 'path', 'offset', 'totalEntries', 'entries', 'source', 'sourceRevision']) || typeof input.path !== 'string' || !integer(input.offset)) return null;
   const page = parseWorkspaceListRequest({ path: input.path, offset: input.offset }); const source = controlRecord(input.source);
-  if (!page || typeof input.agentId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(input.agentId) || !revision(input.sourceRevision)
-    || !source || !closed(source, ['state', 'observedAt']) || !integer(source.observedAt) || !['current', 'stale'].includes(String(source.state))
+  if (!page || !isControlAgentId(input.agentId) || !revision(input.sourceRevision)
+    || !source || !closed(source, ['state', 'observedAt']) || !integer(source.observedAt) || (source.state !== 'current' && source.state !== 'stale')
     || !integer(input.totalEntries) || !Array.isArray(input.entries) || input.entries.length > WORKSPACE_LIMITS.pageSize
     || page.offset + input.entries.length > input.totalEntries) return null;
   const entries: WorkspaceEntry[] = []; const paths = new Set<string>();
   for (const raw of input.entries) {
     const row = controlRecord(raw);
-    if (!row || !closed(row, ['path', 'name', 'kind', 'size', 'updatedAtMs']) || !isWorkspacePath(row.path) || !row.path || workspaceParent(row.path) !== page.path
-      || typeof row.name !== 'string' || row.name !== row.path.slice(row.path.lastIndexOf('/') + 1) || (row.kind !== 'file' && row.kind !== 'directory')
+    if (!row || !closed(row, ['path', 'name', 'kind', 'size', 'updatedAtMs']) || typeof row.path !== 'string'
+      || !isWorkspacePath(row.name) || !row.name || row.name.length > 255 || row.name.includes('/')
+      || row.path !== (page.path ? `${page.path}/` : '') + row.name || (row.kind !== 'file' && row.kind !== 'directory')
       || (row.size !== undefined && !integer(row.size)) || (row.updatedAtMs !== undefined && !integer(row.updatedAtMs)) || paths.has(row.path)) return null;
     paths.add(row.path); entries.push({ path: row.path, name: row.name, kind: row.kind,
       ...(row.size === undefined ? {} : { size: row.size as number }), ...(row.updatedAtMs === undefined ? {} : { updatedAtMs: row.updatedAtMs as number }) });
   }
   return { ...page, agentId: input.agentId, entries, totalEntries: input.totalEntries,
-    source: { state: source.state as ControlSource['state'], observedAt: source.observedAt }, sourceRevision: input.sourceRevision };
+    source: { state: source.state, observedAt: source.observedAt }, sourceRevision: input.sourceRevision };
 }

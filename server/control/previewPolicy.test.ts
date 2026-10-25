@@ -46,5 +46,9 @@ describe('inert delivered-file previews', () => {
     expect(safeArtifactFilename('x'.repeat(500)).length).toBeLessThanOrEqual(128);
     expect(safeArtifactFilename('..')).not.toMatch(/^[. ]*$/);
     expect(safeArtifactFilename('CON.txt')).not.toMatch(/^con(?:\.|$)/i);
+    for (const name of ['low\udc00.txt', 'high\ud800-mid.txt', '💫.txt', 'x'.repeat(127) + '💫.txt', 'CON.' + 'x'.repeat(116) + '💫.txt']) {
+      expect(() => encodeURIComponent(safeArtifactFilename(name))).not.toThrow();
+    }
+    expect(safeArtifactFilename('💫.txt')).toBe('💫.txt');
   });
 });

@@ -9,7 +9,7 @@ export function ControlAccessPanel({ active, loading, onRefresh, error, children
   const access = useControlAccess(); const keyId = useId();
   const [key, setKey] = useState(''); const [unlocking, setUnlocking] = useState(false);
   const [accessError, setAccessError] = useState<ControlApiError | null>(null); const [unlockError, setUnlockError] = useState<string | null>(null);
-  useEffect(() => { setKey(''); }, [active, access.generation]);
+  useEffect(() => { setKey(''); }, [access.state]);
   useEffect(() => {
     if (!active) return;
     let disposed = false; const controller = new AbortController();

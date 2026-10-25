@@ -67,8 +67,8 @@ function webp(data: Buffer): void {
   if (offset !== data.length || !image || (canvas && (canvas[0] !== image[0] || canvas[1] !== image[1]))) unsupported();
 }
 export function safeArtifactFilename(title: string): string {
-  const filename = title.normalize('NFKC').replace(/[<>:"/\\|?*\u0000-\u001f\u007f-\u009f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 128).replace(/[\ud800-\udbff]$/, '');
-  return !filename ? 'shared-file' : /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(filename) ? `shared-${filename}`.slice(0, 128) : filename;
+  const filename = title.normalize('NFKC').replace(/[\ud800-\udfff]/gu, '_').replace(/[<>:"/\\|?*\u0000-\u001f\u007f-\u009f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 128).replace(/[\ud800-\udbff]$/, '');
+  return (!filename ? 'shared-file' : /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(filename) ? `shared-${filename}` : filename).slice(0, 128).replace(/[\ud800-\udbff]$/, '');
 }
 export function artifactMime(value?: string): string {
   const mime = value?.split(';')[0].trim().toLowerCase();

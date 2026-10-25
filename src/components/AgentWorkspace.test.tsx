@@ -29,12 +29,33 @@ it('previews empty files and text literally without loading contents automatical
   render(<AgentWorkspace agentId="cylena" active />); const preview = await screen.findByRole('button', { name: 'Preview 日本語.txt' });
   expect(access.requestFile).not.toHaveBeenCalled(); fireEvent.click(preview); await screen.findByText(/this file is empty/i);
   access.requestFile.mockResolvedValueOnce({ kind: 'bytes', blob: new NodeBlob(['<script>literal</script>'], { type: 'text/plain' }), filename: '日本語.txt', truncated: false });
-  fireEvent.click(screen.getByRole('button', { name: 'Close preview' })); fireEvent.click(preview);
+  const close = screen.getByRole('button', { name: 'Close preview' }); close.focus(); fireEvent.click(close);
+  expect(document.activeElement).toBe(preview); fireEvent.click(preview);
   await screen.findByText('<script>literal</script>'); expect(document.querySelector('script')).toBeNull();
+  expect(screen.getByRole('status', { name: 'Preview status' })).toHaveTextContent('Preview ready: 日本語.txt');
 });
 it('uses the existing unlock gate and performs no workspace RPCs while locked', async () => {
   access.state = 'locked'; render(<AgentWorkspace agentId="cylena" active />);
   await screen.findByRole('heading', { name: 'Unlock task details' });
   await waitFor(() => expect(access.request.mock.calls.every(([path]) => String(path).endsWith('/status'))).toBe(true));
   expect(screen.queryByLabelText('Conversation')).toBeNull(); expect(access.requestFile).not.toHaveBeenCalled();
+});
+it('shows overlong child paths without offering an unusable read', async () => {
+  const parent = Array(8).fill('a'.repeat(254)).join('/');
+  // Navigate via a valid chain of native single-directory pages.
+  const parts = parent.split('/'); let depth = 0;
+  access.request.mockImplementation(async (path) => {
+    if (String(path).endsWith('/status')) return access.status;
+    const directory = parts.slice(0, depth).join('/');
+    return { ...page, path: directory, totalEntries: 1, entries: depth < parts.length
+      ? [{ path: parts.slice(0, depth + 1).join('/'), name: parts[depth], kind: 'directory' }]
+      : [{ ...report, path: `${parent}/child.txt`, name: 'child.txt' }] };
+  });
+  render(<AgentWorkspace agentId="cylena" active />);
+  for (; depth < parts.length;) {
+    const button = await screen.findByRole('button', { name: `Open folder ${parts[depth]}` }); depth++; fireEvent.click(button);
+  }
+  await screen.findByText(/exceeds the 2,048-character/);
+  const button = screen.getByRole('button', { name: 'Preview child.txt' });
+  expect(button).toHaveAttribute('aria-disabled', 'true'); fireEvent.click(button); expect(access.requestFile).not.toHaveBeenCalled();
 });

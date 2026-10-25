@@ -74,6 +74,13 @@ describe('native workspace ownership and content', () => {
     f.setFile({ content: Buffer.alloc(data.length).toString('base64') });
     await expect(f.service.file('cylena', { ...await f.input(), intent: 'preview' })).rejects.toMatchObject({ code: 'preview-unsupported' });
   });
+  it.each(['page.html', 'drawing.svg'])('renders native %s source as inert UTF-8 text', async name => {
+    const f = fixture(); const content = '<script>literal source</script>';
+    f.setEntry({ path: `notes/${name}`, name, size: Buffer.byteLength(content) });
+    f.setFile({ path: `notes/${name}`, name, size: Buffer.byteLength(content), content });
+    const result = await f.service.file('cylena', { ...await f.input(), intent: 'preview' });
+    expect(result).toMatchObject({ kind: 'bytes', mimeType: 'text/plain; charset=utf-8', data: Buffer.from(content) });
+  });
   it('rejects oversized current selections and malformed base64 before exporting bytes', async () => {
     const f = fixture(); f.setEntry({ size: 262145 });
     await expect(f.service.file('cylena', await f.input())).rejects.toMatchObject({ code: 'file-too-large' });
