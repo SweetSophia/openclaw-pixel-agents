@@ -66,7 +66,7 @@ export interface ControlSendReceipt {
 export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'pairing-required' | 'scope-required'
   | 'unsupported' | 'unavailable' | 'invalid-source' | 'invalid-target' | 'session-changed'
   | 'invalid-request' | 'rate-limited' | 'outcome-unknown' | 'command-not-supported'
-  | 'file-unavailable' | 'file-too-large' | 'preview-unsupported';
+  | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }
 export interface ControlConversationEvent {
   target: ControlTarget; kind: 'messages' | 'invalidated' | 'unavailable'; source: ControlSource; messages?: ControlMessage[];
@@ -121,7 +121,8 @@ function list(field: Field, maximum: number): Field {
     return result.includes(INVALID) ? INVALID : result;
   };
 }
-const agentId: Field = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value) ? value : INVALID;
+export const isControlAgentId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
+const agentId: Field = value => isControlAgentId(value) ? value : INVALID;
 const sessionId: Field = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value) ? value : INVALID;
 const targetShape = {
   agentId, sessionId, sessionKey: text(512, true), lifecycleRevision: optional(text(256, true)),

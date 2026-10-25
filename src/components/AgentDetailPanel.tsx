@@ -5,6 +5,7 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import { TaskDetailsView } from './TaskDetails';
 import { AgentConversation } from './AgentConversation';
 import { TaskResults } from './TaskResults';
+import { AgentWorkspace } from './AgentWorkspace';
 import { useTaskDetails } from '../control/useTaskDetails';
 import './AgentDetailPanel.css';
 
@@ -34,7 +35,7 @@ const activityColors: Record<AgentActivity, string> = {
   sleeping: '#8a93b2',
   error: '#dc3545',
 };
-const detailTabs = ['task', 'conversation', 'results', 'agent'] as const;
+const detailTabs = ['task', 'conversation', 'results', 'workspace', 'agent'] as const;
 
 export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -42,7 +43,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const headingId = useId();
   const [tab, setTab] = useState<typeof detailTabs[number]>('task');
   const tabsId = useId();
-  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: tab !== 'agent', taskActive: tab === 'task', resultsActive: tab === 'results' });
+  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: tab === 'task' || tab === 'conversation' || tab === 'results', taskActive: tab === 'task', resultsActive: tab === 'results' });
 
   useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
 
@@ -107,6 +108,9 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           <TaskDetailsView agentId={agent.id} active={tab === 'results'} state={details}>
             <TaskResults state={details} active={tab === 'results'} />
           </TaskDetailsView>
+        </div>
+        <div role="tabpanel" id={`${tabsId}-workspace-panel`} aria-labelledby={`${tabsId}-workspace-tab`} hidden={tab !== 'workspace'}>
+          <AgentWorkspace agentId={agent.id} active={tab === 'workspace'} />
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
         <p className="detail-subvalue">Office roster summary</p>

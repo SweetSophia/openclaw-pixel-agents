@@ -8,10 +8,11 @@ const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'ses
 const WRITE_METHODS = ['chat.send', 'sessions.create'] as const;
 const STREAM_METHODS = ['sessions.messages.subscribe', 'sessions.messages.unsubscribe'] as const;
 const ARTIFACT_METHODS = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
-export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number];
+const WORKSPACE_METHODS = ['agents.workspace.list', 'agents.workspace.get'] as const;
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -131,6 +132,12 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
+        if ((WORKSPACE_METHODS as readonly string[]).includes(item.method)) {
+          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? details?.type ? 'invalid-request' : 'scope-required' : error?.code !== 'INVALID_REQUEST' ? 'unavailable'
+            : details?.type === 'workspace_file_too_large' ? 'file-too-large' : details?.type === 'workspace_file_unsupported' ? 'preview-unsupported'
+              : ['workspace_path_not_found', 'workspace_file_not_found'].includes(String(details?.type)) ? 'file-unavailable' : 'invalid-request'));
+          return;
+        }
         item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST'
           ? !artifact ? 'invalid-source' : details?.type === 'artifact_scope_not_found' ? 'session-changed'
             : details?.type === 'artifact_not_found' || details?.type === 'artifact_download_unsupported' ? 'file-unavailable' : 'unsupported'
@@ -146,9 +153,10 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     request(method, params, signal) {
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
       const artifact = (ARTIFACT_METHODS as readonly string[]).includes(method);
-      if (artifact && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
+      const workspace = (WORKSPACE_METHODS as readonly string[]).includes(method);
+      if ((artifact || workspace) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
       const allowed = (READ_METHODS as readonly string[]).includes(method)
-        || artifact
+        || artifact || workspace
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
       if (!allowed) return Promise.reject(new GatewayRequestError('scope-required'));
