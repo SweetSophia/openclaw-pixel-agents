@@ -106,7 +106,7 @@ Requests stay relative to the agent's workspace. The Gateway owns filesystem con
 
 ## Conversation usage
 
-Source builds include a read-only **Usage** tab; it awaits an npm release and is not included in published 1.6.0. It follows the conversation selected in Task/Conversation/Results and uses the same office key and `operator.read` device grant. No provider billing credentials are needed.
+Available from version **1.7.0**, the read-only **Usage** tab follows the conversation selected in Task/Conversation/Results and uses the same office key and `operator.read` device grant. No provider billing credentials are needed.
 
 The optional native `sessions.usage` method supplies recorded input, output, cache-read, cache-write and total tokens over the selected session instance's retained history. These are cumulative recorded model-call totals, not current-task totals, provider quotas, or a lifetime billing ledger. Missing counters display **Not reported**; explicit reported zero stays zero. Earlier instances after resets are not grouped into the selected instance.
 
@@ -138,4 +138,4 @@ Docker's `--env-file` supplies process variables; it does not depend on the serv
 - **Secure connection required:** use HTTPS, loopback development, or the explicitly configured direct-Tailnet exception.
 - **Forbidden origin:** set the exact browser origin in `CORS_ORIGIN` and preserve the browser's `Origin` header through any reverse proxy.
 - **Connected roster but unavailable tasks:** the collector feed and private Gateway connection are independent. Check the task connection and device grant separately.
-- **Gateway starting or restarting (source builds):** private panels can be temporarily unavailable while the Gateway starts. An explicitly retryable `UNAVAILABLE` handshake response now reconnects automatically with the existing device grant and bounded backoff; no pairing reset or new office key is needed. Genuine credential, scope and pairing failures still require operator attention. This recovery fix awaits the next npm release.
+- **Gateway starting or restarting (1.7.0 and newer):** private panels can be temporarily unavailable while the Gateway starts. An explicitly retryable `UNAVAILABLE` handshake response reconnects automatically with the existing device grant and bounded backoff; no pairing reset or new office key is needed. Genuine credential, scope and pairing failures still require operator attention.
