@@ -67,6 +67,16 @@ Alternatively, use `npx --yes "openclaw-pixel-agents@^1.6.0" --env-file /absolut
 
 The launcher runs in production mode. Its default data directory is **`~/.openclaw-pixel-agents`**, outside the installation, so package upgrades do not replace saved layouts or appearances. Set `DATA_DIR` explicitly for a service account or multiple offices. Obtain an [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example) and follow the [configuration reference](docs/configuration.md).
 
+### Setup instructions
+
+The source launcher includes a repeatable setup guide:
+
+```sh
+node bin/openclaw-pixel-agents.mjs setup
+```
+
+It explains private configuration, persistent storage, the collector, optional task-key/device pairing, startup and the browser URL. It does not modify files, generate credentials or start the office. A launch without `CORS_ORIGIN` also prints the guide and exits with a configuration error. Configured launches continue to use `--env-file` or the supplied environment as before. The `setup` command is not included in npm 1.6.0; it will be available in the next release as `openclaw-pixel-agents setup` (or `npx openclaw-pixel-agents setup` for a local installation).
+
 ## Create your task-access key
 
 **Each installation creates its own key.** There is no project-wide key, and no developer-specific file path is required.
