@@ -1,5 +1,7 @@
 # npm onboarding implementation plan
 
+Status (2026-10-26): source and package qualification complete in [PR #315](https://github.com/SweetSophia/openclaw-pixel-agents/pull/315). That PR did not deploy or publish; current rollout and a separate future npm release remain explicit entries in [revamp status](../../revamp-status.md).
+
 > **For agentic workers:** Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make installation and first use explain how to configure and start Pixel Agents.

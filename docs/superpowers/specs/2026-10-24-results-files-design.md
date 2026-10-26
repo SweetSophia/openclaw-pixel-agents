@@ -1,6 +1,6 @@
 # Task results and delivered files
 
-Status: user-approved on 2026-10-24. The user selected task results and delivered files as the next improvement and approved this written design. A subsequent user requirement adds a portable operator key-generation and setup path; deliver that onboarding fix first, then implement this design.
+Status (2026-10-26): user-approved on 2026-10-24 and complete in PR #304, after portable operator key setup in PR #299. Recorded live acceptance and the subsequent 1.5.0 release are linked from [revamp status](../../revamp-status.md); new rollout qualification remains separate.
 
 ## Intent and selected scope
 

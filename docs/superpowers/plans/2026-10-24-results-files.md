@@ -1,5 +1,7 @@
 # Task Results and Delivered Files Implementation Plan
 
+Status (2026-10-26): complete in [PR #304](https://github.com/SweetSophia/openclaw-pixel-agents/pull/304). Its recorded delivery verified Results and existing private capabilities on the backed-up runtime without sending a task. The feature subsequently shipped in [1.5.0](../../releases/1.5.0.md). See [revamp status](../../revamp-status.md) for current rollout qualification.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Let an unlocked office user read the selected task's result and explicitly preview or download files shared by its assistant.
@@ -173,9 +175,9 @@
 - [x] Commit public documentation and sanitized evidence references: `docs: document result access and native transfer verification`. Keep private manual evidence in ignored storage; complete plan tracking without claiming unmet release gates.
 - [x] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate` and `git diff --check`; require all to pass without lowering repository coverage/security gates.
 - [x] Browser-check desktop, phone and short windows: four tabs, keyboard/focus restoration, wrapping/44px targets, copy fallback on direct-IP HTTP, text/raster preview, inert download-only formats, external link host, slow transfer and switch/Lock/close/hidden-page cleanup. Use synthetic private fixtures; inspect screenshots and console/network errors. Verify existing portrait/overlay/canvas behavior.
-- [ ] Obtain a fresh independent whole-branch review, fix valid findings and inspect every current-head inline bot thread/root review with pagination. Required CI must be green; the user's existing stalled-Kilo waiver applies. Verify local `gh api user --jq .login` is exactly SweetSophia before writes.
-- [ ] Merge the reviewed exact head under standing authorization; back up current live data/config/device grant and previous runtime, deploy tested runtime only, and verify public roster plus existing private read/send capabilities without sending a task. Preserve current rotated grant rather than restoring an older staged credential. Stop only task-owned previews/browser sessions and record rollback location.
-- [ ] Record actual merge, backup and live acceptance in the ignored release ledger; mark this plan complete only after the delivery gates actually pass.
+- [x] Obtain a fresh independent whole-branch review, fix valid findings and inspect every current-head inline bot thread/root review with pagination. Required CI must be green; the user's existing stalled-Kilo waiver applies. Verify local `gh api user --jq .login` is exactly SweetSophia before writes.
+- [x] Merge the reviewed exact head under standing authorization; back up current live data/config/device grant and previous runtime, deploy tested runtime only, and verify public roster plus existing private read/send capabilities without sending a task. Preserve current rotated grant rather than restoring an older staged credential. Stop only task-owned previews/browser sessions and record rollback location.
+- [x] Record actual merge, backup and live acceptance in the ignored release ledger; mark this plan complete only after the delivery gates actually pass. PR #304 records merge `5bf284a` and successful live acceptance; the retained Results release ledger records the backup and unchanged preferences/layouts.
 
 ## Self-Review and Execution Handoff
 

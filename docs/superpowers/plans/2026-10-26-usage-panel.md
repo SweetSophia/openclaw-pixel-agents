@@ -1,5 +1,7 @@
 # Conversation Usage Implementation Plan
 
+Status (2026-10-26): source implementation, review and qualification merged in [PR #323](https://github.com/SweetSophia/openclaw-pixel-agents/pull/323) as `cf1dceb`. All nineteen posted review threads were assessed and resolved; final required CI, Docker and 1,407 local tests passed. This PR did not deploy or publish. See [revamp status](../../revamp-status.md) for pending rollout qualification.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add source-backed, read-only Usage for the selected conversation.
@@ -50,4 +52,4 @@
 - [x] Inspect synthetic desktop/mobile/short viewport, keyboard tabs and lock/hidden cleanup in a native browser; no real agent tasks.
 - [x] Document Usage scope and unavailable context/pricing without claiming availability in already published npm 1.6.0; preserve screenshots and user README edits.
 - [x] Request one fresh whole-branch reviewer; assess findings and verify material fixes with regressions.
-- [ ] Inspect follow-up bot comments and current-head CI before merge under standing authorization. No npm publish.
+- [x] Inspect follow-up bot comments and current-head CI before merge under standing authorization. No npm publish. Completed for PR #323; Kilo's last run hit its provider rate limit, and merge proceeded under the user's then-current waiver after valid findings were fixed and required checks passed.

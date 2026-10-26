@@ -1,5 +1,7 @@
 # Task Details and Conversation Controls Implementation Plan
 
+Status (2026-10-26): both deliveries are merged and historically verified in [PR #294](https://github.com/SweetSophia/openclaw-pixel-agents/pull/294) and [PR #295](https://github.com/SweetSophia/openclaw-pixel-agents/pull/295), with later reliability follow-ups. Recorded release evidence includes live read acceptance and preserved data; the real-task send check was handed to the user. See [revamp status](../../revamp-status.md) for current closeout work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** First ship source-backed task details for a chosen agent conversation, then add private conversation history and explicit, deduplicated task sends.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Existing React 19, TypeScript, Express, Socket.IO, Vitest and Node WebSocket/crypto/filesystem APIs; no new runtime dependencies.
 
-**Spec:** [Approved task-controls design](../specs/2026-10-23-task-controls-design.md). User approved the presented design/mockup with “this looks awesome!” on 2026-10-23. This plan still awaits its own execution handoff.
+**Spec:** [Approved task-controls design](../specs/2026-10-23-task-controls-design.md). User approved the presented design/mockup with “this looks awesome!” on 2026-10-23 and then authorized implementation. The execution handoff and both deliveries are complete.
 
 ## Global Constraints
 
@@ -181,15 +183,15 @@ interface ControlErrorBody { error: string; code: ControlErrorCode }
 
 **Interfaces:** Consumes Delivery 1 and Tasks 6–8; produces separately reviewed Delivery 2 with explicit write configuration and the approved exact-target send behavior.
 
-- [ ] Repeat typecheck, full coverage, build, both audits and diff checks after these new changes. Require actual successful results, not Delivery-1 evidence.
-- [ ] On a controlled Gateway fixture, use native browser actions to send, queue a follow-up, switch drafts, page history and create a conversation. Inject connection loss around create/admission/persistence boundaries; verify one conversation/one send, original-key Retry, retained drafts and no external delivery. Check desktop/mobile/short-window layout, focus, keyboard, escaping and no browser errors.
-- [ ] Independently review the complete second-delivery diff and current-head bot findings. Address valid findings and merge only when current checks are green. Split backend-enabled-but-UI-hidden and frontend work into separate PRs if size warrants it; keep `CONTROL_SEND_ENABLED=false` until the complete reviewed delivery is ready.
-- [ ] Back up current live data again, deploy the exact tested artifacts/configuration, verify read-only real Gateway behavior and source freshness, and hand the explicit real-task send check to the user. Never issue a real task or external message as an automatic smoke test. Preserve the design-preview service and existing user data.
+- [x] Repeat typecheck, full coverage, build, both audits and diff checks after these new changes. Require actual successful results, not Delivery-1 evidence.
+- [x] On a controlled Gateway fixture, use native browser actions to send, queue a follow-up, switch drafts, page history and create a conversation. Inject connection loss around create/admission/persistence boundaries; verify one conversation/one send, original-key Retry, retained drafts and no external delivery. Check desktop/mobile/short-window layout, focus, keyboard, escaping and no browser errors.
+- [x] Independently review the complete second-delivery diff and current-head bot findings. Address valid findings and merge only when current checks are green. Split backend-enabled-but-UI-hidden and frontend work into separate PRs if size warrants it; keep `CONTROL_SEND_ENABLED=false` until the complete reviewed delivery is ready.
+- [x] Back up current live data again, deploy the exact tested artifacts/configuration, verify read-only real Gateway behavior and source freshness, and hand the explicit real-task send check to the user. Never issue a real task or external message as an automatic smoke test. Preserve the design-preview service and existing user data. The recorded PR #295 deployment completed these gates; no automated real task was sent.
 
 ## Self-review and execution handoff
 
-Plan self-review completed: every design section maps to Tasks 1–9; shared interfaces use consistent names; each Review Focus input has owning tests; the two deliveries have separate verification/review/release gates. The optional future capabilities remain outside these deliveries. The source tree is still documentation/prototype only.
+Plan self-review completed: every design section maps to Tasks 1–9; shared interfaces use consistent names; each Review Focus input has owning tests; the two deliveries have separate verification/review/release gates. Both deliveries are implemented and merged. The optional future capabilities remain outside these deliveries.
 
 Recommended execution: **Native**, implementing the tasks in this session, with an independent whole-branch review before each delivery merges. The tasks share protocol/identity/data-contract decisions, so keeping one implementer reduces interface drift. **Subagent-driven** remains available if the user prefers fresh implementers and reviewers per task.
 
-User review of this plan and selection/confirmation of execution method are required before product implementation under the writing-plans skill. Once chosen, preserve the method through both deliveries.
+The user selected native execution with independent review, and both deliveries completed that workflow. This historical handoff does not introduce another approval gate for already authorized closeout work.

@@ -1,6 +1,6 @@
 # Real task details, then conversation and send controls
 
-Status: user-approved on 2026-10-23. Delivery 1 merged in PR #294 and deployed with read-only Gateway authority. Conversation/send controls are the next delivery.
+Status (2026-10-26): user-approved on 2026-10-23; both deliveries are implemented, merged and historically verified in PRs #294 and #295. Later reliability fixes retain the same scoped access and explicit-send boundaries. See [revamp status](../../revamp-status.md) for current rollout qualification and remaining work.
 
 ## Intent and agreed order
 
