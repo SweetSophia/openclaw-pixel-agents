@@ -14,7 +14,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
   const state = useTaskDetails({ agentId, initialSessionKey, active });
   return <TaskDetailsView agentId={agentId} active={active} state={state} />;
 }
-export function TaskDetailsView({ agentId, active, state, children, runNavigation, historical = false }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode; runNavigation?: React.ReactNode; historical?: boolean }) {
+export function TaskDetailsView({ agentId, active, state, children, runNavigation, historical = false, retainedHistory = false }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode; runNavigation?: React.ReactNode; historical?: boolean; retainedHistory?: boolean }) {
   const access = useControlAccess();
   const selectorId = useId();
   const task = state.task && access.status?.canRead === false
@@ -38,7 +38,7 @@ export function TaskDetailsView({ agentId, active, state, children, runNavigatio
     {!children && task && <>
       <p className="task-announcement" role="status" aria-label="Task updates" aria-live="polite" aria-atomic="true">{runLabels[task.runState]} task. {task.runId ? `${historical ? 'Selected recorded run' : 'Following run'} ${task.runId}.` : 'Task identity unavailable.'}</p>
       <section className="task-state" aria-label="Run state">
-        <div className="task-state-line"><strong className={`task-run-${task.runState}`}>{runLabels[task.runState]}</strong><span className="task-muted">{task.source.state === 'stale' ? 'Last known — connection unavailable' : 'Verified by OpenClaw'}</span></div>
+        <div className="task-state-line"><strong className={`task-run-${task.runState}`}>{runLabels[task.runState]}</strong><span className="task-muted">{retainedHistory ? 'Last loaded snapshot — not reverified in the current window' : task.source.state === 'stale' ? 'Last known — connection unavailable' : 'Verified by OpenClaw'}</span></div>
         <p className="task-muted">{time(task.source.observedAt)}</p>
         {task.hasActiveRun === true && !task.runId && <p>Current task identity unavailable</p>}
         {task.runId && <p className="task-muted">Run {task.runId}</p>}

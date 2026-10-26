@@ -2,8 +2,8 @@ import React, { useId } from 'react';
 import type { ControlRunHistorySnapshot } from '../../shared/controlRunHistory';
 import type { ControlApiError } from '../control/api';
 
-export function RunHistoryPicker({ snapshot, runId, loading, error, onSelect, onRefresh, onEarlier }: {
-  snapshot: ControlRunHistorySnapshot | null; runId?: string; loading: boolean; error: ControlApiError | null;
+export function RunHistoryPicker({ snapshot, lastKnown, runId, loading, error, onSelect, onRefresh, onEarlier }: {
+  snapshot: ControlRunHistorySnapshot | null; lastKnown?: ControlRunHistorySnapshot | null; runId?: string; loading: boolean; error: ControlApiError | null;
   onSelect(runId?: string): void; onRefresh(): void; onEarlier(): void;
 }) {
   const id = useId();
@@ -23,7 +23,7 @@ export function RunHistoryPicker({ snapshot, runId, loading, error, onSelect, on
     {snapshot?.limitReached && <p className="task-muted">History discovery reached its record or size limit.</p>}
     {runId && <p className="task-notice">Recorded run selected. This view is read-only. Return to Live / latest task to send a message or control active work.</p>}
     {snapshot?.outcome && <p className="task-muted">Run outcome evidence: {snapshot.outcome.state === 'recorded' ? 'source-correlated audit metadata' : snapshot.outcome.state === 'ambiguous' ? 'ambiguous; outcome remains unknown' : 'unavailable; outcome remains unknown'} · checked {new Date(snapshot.outcome.observedAt).toLocaleString()}.</p>}
-    {runId && snapshot && !snapshot.task && <p>No facts for this run are in the loaded window. Load earlier runs to continue discovery.</p>}
+    {runId && snapshot && !snapshot.task && (lastKnown?.task ? <p className="task-notice" role="status">Showing the last loaded text for this run from {new Date(lastKnown.source.observedAt).toLocaleString()} ({lastKnown.loadedRecords.toLocaleString()} records in that snapshot). It has not been reverified in the current window. Results and files are unavailable until you load its records again.</p> : <p>No facts for this run are in the loaded window. Load earlier runs to continue discovery.</p>)}
   </section>;
 }
 export function HistoricalConversation({ snapshot }: { snapshot: ControlRunHistorySnapshot | null }) {

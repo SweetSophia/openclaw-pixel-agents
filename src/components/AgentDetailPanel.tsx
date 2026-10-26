@@ -55,12 +55,14 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: controlActive, taskActive: tab === 'task' && !historical, resultsActive: tab === 'results' && !historical, usageActive: tab === 'usage' && !historical });
   const selectedRunId = historical && details.selected && runSelection.target === targetIdentity(details.selected) ? runSelection.runId : undefined;
   const history = useRunHistory({ target: details.selected, runId: selectedRunId, active: controlActive, resultsActive: tab === 'results' && !!selectedRunId });
+  const retainedHistory = !!selectedRunId && !history.snapshot?.task && !!history.lastKnown?.task;
+  const historicalTask = history.snapshot?.task ?? (history.lastKnown?.task ? { ...history.lastKnown.task, source: { ...history.lastKnown.task.source, state: 'stale' as const } } : null);
   useEffect(() => { setRunSelection(null); }, [agent.id, access.generation]);
   useEffect(() => { if (access.state !== 'unlocked') setRunSelection(null); }, [access.state]);
   const displayDetails = { ...details, selectSession: (target: Parameters<typeof details.selectSession>[0]) => { setRunSelection(null); details.selectSession(target); },
-    ...(selectedRunId ? { historicalRunId: selectedRunId, task: history.snapshot?.task ?? null, results: history.results, usage: null, loading: history.loading, error: history.error,
+    ...(selectedRunId ? { historicalRunId: selectedRunId, task: historicalTask, results: history.results, usage: null, loading: history.loading, error: history.error,
       refresh: async () => { await history.refresh(); }, loadEarlier: async () => { await history.loadEarlier(); } } : {}) };
-  const runNavigation = <RunHistoryPicker snapshot={history.snapshot} runId={selectedRunId} loading={history.loading} error={history.error}
+  const runNavigation = <RunHistoryPicker snapshot={history.snapshot} lastKnown={history.lastKnown} runId={selectedRunId} loading={history.loading} error={history.error}
     onSelect={runId => { if (runId && details.selected) setRunSelection({ agentId: agent.id, target: targetIdentity(details.selected), runId }); else setRunSelection(null); }}
     onRefresh={() => { void history.refresh(); }} onEarlier={() => { void history.loadEarlier(); }} />;
 
@@ -116,12 +118,12 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
             }}>{name.charAt(0).toUpperCase() + name.slice(1)}</button>)}
         </div>
         <div role="tabpanel" id={`${tabsId}-task-panel`} aria-labelledby={`${tabsId}-task-tab`} hidden={tab !== 'task'}>
-          <TaskDetailsView agentId={agent.id} active={tab === 'task'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId} />
+          <TaskDetailsView agentId={agent.id} active={tab === 'task'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId} retainedHistory={retainedHistory} />
         </div>
         <div role="tabpanel" id={`${tabsId}-conversation-panel`} aria-labelledby={`${tabsId}-conversation-tab`} hidden={tab !== 'conversation'}>
           <TaskDetailsView agentId={agent.id} active={tab === 'conversation'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
             <div hidden={!!selectedRunId}><AgentConversation target={details.selected} agentId={agent.id} active={tab === 'conversation' && !selectedRunId} busy={details.selected?.hasActiveRun === true} onCreated={target => { setRunSelection(null); details.selectCreatedSession(target); }} /></div>
-            {selectedRunId && <HistoricalConversation snapshot={history.snapshot} />}
+            {selectedRunId && <HistoricalConversation snapshot={history.snapshot?.task ? history.snapshot : history.lastKnown ?? history.snapshot} />}
           </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-results-panel`} aria-labelledby={`${tabsId}-results-tab`} hidden={tab !== 'results'}>
