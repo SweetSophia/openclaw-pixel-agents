@@ -1,6 +1,6 @@
 # Conversation Usage Implementation Plan
 
-Status (2026-10-26): source implementation, review and qualification merged in [PR #323](https://github.com/SweetSophia/openclaw-pixel-agents/pull/323) as `cf1dceb`. All nineteen posted review threads were assessed and resolved; final required CI, Docker and 1,407 local tests passed. A separate independently reviewed runtime-only deployment subsequently passed live acceptance, including a repeat Usage read reaching Ready, with saved state/current credentials preserved and no real task sent. See [revamp status](../../revamp-status.md) for delivery evidence. No npm publication occurred.
+Status (2026-10-26): source implementation, review and qualification merged in [PR #323](https://github.com/SweetSophia/openclaw-pixel-agents/pull/323) as `cf1dceb`. All nineteen posted review threads were assessed and resolved; final required CI, Docker and 1,407 local tests passed. Initial live acceptance was followed by reconnect reliability PR #326 after an external Gateway restart exposed a transient-startup recovery defect. The independently reviewed `ad7acb3` runtime/full-dependency rollout subsequently passed repeat Ready Usage acceptance with saved state/current credentials preserved and no real task sent. See [revamp status](../../revamp-status.md) for delivery evidence. No npm publication occurred.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
