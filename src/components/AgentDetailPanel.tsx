@@ -115,7 +115,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
         </div>
         <div role="tabpanel" id={`${tabsId}-usage-panel`} aria-labelledby={`${tabsId}-usage-tab`} hidden={tab !== 'usage'}>
           <TaskDetailsView agentId={agent.id} active={tab === 'usage'} state={details}>
-            <ConversationUsage snapshot={details.usage} loading={details.loading || details.sessionsLoading} selected={details.selected !== null} />
+            <ConversationUsage snapshot={details.usage} loading={details.loading || details.sessionsLoading} selected={details.selected !== null} error={details.usageError} />
           </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>

@@ -3,7 +3,13 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { ConversationUsage } from './ConversationUsage';
 import type { ControlUsageSnapshot } from '../../shared/controlUsage';
+import { ControlApiError } from '../control/api';
 afterEach(cleanup);
+it('explains a denied read without an unavailable or retry invitation', () => {
+  render(<ConversationUsage snapshot={null} loading={false} selected error={new ControlApiError('usage-denied')} />);
+  expect(screen.getByRole('alert')).toHaveTextContent('Usage access was denied');
+  expect(screen.queryByText(/Refresh to check again|not available for this conversation yet/)).toBeNull();
+});
 const snapshot: ControlUsageSnapshot = { target: { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'fixture-1' },
   source: { state: 'current', observedAt: 2000 }, state: 'ready', tokens: { input: 0, output: 1000 }, cost: { usd: 0, missingEntries: 0 }, model: '<b>literal-model</b>', contextLimit: 128000, computedAt: 1000 };
 it('shows reported zero separately from missing metrics without a fabricated context percentage', () => {

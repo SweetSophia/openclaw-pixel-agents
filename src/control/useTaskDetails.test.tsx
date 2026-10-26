@@ -57,13 +57,18 @@ describe('task selection and refresh lifecycle', () => {
   });
   it('clears only Usage after an optional-method denial but clears all snapshots after global authority loss', async () => {
     setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/usage') ? usage(JSON.parse(String(init?.body))) : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
-    const { result, rerender } = renderHook(({ mode }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: mode === 'usage', resultsActive: mode === 'results', taskActive: mode === 'task' }), { initialProps: { mode: 'task' as 'task' | 'results' | 'usage' } });
+    const { result, rerender } = renderHook(({ mode }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: mode === 'usage', resultsActive: mode === 'results', taskActive: mode === 'task' }), { initialProps: { mode: 'task' as 'task' | 'results' | 'usage' | 'conversation' } });
     await waitFor(() => expect(result.current.task).toBeTruthy()); rerender({ mode: 'results' }); await waitFor(() => expect(result.current.results).toBeTruthy());
     rerender({ mode: 'usage' }); await waitFor(() => expect(result.current.usage).toBeTruthy());
     f.request.mockImplementation(async (path: string) => { if (path.endsWith('/usage')) throw new ControlApiError('usage-denied'); return page(); });
     await act(() => result.current.refresh());
     expect(result.current.usage).toBeNull(); expect(result.current.task?.source.state).toBe('current'); expect(result.current.results?.source.state).toBe('current');
-    f.sourceState = 'auth-error'; rerender({ mode: 'usage' });
+    expect(result.current.error).toBeNull(); expect(result.current.usageError?.code).toBe('usage-denied');
+    rerender({ mode: 'conversation' }); await act(() => result.current.refresh()); expect(result.current.error).toBeNull();
+    f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : usage(JSON.parse(String(init?.body))));
+    rerender({ mode: 'usage' }); await waitFor(() => expect(result.current.usage).toBeTruthy()); expect(result.current.usageError).toBeNull();
+    f.request.mockImplementation(async (path: string) => { if (path.endsWith('/usage')) throw new ControlApiError('scope-required'); return page(); });
+    await act(() => result.current.refresh()); expect(result.current.error?.code).toBe('scope-required');
     expect(result.current.task).toBeNull(); expect(result.current.results).toBeNull(); expect(result.current.usage).toBeNull();
   });
   it.each(['tab', 'lock', 'hidden', 'target'])('suppresses a late Usage response after a %s change', async change => {

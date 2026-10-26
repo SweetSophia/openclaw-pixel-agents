@@ -49,8 +49,8 @@ export function createUsageService(gateway: ControlGateway, tasks: TaskService):
             if (!usage) snapshot.state = row.computing === true ? 'loading' : 'unavailable';
             else {
               const cache = report.cacheStatus === undefined ? null : controlRecord(report.cacheStatus);
-              if (report.cacheStatus !== undefined && (!cache || !['fresh', 'partial', 'stale', 'refreshing'].includes(String(cache.status)))) throw new ControlError('invalid-source');
-              snapshot.state = (cache && cache.status !== 'fresh') || usage.refreshing === true || usage.staleSince !== undefined || (typeof usage.missingCostEntries === 'number' && usage.missingCostEntries > 0) ? 'partial' : 'ready';
+              if (report.cacheStatus !== undefined && report.cacheStatus !== null && (!cache || !['fresh', 'partial', 'stale', 'refreshing'].includes(String(cache.status)))) throw new ControlError('invalid-source');
+              snapshot.state = (cache && cache.status !== 'fresh') || usage.refreshing === true || (usage.staleSince !== undefined && usage.staleSince !== null) || (typeof usage.missingCostEntries === 'number' && usage.missingCostEntries > 0) ? 'partial' : 'ready';
               for (const [native, key] of [['input', 'input'], ['output', 'output'], ['cacheRead', 'cacheRead'], ['cacheWrite', 'cacheWrite'], ['totalTokens', 'total']] as const) {
                 if (usage[native] !== undefined && usage[native] !== null) snapshot.tokens[key] = usage[native] as number;
               }

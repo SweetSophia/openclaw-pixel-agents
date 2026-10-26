@@ -93,8 +93,18 @@ it('requires affirmative proof that reported totals belong to one session instan
 it.each([['input', 'input'], ['output', 'output'], ['cacheRead', 'cacheRead'], ['cacheWrite', 'cacheWrite'], ['totalTokens', 'total'], ['totalCost', 'usd'], ['missingCostEntries', 'missingEntries']])('treats null %s as unreported without discarding other metrics', async (native, field) => {
   const f = fixture(); const usage = (f.raw().sessions as Array<Record<string, unknown>>)[0].usage as Record<string, unknown>; usage[native] = null;
   const value = await f.read(); expect(value.state).toBe('ready'); expect(value.model).toBe('fixture/fixture-model');
-  expect(native === 'totalCost' || native === 'missingCostEntries' ? value.cost : value.tokens).not.toHaveProperty(field);
-  if (native !== 'output') expect(value.tokens.output).toBe(20);
+  const tokens: Record<string, number> = { input: 0, output: 20, cacheRead: 30, cacheWrite: 2, total: 52 };
+  const cost: Record<string, number> = { usd: 0.25, missingEntries: 0 };
+  delete (native === 'totalCost' || native === 'missingCostEntries' ? cost : tokens)[field];
+  expect(value.tokens).toEqual(tokens); expect(value.cost).toEqual(cost);
+});
+it.each(['cacheStatus', 'staleSince'])('treats null optional %s as unreported while retaining a ready report', async field => {
+  const f = fixture();
+  if (field === 'cacheStatus') f.raw().cacheStatus = null;
+  else ((f.raw().sessions as Array<Record<string, unknown>>)[0].usage as Record<string, unknown>).staleSince = null;
+  const value = await f.read(); expect(value.state).toBe('ready');
+  expect(value.tokens).toEqual({ input: 0, output: 20, cacheRead: 30, cacheWrite: 2, total: 52 });
+  expect(value.cost).toEqual({ usd: 0.25, missingEntries: 0 }); expect(value.computedAt).toBe(1000);
 });
 it.each([null, '1000', 1000000000000000000, -1, NaN, Infinity])('omits unusable optional computation timestamp %s while preserving metrics', async computedAt => {
   const f = fixture(); ((f.raw().sessions as Array<Record<string, unknown>>)[0].usage as Record<string, unknown>).computedAt = computedAt;
@@ -108,7 +118,11 @@ it('accepts the captured native instance contract and refuses the same row witho
   const captured = JSON.parse(readFileSync(new URL('./fixtures/native-usage-session-instance.json', import.meta.url), 'utf8'));
   const f = fixture(); const row = captured.response.sessions[0]; f.setRaw(captured.response); f.mutate({ sessionId: row.sessionId });
   const selection = { ...target, sessionId: row.sessionId };
-  expect((await f.service.read(selection)).target.sessionId).toBe(row.sessionId);
+  const value = await f.service.read(selection);
+  expect(value.state).toBe('ready'); expect(value.computedAt).toBe(row.usage.computedAt);
+  expect(value.tokens).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 });
+  expect(value.cost).toEqual({ usd: 0, missingEntries: 0 });
+  expect(f.request.mock.calls.find(([method]) => method === 'sessions.usage')?.[1]).toEqual(captured.request);
   delete row.scope; delete row.includedSessionIds;
   await expect(f.service.read(selection)).rejects.toMatchObject({ code: 'invalid-source' });
 });

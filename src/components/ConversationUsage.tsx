@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ControlUsageSnapshot } from '../../shared/controlUsage';
+import type { ControlApiError } from '../control/api';
 import './ConversationUsage.css';
 
 const number = (value?: number) => value === undefined ? 'Not reported' : value.toLocaleString();
@@ -9,7 +10,8 @@ function cost(value?: number): string {
   if (value < 0.000001) return '<0.000001 USD';
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} USD`;
 }
-export function ConversationUsage({ snapshot, loading, selected }: { snapshot: ControlUsageSnapshot | null; loading: boolean; selected: boolean }) {
+export function ConversationUsage({ snapshot, loading, selected, error }: { snapshot: ControlUsageSnapshot | null; loading: boolean; selected: boolean; error?: ControlApiError | null }) {
+  if (error && (!snapshot || error.code === 'usage-denied')) return <p role="alert">{error.message}</p>;
   if (!snapshot) return <p role="status">{loading ? 'Loading conversation usage…' : selected ? 'Usage is not available for this conversation yet. Refresh to check again.' : 'Choose a conversation to see its recorded usage.'}</p>;
   const missing = snapshot.cost.missingEntries ?? 0;
   const reportedCost = missing > 0 && snapshot.cost.usd === 0 ? undefined : snapshot.cost.usd;
@@ -21,6 +23,7 @@ export function ConversationUsage({ snapshot, loading, selected }: { snapshot: C
     unavailable: 'No usage report is available for this conversation yet.',
   };
   return <section className="conversation-usage" aria-label="Conversation usage">
+    {error && <p role="alert">{error.message}</p>}
     <h3>Conversation usage</h3>
     <p className="task-muted">Retained history for this session instance, across its recorded model calls. These are not current-task totals.</p>
     <p role="status">{snapshot.source.state === 'stale' ? 'Last known — refresh unavailable. ' : ''}{notices[snapshot.state]}</p>

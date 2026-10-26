@@ -20,6 +20,8 @@ Use the existing useTaskDetails selection/polling machinery with a Usage mode. W
 
 Six accessible tabs retain arrow/Home/End navigation, focus restoration and 44px targets. Use semantic label/value lists with wrapping on mobile and one drawer scroll area. No sends, approvals, model changes, scheduling, publication, dependency upgrades or production configuration changes belong to this feature.
 
+Usage read errors belong to the Usage tab. A denied Usage read displays the denial without an unavailable-state refresh invitation; it must not leave a banner in Task, Results or Conversation. A subsequent successful Usage read clears its error. Null cache status or stale-since metadata means unreported, while malformed non-null cache status remains invalid.
+
 ## Verification
 
 Pin unknown versus zero, finite bounds, partial/missing cost and timestamps; exact ownership before/after await; optional method negotiation; and protected-route validation. A controlled Gateway must exercise the real adapter, service and HTTP route. Frontend regressions cover selected-session continuity, no task/history reads on Usage, stale timestamps, auth clearing and cancellation on tab/lock/hidden/selection changes. Inspect desktop/mobile/short-screen behavior in a native browser using synthetic fixtures. Run types, tests/coverage, build, actual package smoke, Docker checks and audits. Use a fresh whole-branch reviewer and inspect current-head bot findings. No real agent task is required; a new npm publication remains a separate action.
