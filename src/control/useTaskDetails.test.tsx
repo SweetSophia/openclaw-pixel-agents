@@ -45,6 +45,18 @@ describe('task selection and refresh lifecycle', () => {
     expect(result.current.usage?.source).toEqual({ state: 'stale', observedAt: 100 });
     f.sourceState = 'auth-error'; rerender(); expect(result.current.usage).toBeNull();
   });
+  it.each(['usage', 'results'] as const)('does not relabel the untouched Task snapshot after a %s-only refresh failure', async mode => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/usage') ? usage(JSON.parse(String(init?.body))) : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(({ selectedMode }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: selectedMode === 'usage', resultsActive: selectedMode === 'results', taskActive: selectedMode === 'task' }), { initialProps: { selectedMode: 'task' as 'task' | 'results' | 'usage' } });
+    await waitFor(() => expect(result.current.task).toBeTruthy()); rerender({ selectedMode: mode });
+    await waitFor(() => expect(result.current[mode]).toBeTruthy());
+    f.request.mockImplementation(async (path: string) => { if (path.endsWith(`/${mode}`)) throw new ControlApiError('unavailable'); return page(); });
+    await act(() => result.current.refresh());
+    expect(result.current[mode]?.source).toEqual({ state: 'stale', observedAt: 100 });
+    expect(result.current.task?.source).toEqual({ state: 'current', observedAt: 100 });
+    f.request.mockImplementation(async (path: string) => { if (path.endsWith(`/${mode}`)) throw new ControlApiError('scope-required'); return page(); });
+    await act(() => result.current.refresh()); expect(result.current.task).toBeNull(); expect(result.current.usage).toBeNull(); expect(result.current.results).toBeNull();
+  });
   it.each(['tab', 'lock', 'hidden', 'target'])('suppresses a late Usage response after a %s change', async change => {
     setup(); let finish!: (value: unknown) => void; let signal!: AbortSignal;
     f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : new Promise(resolve => { finish = resolve; signal = init!.signal!; }));

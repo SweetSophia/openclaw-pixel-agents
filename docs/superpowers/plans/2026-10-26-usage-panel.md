@@ -27,26 +27,27 @@
 **Files:** shared/controlUsage.ts and tests; server/control/usageService.ts and tests; gatewayClient.ts/tests; routes.ts/tests; server/index.ts; controlled usageIntegration.test.ts.
 **Interfaces:** `ControlUsageSnapshot` contains target, source, state (ready/partial/loading/unsupported/unavailable), optional model/contextLimit/computedAt, token metrics and cost summary. `createUsageService(gateway,tasks)` produces `{read(target,signal?),close()}`. Existing TaskService.verifyTarget supplies canonical ownership; optional sessions.usage joins the Gateway allowlist.
 
-- [ ] Write failing validator/service tests for missing/zero/invalid metrics, partial pricing and computation dates, wrong key/owner/instance, family scope, identity change during read and source cancellation.
-- [ ] Run focused tests and observe the missing implementation failures.
-- [ ] Implement bounded DTO projection and service, optional negotiation, authenticated POST route and server disposal.
-- [ ] Exercise real WebSocket handshake/RPC/service/HTTP protection in a controlled fixture, including an older method list and changed session.
-- [ ] Run focused tests/typecheck and commit the verified backend slice.
+- [x] Write failing validator/service tests for missing/zero/invalid metrics, partial pricing and computation dates, wrong key/owner/instance, family scope, identity change during read and source cancellation.
+- [x] Run focused tests and observe the missing implementation failures.
+- [x] Implement bounded DTO projection and service, optional negotiation, authenticated POST route and server disposal.
+- [x] Exercise real WebSocket handshake/RPC/service/HTTP protection in a controlled fixture, including an older method list and changed session.
+- [x] Run focused tests/typecheck and commit the verified backend slice.
 
 ### Task 2: Usage tab and existing selection lifecycle
 
 **Files:** src/control/useTaskDetails.ts/tests; src/components/ConversationUsage.tsx/tests; AgentDetailPanel.tsx/css/tests.
 **Interfaces:** extend TaskDetailsState with `usage: ControlUsageSnapshot|null` and hook option `usageActive?:boolean`. Component receives existing state and active; no extra poller or credentials.
 
-- [ ] Add failing regressions for Usage routing without task/history RPCs, shared selection, zero/missing/partial values, stale retention, auth clearing and cancellation/late replies.
-- [ ] Implement Usage mode, semantic metric cards, six-tab navigation, manual refresh and responsive wrapping.
-- [ ] Run focused tests and typecheck; commit the verified UI slice.
+- [x] Add failing regressions for Usage routing without task/history RPCs, shared selection, zero/missing/partial values, stale retention, auth clearing and cancellation/late replies.
+- [x] Implement Usage mode, semantic metric cards, six-tab navigation, manual refresh and responsive wrapping.
+- [x] Run focused tests and typecheck; commit the verified UI slice.
 
 ### Task 3: qualification and review
 
 **Files:** README.md; docs/task-access-setup.md; native-browser synthetic fixture/evidence in this plan's ignored workspace.
 
-- [ ] Run full types, tests/coverage, build, actual tarball smoke, Docker build/startup and both audits; record actual results.
-- [ ] Inspect synthetic desktop/mobile/short viewport, keyboard tabs and lock/hidden cleanup in a native browser; no real agent tasks.
-- [ ] Document Usage scope and unavailable context/pricing without claiming availability in already published npm 1.6.0; preserve screenshots and user README edits.
-- [ ] Request one fresh whole-branch reviewer; assess findings and verify material fixes with regressions. Inspect current-head bot comments and CI before merge under standing authorization. No npm publish.
+- [x] Run full types, tests/coverage, build, actual tarball smoke, Docker build/startup and both audits; record actual results.
+- [x] Inspect synthetic desktop/mobile/short viewport, keyboard tabs and lock/hidden cleanup in a native browser; no real agent tasks.
+- [x] Document Usage scope and unavailable context/pricing without claiming availability in already published npm 1.6.0; preserve screenshots and user README edits.
+- [x] Request one fresh whole-branch reviewer; assess findings and verify material fixes with regressions.
+- [ ] Inspect follow-up bot comments and current-head CI before merge under standing authorization. No npm publish.

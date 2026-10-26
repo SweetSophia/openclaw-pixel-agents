@@ -9,8 +9,8 @@ function cost(value?: number): string {
   if (value < 0.000001) return '<0.000001 USD';
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} USD`;
 }
-export function ConversationUsage({ snapshot, loading }: { snapshot: ControlUsageSnapshot | null; loading: boolean }) {
-  if (!snapshot) return <p role="status">{loading ? 'Loading conversation usage…' : 'Choose a conversation to see its recorded usage.'}</p>;
+export function ConversationUsage({ snapshot, loading, selected }: { snapshot: ControlUsageSnapshot | null; loading: boolean; selected: boolean }) {
+  if (!snapshot) return <p role="status">{loading ? 'Loading conversation usage…' : selected ? 'Usage is not available for this conversation yet. Refresh to check again.' : 'Choose a conversation to see its recorded usage.'}</p>;
   const missing = snapshot.cost.missingEntries ?? 0;
   const reportedCost = missing > 0 && snapshot.cost.usd === 0 ? undefined : snapshot.cost.usd;
   const notices = {

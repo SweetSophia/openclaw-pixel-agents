@@ -43,10 +43,10 @@ it('keeps partial cache/pricing and the original native computation time explici
   expect(value.cost).toEqual({ usd: 0, missingEntries: 3 }); expect(value.computedAt).toBe(1000);
 });
 it('distinguishes loading, absent and unsupported usage without synthetic zeros', async () => {
-  const f = fixture(); f.setRaw({ sessions: [{ key: target.sessionKey, agentId: 'cylena', sessionId: target.sessionId, usage: null, computing: true }] });
-  expect(await f.read()).toMatchObject({ state: 'loading', tokens: {}, cost: {} });
-  f.setRaw({ sessions: [] }); expect(await f.read()).toMatchObject({ state: 'unavailable', tokens: {} });
-  f.fail(new GatewayRequestError('unsupported')); expect(await f.read()).toMatchObject({ state: 'unsupported', contextLimit: 128000, tokens: {} });
+  const f = fixture(); f.setRaw({ sessions: [{ key: target.sessionKey, agentId: 'cylena', sessionId: target.sessionId, scope: 'instance', usage: null, computing: true }] });
+  const loading = await f.read(); expect(loading.state).toBe('loading'); expect(loading.tokens).toEqual({}); expect(loading.cost).toEqual({});
+  f.setRaw({ sessions: [] }); const absent = await f.read(); expect(absent.state).toBe('unavailable'); expect(absent.tokens).toEqual({}); expect(absent.cost).toEqual({});
+  f.fail(new GatewayRequestError('unsupported')); const unsupported = await f.read(); expect(unsupported.state).toBe('unsupported'); expect(unsupported.contextLimit).toBe(128000); expect(unsupported.tokens).toEqual({}); expect(unsupported.cost).toEqual({});
 });
 it.each(['agentId', 'sessionId', 'key', 'scope'])('rejects a foreign or aggregated %s', async field => {
   const f = fixture(); const row = (f.raw().sessions as Array<Record<string, unknown>>)[0]; row[field] = field === 'scope' ? 'family' : 'other';
@@ -59,7 +59,7 @@ it.each(['session', 'branch', 'registry', 'connection', 'close'])('refuses a lat
     else if (change === 'registry') f.registered.clear();
     else if (change === 'connection') f.disconnect(); else f.service.close();
   });
-  await expect(f.read()).rejects.toBeDefined();
+  await expect(f.read()).rejects.toMatchObject({ code: change === 'registry' ? 'invalid-target' : change === 'session' || change === 'branch' ? 'session-changed' : 'unavailable' });
 });
 it('rejects invalid numeric data and forwards scoped access failures', async () => {
   const f = fixture(); (f.raw().sessions as Array<Record<string, unknown>>)[0].usage = { input: -3 };
@@ -70,4 +70,22 @@ it('rejects invalid numeric data and forwards scoped access failures', async () 
 it('rechecks registry membership after the final canonical describe resolves', async () => {
   const f = fixture(); f.onDescription(count => { if (count === 2) f.registered.clear(); });
   await expect(f.read()).rejects.toMatchObject({ code: 'invalid-target' });
+});
+it.each([null, 0, -1, Infinity, NaN, '128000'])('omits unknown or unusable optional context limit %s while retaining usage', async contextTokens => {
+  const f = fixture(); f.mutate({ contextTokens: contextTokens as number });
+  const value = await f.read(); expect(value.tokens.output).toBe(20); expect(value.cost.usd).toBe(0.25); expect(value).not.toHaveProperty('contextLimit');
+});
+it.each(['fixture\nmodel', 'fixture\u0000model'])('drops an unusable model label while retaining numeric usage', async model => {
+  const f = fixture(); f.mutate({ model }); const value = await f.read();
+  expect(value.tokens.output).toBe(20); expect(value.cost.usd).toBe(0.25); expect(value).not.toHaveProperty('model');
+});
+it('does not claim a ready report when the source contains no recorded metrics', async () => {
+  const f = fixture(); (f.raw().sessions as Array<Record<string, unknown>>)[0].usage = {};
+  const value = await f.read(); expect(value.state).toBe('unavailable'); expect(value.tokens).toEqual({}); expect(value.cost).toEqual({});
+});
+it('requires affirmative proof that reported totals belong to one session instance', async () => {
+  const f = fixture(); const row = (f.raw().sessions as Array<Record<string, unknown>>)[0]; delete row.scope;
+  await expect(f.read()).rejects.toMatchObject({ code: 'invalid-source' });
+  row.includedSessionIds = [target.sessionId]; expect((await f.read()).state).toBe('ready');
+  row.scope = 'family'; await expect(f.read()).rejects.toMatchObject({ code: 'invalid-source' });
 });

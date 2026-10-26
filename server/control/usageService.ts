@@ -30,19 +30,20 @@ export function createUsageService(gateway: ControlGateway, tasks: TaskService):
         catch (error) { if (error instanceof GatewayRequestError && error.code === 'unsupported') unsupported = true; else throw error; }
         guard(); const current = await tasks.verifyTarget(target, combined); guard();
         const snapshot: ControlUsageSnapshot = { target, source: { state: 'current', observedAt: Date.now() }, state: unsupported ? 'unsupported' : 'unavailable', tokens: {}, cost: {} };
-        const model = projectSession(current, target.agentId)?.model; if (model) snapshot.model = model;
-        if (current.contextTokens !== undefined) {
-          if (!usageInteger(current.contextTokens) || current.contextTokens === 0) throw new ControlError('invalid-source');
-          snapshot.contextLimit = current.contextTokens;
-        }
+        const model = projectSession(current, target.agentId)?.model;
+        if (model && !/[\u0000-\u001f\u007f]/.test(model)) snapshot.model = model;
+        if (usageInteger(current.contextTokens) && current.contextTokens > 0) snapshot.contextLimit = current.contextTokens;
         if (!unsupported) {
           const report = controlRecord(raw);
           if (!report || controlByteSize(report) > 2 * 1024 * 1024 || !Array.isArray(report.sessions) || report.sessions.length > 1) throw new ControlError('invalid-source');
           if (report.sessions.length) {
             const row = controlRecord(report.sessions[0]);
+            const included = row?.includedSessionIds;
+            const singleInstance = Array.isArray(included) && included.length === 1 && included[0] === target.sessionId;
             if (!row || row.key !== target.sessionKey || row.agentId !== target.agentId || row.sessionId !== target.sessionId
               || (row.scope !== undefined && row.scope !== 'instance')
-              || (row.includedSessionIds !== undefined && (!Array.isArray(row.includedSessionIds) || row.includedSessionIds.length !== 1 || row.includedSessionIds[0] !== target.sessionId))) throw new ControlError('invalid-source');
+              || (row.scope !== 'instance' && !singleInstance)
+              || (included !== undefined && !singleInstance)) throw new ControlError('invalid-source');
             const usage = row.usage === null || row.usage === undefined ? null : controlRecord(row.usage);
             if (!usage && row.usage !== null && row.usage !== undefined) throw new ControlError('invalid-source');
             if (!usage) snapshot.state = row.computing === true ? 'loading' : 'unavailable';
@@ -56,6 +57,10 @@ export function createUsageService(gateway: ControlGateway, tasks: TaskService):
               if (usage.totalCost !== undefined) snapshot.cost.usd = usage.totalCost as number;
               if (usage.missingCostEntries !== undefined) snapshot.cost.missingEntries = usage.missingCostEntries as number;
               if (usage.computedAt !== undefined) snapshot.computedAt = usage.computedAt as number;
+              if (!Object.keys(snapshot.tokens).length && snapshot.cost.usd === undefined) {
+                snapshot.state = row.computing === true || usage.refreshing === true ? 'loading' : 'unavailable';
+                if (snapshot.cost.missingEntries) snapshot.state = 'partial';
+              }
             }
           }
         }

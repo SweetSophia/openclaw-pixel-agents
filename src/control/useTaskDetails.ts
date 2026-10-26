@@ -61,9 +61,9 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
       if (current !== selection.current || currentScope !== scopeRef.current || !permitted()) return;
       const failure = controlReadError(controller, error);
       const denied = ['session-changed', 'invalid-target', 'scope-required', 'pairing-required', 'locked'].includes(failure.code);
-      setView(old => ({ ...old, loading: false, error: failure, task: denied ? null : old.task ? { ...old.task, source: { ...old.task.source, state: 'stale' } } : null,
-        results: denied ? null : old.results ? { ...old.results, source: { ...old.results.source, state: 'stale' } } : null,
-        usage: denied ? null : old.usage ? { ...old.usage, source: { ...old.usage.source, state: 'stale' } } : null }));
+      setView(old => ({ ...old, loading: false, error: failure, task: denied ? null : !usageMode && !resultsMode && old.task ? { ...old.task, source: { ...old.task.source, state: 'stale' } } : old.task,
+        results: denied ? null : resultsMode && old.results ? { ...old.results, source: { ...old.results.source, state: 'stale' } } : old.results,
+        usage: denied ? null : usageMode && old.usage ? { ...old.usage, source: { ...old.usage.source, state: 'stale' } } : old.usage }));
     } finally { dispose(); if (taskRead.current === controller) taskRead.current = null; }
   }, []);
   const loadSessions = useCallback(async (more = false, signal?: AbortSignal) => {

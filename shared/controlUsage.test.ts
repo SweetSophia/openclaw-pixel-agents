@@ -16,6 +16,6 @@ describe('private usage contract', () => {
     for (const patch of [{ transcriptPath: '/private' }, { computedAt: -1 }, { computedAt: Number.MAX_SAFE_INTEGER }, { state: ['ready'] }, { state: 'complete' }, { cost: { usd: Infinity } }, { source: { state: 'current', observedAt: -1 } }]) {
       expect(parseControlUsageSnapshot({ ...snapshot(), ...patch })).toBeNull();
     }
-    expect(parseControlUsageSnapshot(JSON.parse('{"__proto__":{},"tokens":{}}'))).toBeNull();
+    expect(parseControlUsageSnapshot({ ...snapshot(), tokens: JSON.parse('{"__proto__":{},"input":0}') })).toBeNull();
   });
 });
