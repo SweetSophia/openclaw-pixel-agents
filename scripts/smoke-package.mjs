@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -26,10 +27,10 @@ const env = {
   npm_config_userconfig: join(fixture, 'user.npmrc'),
   npm_config_globalconfig: join(fixture, 'global.npmrc'),
 };
-const command = (args, cwd = root) => {
+const command = (args, cwd = root, includeStderr = false) => {
   const result = spawnSync(process.execPath, args, { cwd, env, encoding: 'utf8', timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
   assert.equal(result.status, 0, `${args[0]} failed: ${result.error?.message || result.stderr || result.stdout}`);
-  return result.stdout;
+  return result.stdout + (includeStderr ? result.stderr : '');
 };
 const stop = async () => {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -50,14 +51,14 @@ try {
   const [packed] = entries;
   assert.equal(packed.name, pkg.name); assert.equal(packed.version, pkg.version);
   const files = new Set(packed.files.map(file => file.path));
-  for (const required of ['bin/openclaw-pixel-agents.mjs', 'dist/client/index.html',
+  for (const required of ['bin/openclaw-pixel-agents.mjs', 'bin/setup.mjs', 'scripts/install-notice.mjs', 'dist/client/index.html',
     'dist/server/server/index.js', 'dist/server/shared/characterRecipes.js',
     'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', '.env.example',
     'collector/.env.collector.example', 'LICENSE', 'README.md']) assert(files.has(required), `Missing ${required}`);
   for (const path of files) {
     assert(!/(^|\/)(data|node_modules|coverage|\.git|\.superpowers|\.worktrees)(\/|$)/.test(path), `Runtime/private path packed: ${path}`);
     assert(!/\.(test|spec)\.|\.map$|(^|\/)\.env($|\.(?!example$|collector\.example$))/.test(path), `Development/private file packed: ${path}`);
-    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|bin\/openclaw-pixel-agents\.mjs$|scripts\/generate-control-key\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
+    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|bin\/(openclaw-pixel-agents|setup)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
   }
   const tarball = join(destination, packed.filename);
   command([npmCli, 'install', '--prefix', consumer, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', `${pkg.name}@file:${tarball}`]);
@@ -66,9 +67,22 @@ try {
   assert.equal(command([launcher, '--version'], consumer).trim(), pkg.version);
   assert.equal(command([npmCli, 'exec', '--offline', '--prefix', consumer, '--', 'openclaw-pixel-agents', '--version'], consumer).trim(), pkg.version);
   assert.match(command([launcher, '--help'], consumer), /--generate-key/);
+  const setup = command([launcher, 'setup'], consumer);
+  for (const text of ['CORS_ORIGIN', 'DATA_DIR', 'operator.read', '--generate-key', '--env-file']) assert(setup.includes(text));
+  assert.match(command([npmCli, 'exec', '--offline', '--prefix', consumer, '--', 'openclaw-pixel-agents', 'setup'], consumer), /OpenClaw Pixel Agents setup/);
+  const unconfigured = spawnSync(process.execPath, [launcher], { cwd: consumer, env, encoding: 'utf8', timeout: 5000 });
+  assert.equal(unconfigured.status, 1); assert.match(unconfigured.stderr, /openclaw-pixel-agents setup/);
+  assert(!existsSync(join(home, '.openclaw-pixel-agents')), 'Setup or first-run guidance created office data');
   const firstKey = command([launcher, '--generate-key'], consumer).trim();
   const secondKey = command([launcher, '--generate-key'], consumer).trim();
   assert.match(firstKey, /^[a-f0-9]{64}$/); assert.notEqual(firstKey, secondKey);
+  const noticeConsumer = join(fixture, 'notice-consumer'); await mkdir(noticeConsumer);
+  // npm 12 authorizes a local archive by its exact resolved file identity.
+  await writeFile(join(noticeConsumer, 'package.json'), JSON.stringify({ private: true, allowScripts: { [`file:${tarball}`]: true } }));
+  const notice = command([npmCli, 'install', '--prefix', noticeConsumer, '--omit=dev', '--foreground-scripts', '--no-audit', '--no-fund', '--package-lock=false', `${pkg.name}@file:${tarball}`], root, true);
+  assert.match(notice, /Next: openclaw-pixel-agents setup/);
+  assert(!existsSync(join(home, '.openclaw-pixel-agents')), 'Install notice created office data');
+  assert(!existsSync(join(noticeConsumer, 'pixel-agents.env')), 'Install notice created configuration');
   const lease = createServer(); lease.listen(0, '127.0.0.1'); await once(lease, 'listening');
   const port = lease.address().port; await new Promise((accept, reject) => lease.close(error => error ? reject(error) : accept()));
   const origin = `http://127.0.0.1:${port}`;
@@ -105,7 +119,7 @@ try {
   assert.deepEqual(agents.find(agent => agent.id === 'main').recipe, recipe);
   const prefs = JSON.parse(await readFile(join(home, '.openclaw-pixel-agents', 'agent-prefs.json'), 'utf8'));
   assert.deepEqual(prefs.main.recipe, recipe);
-  console.log(`Package verified: ${pkg.name}@${pkg.version}; ${files.size} files, production install, assets, key generation, ingest and restart persistence.`);
+  console.log(`Package verified: ${pkg.name}@${pkg.version}; ${files.size} files, script-disabled setup, enabled install notice, production startup, assets, key generation, ingest and restart persistence.`);
   if (values['pack-destination']) console.log(`Tested tarball: ${tarball}`);
 } finally {
   await stop();

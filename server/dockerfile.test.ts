@@ -27,4 +27,14 @@ describe("Dockerfile", () => {
       + '  CMD ["node", "-e", "fetch(\'http://127.0.0.1:\'+(process.env.PORT||3001)+\'/api/status\').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]',
     );
   });
+
+  it("keeps production dependencies compatible with Docker's script-free install", () => {
+    const lock = JSON.parse(readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "package-lock.json"), "utf8",
+    )) as { packages: Record<string, { dev?: boolean; hasInstallScript?: boolean }> };
+    const needsHooks = Object.entries(lock.packages)
+      .filter(([path, entry]) => path && !entry.dev && entry.hasInstallScript)
+      .map(([path]) => path);
+    expect(needsHooks, "Review Docker's --ignore-scripts policy for these production dependencies").toEqual([]);
+  });
 });

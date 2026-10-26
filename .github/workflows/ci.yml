@@ -90,6 +90,36 @@ jobs:
           npm audit --audit-level=moderate
         continue-on-error: false
 
+  docker:
+    name: Docker build and startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build Docker image
+        run: docker build --tag openclaw-pixel-agents:ci .
+
+      - name: Smoke test Docker startup
+        run: |
+          container_name="pixel-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          cleanup() {
+            docker logs "$container_name" || true
+            docker rm --force "$container_name" > /dev/null || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name "$container_name" \
+            --publish 127.0.0.1:3001:3001 \
+            --env CORS_ORIGIN=http://127.0.0.1:3001 \
+            --env DATA_SOURCE=ingest --env INGEST_API_TOKEN=ci-synthetic-ingest-only \
+            openclaw-pixel-agents:ci
+          curl --fail --silent --show-error --retry 30 --retry-all-errors \
+            --retry-delay 1 --connect-timeout 2 --max-time 2 \
+            http://127.0.0.1:3001/api/status
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3001/
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'

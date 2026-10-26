@@ -12,7 +12,7 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
 
 ## Prepare a version
 
-1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. Add `docs/releases/<version>.md` to the same pull request with that version's release notes. The first npm release was `1.4.0`, continuing the existing GitHub release series after `v1.3.5`. Results/Files arrived in `1.5.0`; the [1.6.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.6.0.md) cover Workspace browsing and reliability improvements.
+1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. Add `docs/releases/<version>.md` to the same pull request with that version's release notes. Update README installation examples and version-specific availability notices, including the setup/install-message "next release" wording, for the version being published. The first npm release was `1.4.0`, continuing the existing GitHub release series after `v1.3.5`. Results/Files arrived in `1.5.0`; the [1.6.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.6.0.md) cover Workspace browsing and reliability improvements.
 2. Run the checks:
 
    ```sh
