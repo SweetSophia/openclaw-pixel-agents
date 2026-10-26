@@ -77,6 +77,8 @@ node bin/openclaw-pixel-agents.mjs setup
 
 It explains private configuration, persistent storage, the collector, optional task-key/device pairing, startup and the browser URL. It does not modify files, generate credentials or start the office. A launch without `CORS_ORIGIN` also prints the guide and exits with a configuration error. Configured launches continue to use `--env-file` or the supplied environment as before. The `setup` command is not included in npm 1.6.0; it will be available in the next release as `openclaw-pixel-agents setup` (or `npx openclaw-pixel-agents setup` for a local installation).
 
+The next release also includes a short installation notice pointing to the guide. npm can hide lifecycle output or disable scripts; the first-run guide and `setup` command work independently of that notice. The install script only prints instructions and does not generate keys, modify configuration or start a service.
+
 ## Create your task-access key
 
 **Each installation creates its own key.** There is no project-wide key, and no developer-specific file path is required.

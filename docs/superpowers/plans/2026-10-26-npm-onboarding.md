@@ -29,16 +29,16 @@
 
 **Files:** Create `bin/setup.mjs`; modify `bin/openclaw-pixel-agents.mjs`, `server/packageCommand.test.ts` and `README.md`.
 
-- [ ] Add real-process regressions for setup, missing/blank config, unsupported commands/flag combinations, missing env file and secret-safe unchanged key/version output.
-- [ ] Run `npm test -- server/packageCommand.test.ts` and confirm the new behavior fails before implementation.
-- [ ] Add static setup instructions and explicit command dispatch. After env-file loading, fail with guidance if CORS is missing; retain configured server startup.
-- [ ] Update targeted README instructions, preserving images. Run the focused tests and commit the working launcher slice.
+- [x] Add real-process regressions for setup, missing/blank config, unsupported commands/flag combinations, missing env file and secret-safe unchanged key/version output.
+- [x] Run `npm test -- server/packageCommand.test.ts` and confirm the new behavior fails before implementation.
+- [x] Add static setup instructions and explicit command dispatch. After env-file loading, fail with guidance if CORS is missing; retain configured server startup.
+- [x] Update targeted README instructions, preserving images. Run the focused tests and commit the working launcher slice.
 
 ### Task 2: Install notice and real package
 
 **Files:** Create `scripts/install-notice.mjs`; modify `package.json`, `package-lock.json`, `scripts/smoke-package.mjs` and `CONTRIBUTING.md`.
 
-- [ ] Extend the tarball smoke's exact file policy and consumer checks to require setup, first-run recovery and an enabled foreground install notice; verify failure before implementation.
-- [ ] Add the output-only postinstall script and exact runtime file allowlist entries. Reconcile lockfile metadata without changing dependencies.
-- [ ] Verify script-disabled setup and configured consumer startup, assets, key generation, ingest and restart persistence; verify enabled notice in a separate isolated install.
+- [x] Extend the tarball smoke's exact file policy and consumer checks to require setup, first-run recovery and an enabled foreground install notice; verify failure before implementation.
+- [x] Add the output-only postinstall script and exact runtime file allowlist entries. Reconcile lockfile metadata without changing dependencies.
+- [x] Verify script-disabled setup and configured consumer startup, assets, key generation, ingest and restart persistence; verify enabled notice in a separate isolated install.
 - [ ] Run typecheck, coverage, build, package smoke, both audits, documentation links and README/image preservation checks. Review and commit; open a PR and address valid review feedback before merge. A new npm publication is a separate release step.

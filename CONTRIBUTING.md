@@ -99,7 +99,7 @@ screenshots and committed fixtures. Never send a real task as an automated check
 
 ## npm package and releases
 
-`npm run test:package` installs the actual tarball with production dependencies in a disposable directory and checks startup, assets, key generation and restart persistence. It does not contact a real Gateway or publish anything. Run it after building whenever package files, startup or deployment setup changes.
+`npm run test:package` installs the actual tarball with production dependencies in a disposable directory and checks setup instructions with lifecycle scripts disabled, a separately enabled foreground install notice, configured startup, assets, key generation and restart persistence. Both setup and the notice must leave office data/configuration untouched. It does not contact a real Gateway or publish anything. Run it after building whenever package files, startup or deployment setup changes.
 
 See [the release guide](docs/releases.md) for the `NPM_TOKEN` secret and stable GitHub Release publication. A pull request never publishes to npm.
 
