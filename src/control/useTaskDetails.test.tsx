@@ -37,6 +37,14 @@ describe('task selection and refresh lifecycle', () => {
     f.request.mockRejectedValue(new ControlApiError('session-changed')); await act(() => result.current.refresh()); expect(result.current.usage).toBeNull();
     f.state = 'locked'; rerender(); expect(result.current.usage).toBeNull();
   });
+  it('marks retained Usage stale as soon as the private source becomes unavailable', async () => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : usage(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: true, taskActive: false }));
+    await waitFor(() => expect(result.current.usage?.state).toBe('ready'));
+    f.sourceState = 'unavailable'; rerender();
+    expect(result.current.usage?.source).toEqual({ state: 'stale', observedAt: 100 });
+    f.sourceState = 'auth-error'; rerender(); expect(result.current.usage).toBeNull();
+  });
   it.each(['tab', 'lock', 'hidden', 'target'])('suppresses a late Usage response after a %s change', async change => {
     setup(); let finish!: (value: unknown) => void; let signal!: AbortSignal;
     f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : new Promise(resolve => { finish = resolve; signal = init!.signal!; }));

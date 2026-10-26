@@ -138,7 +138,10 @@ export function useTaskDetails(options: { agentId: string; initialSessionKey: st
     document.addEventListener('visibilitychange', change); return () => document.removeEventListener('visibilitychange', change);
   }, [stop]);
   useEffect(() => {
-    if (!options.active || !visible || access.state !== 'unlocked' || !access.status?.canRead) { stop(); setView(old => ({ ...old, loading: false, sessionsLoading: false })); return; }
+    if (!options.active || !visible || access.state !== 'unlocked' || !access.status?.canRead) {
+      stop(); setView(old => ({ ...old, loading: false, sessionsLoading: false,
+        usage: access.status?.canRead === false && old.usage ? { ...old.usage, source: { ...old.usage.source, state: 'stale' } } : old.usage })); return;
+    }
     void refresh(); const timer = setInterval(() => { void refresh(); }, 5000);
     return () => { clearInterval(timer); stop(); };
   }, [scope, options.active, options.taskActive, options.resultsActive, options.usageActive, visible, access.state, access.status?.canRead, refresh, stop]);

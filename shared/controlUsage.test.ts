@@ -13,7 +13,7 @@ describe('private usage contract', () => {
     expect(parseControlUsageSnapshot({ ...snapshot(), tokens: { input: count } })).toBeNull();
   });
   it('rejects unexpected/private fields, reserved keys and invalid timestamps', () => {
-    for (const patch of [{ transcriptPath: '/private' }, { computedAt: -1 }, { state: 'complete' }, { cost: { usd: Infinity } }, { source: { state: 'current', observedAt: -1 } }]) {
+    for (const patch of [{ transcriptPath: '/private' }, { computedAt: -1 }, { computedAt: Number.MAX_SAFE_INTEGER }, { state: ['ready'] }, { state: 'complete' }, { cost: { usd: Infinity } }, { source: { state: 'current', observedAt: -1 } }]) {
       expect(parseControlUsageSnapshot({ ...snapshot(), ...patch })).toBeNull();
     }
     expect(parseControlUsageSnapshot(JSON.parse('{"__proto__":{},"tokens":{}}'))).toBeNull();
