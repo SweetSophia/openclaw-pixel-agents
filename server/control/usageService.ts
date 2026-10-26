@@ -1,5 +1,5 @@
 import { CONTROL_LIMITS, controlByteSize, controlRecord, parseControlTarget, type ControlTarget } from '../../shared/control';
-import { parseControlUsageSnapshot, usageInteger, type ControlUsageSnapshot } from '../../shared/controlUsage';
+import { parseControlUsageSnapshot, usageInteger, usageTimestamp, type ControlUsageSnapshot } from '../../shared/controlUsage';
 import { ControlError } from './errors';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import { projectSession } from './projection';
@@ -52,11 +52,11 @@ export function createUsageService(gateway: ControlGateway, tasks: TaskService):
               if (report.cacheStatus !== undefined && (!cache || !['fresh', 'partial', 'stale', 'refreshing'].includes(String(cache.status)))) throw new ControlError('invalid-source');
               snapshot.state = (cache && cache.status !== 'fresh') || usage.refreshing === true || usage.staleSince !== undefined || (typeof usage.missingCostEntries === 'number' && usage.missingCostEntries > 0) ? 'partial' : 'ready';
               for (const [native, key] of [['input', 'input'], ['output', 'output'], ['cacheRead', 'cacheRead'], ['cacheWrite', 'cacheWrite'], ['totalTokens', 'total']] as const) {
-                if (usage[native] !== undefined) snapshot.tokens[key] = usage[native] as number;
+                if (usage[native] !== undefined && usage[native] !== null) snapshot.tokens[key] = usage[native] as number;
               }
-              if (usage.totalCost !== undefined) snapshot.cost.usd = usage.totalCost as number;
-              if (usage.missingCostEntries !== undefined) snapshot.cost.missingEntries = usage.missingCostEntries as number;
-              if (usage.computedAt !== undefined) snapshot.computedAt = usage.computedAt as number;
+              if (usage.totalCost !== undefined && usage.totalCost !== null) snapshot.cost.usd = usage.totalCost as number;
+              if (usage.missingCostEntries !== undefined && usage.missingCostEntries !== null) snapshot.cost.missingEntries = usage.missingCostEntries as number;
+              if (usageTimestamp(usage.computedAt)) snapshot.computedAt = usage.computedAt;
               if (!Object.keys(snapshot.tokens).length && snapshot.cost.usd === undefined) {
                 snapshot.state = row.computing === true || usage.refreshing === true ? 'loading' : 'unavailable';
                 if (snapshot.cost.missingEntries) snapshot.state = 'partial';

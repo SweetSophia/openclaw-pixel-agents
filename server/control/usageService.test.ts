@@ -4,6 +4,7 @@ import type { ControlGateway, GatewayEvent } from './gatewayClient';
 import { GatewayRequestError } from './gatewayClient';
 import { createTaskService } from './taskService';
 import { createUsageService } from './usageService';
+import { readFileSync } from 'node:fs';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:usage', sessionId: 'instance-1', lifecycleRevision: 'rev1', branchId: 'branch1' };
 const cleanup: Array<() => void> = []; afterEach(() => { for (const close of cleanup.splice(0)) close(); });
@@ -88,4 +89,26 @@ it('requires affirmative proof that reported totals belong to one session instan
   await expect(f.read()).rejects.toMatchObject({ code: 'invalid-source' });
   row.includedSessionIds = [target.sessionId]; expect((await f.read()).state).toBe('ready');
   row.scope = 'family'; await expect(f.read()).rejects.toMatchObject({ code: 'invalid-source' });
+});
+it.each([['input', 'input'], ['output', 'output'], ['cacheRead', 'cacheRead'], ['cacheWrite', 'cacheWrite'], ['totalTokens', 'total'], ['totalCost', 'usd'], ['missingCostEntries', 'missingEntries']])('treats null %s as unreported without discarding other metrics', async (native, field) => {
+  const f = fixture(); const usage = (f.raw().sessions as Array<Record<string, unknown>>)[0].usage as Record<string, unknown>; usage[native] = null;
+  const value = await f.read(); expect(value.state).toBe('ready'); expect(value.model).toBe('fixture/fixture-model');
+  expect(native === 'totalCost' || native === 'missingCostEntries' ? value.cost : value.tokens).not.toHaveProperty(field);
+  if (native !== 'output') expect(value.tokens.output).toBe(20);
+});
+it.each([null, '1000', 1000000000000000000, -1, NaN, Infinity])('omits unusable optional computation timestamp %s while preserving metrics', async computedAt => {
+  const f = fixture(); ((f.raw().sessions as Array<Record<string, unknown>>)[0].usage as Record<string, unknown>).computedAt = computedAt;
+  const value = await f.read(); expect(value.tokens.output).toBe(20); expect(value.cost.usd).toBe(0.25); expect(value).not.toHaveProperty('computedAt');
+});
+it.each([{ includedSessionIds: [] }, { includedSessionIds: ['another-instance'] }, { includedSessionIds: [target.sessionId, 'another-instance'] }])('rejects explicit instance scope with contradictory included IDs $includedSessionIds', async ({ includedSessionIds }) => {
+  const f = fixture(); const row = (f.raw().sessions as Array<Record<string, unknown>>)[0]; row.includedSessionIds = includedSessionIds;
+  await expect(f.read()).rejects.toMatchObject({ code: 'invalid-source' });
+});
+it('accepts the captured native instance contract and refuses the same row without its scope proof', async () => {
+  const captured = JSON.parse(readFileSync(new URL('./fixtures/native-usage-session-instance.json', import.meta.url), 'utf8'));
+  const f = fixture(); const row = captured.response.sessions[0]; f.setRaw(captured.response); f.mutate({ sessionId: row.sessionId });
+  const selection = { ...target, sessionId: row.sessionId };
+  expect((await f.service.read(selection)).target.sessionId).toBe(row.sessionId);
+  delete row.scope; delete row.includedSessionIds;
+  await expect(f.service.read(selection)).rejects.toMatchObject({ code: 'invalid-source' });
 });

@@ -13,7 +13,7 @@ const USAGE_METHODS = ['sessions.usage'] as const;
 export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -134,7 +134,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
         if ((USAGE_METHODS as readonly string[]).includes(item.method)) {
-          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST' ? 'unsupported' : 'unavailable')); return;
+          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'usage-denied' : error?.code === 'INVALID_REQUEST' ? 'unsupported' : 'unavailable')); return;
         }
         if ((WORKSPACE_METHODS as readonly string[]).includes(item.method)) {
           item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? details?.type === 'workspace_path_invalid' ? 'invalid-request' : 'scope-required' : error?.code !== 'INVALID_REQUEST' ? 'unavailable'

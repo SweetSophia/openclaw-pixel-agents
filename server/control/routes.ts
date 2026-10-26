@@ -32,7 +32,7 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
       if (res.headersSent) { res.destroy(); return; }
       res.removeHeader('X-Pixel-Control-File'); res.removeHeader('X-Pixel-Preview-Truncated'); res.removeHeader('Content-Disposition');
       const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
-      const status = code === 'scope-required' || code === 'pairing-required' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
+      const status = code === 'scope-required' || code === 'pairing-required' || code === 'usage-denied' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
         : code === 'invalid-target' || code === 'file-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
           : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
       res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.' });

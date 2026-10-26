@@ -79,6 +79,13 @@ function client(url?: string, sendEnabled = false, options?: { directory: string
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 
 describe('scoped task Gateway client', () => {
+  it('distinguishes an optional Usage method refusal from loss of base read authority', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id)
+      : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN' } })));
+    const gateway = client(host.url); await ready(gateway);
+    await expect(gateway.request('sessions.usage', { key: 'agent:cylena:fixture', agentId: 'cylena' })).rejects.toMatchObject({ code: 'usage-denied' });
+    await expect(gateway.request('sessions.describe', { key: 'agent:cylena:fixture', agentId: 'cylena' })).rejects.toMatchObject({ code: 'scope-required' });
+  });
   it('keeps usage optional without breaking the existing read-only task connection', async () => {
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id)
       : { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'unknown method: sessions.usage' } })));
@@ -88,9 +95,11 @@ describe('scoped task Gateway client', () => {
   });
   it('reads exact usage through the real signed adapter, service and protected HTTP route', async () => {
     const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'usage-instance' };
+    let denyUsage = false;
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
       features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'], events: [] },
-    }) : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe'
+    }) : frame.method === 'sessions.usage' && denyUsage ? { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN' } }
+      : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe'
       ? { session: { ...target, key: target.sessionKey, model: 'fixture', contextTokens: 64000 } }
       : frame.method === 'sessions.usage' ? { sessions: [{ key: target.sessionKey, agentId: target.agentId, sessionId: target.sessionId, scope: 'instance', usage: { input: 0, output: 42, totalCost: 0, missingCostEntries: 0, computedAt: 100 } }] } : {} })));
     const gateway = client(host.url); await ready(gateway);
@@ -107,6 +116,12 @@ describe('scoped task Gateway client', () => {
     expect(result.headers['cache-control']).toBe('no-store');
     expect(host.frames.filter(frame => frame.method === 'sessions.usage')[0].params).toEqual({ key: target.sessionKey, agentId: target.agentId, range: 'all', groupBy: 'instance', limit: 1, includeContextWeight: false });
     expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+    denyUsage = true;
+    const usageDenied = await request(app).post(path).auth('fixture-key', { type: 'bearer' }).send(target);
+    expect(usageDenied.status).toBe(403); expect(usageDenied.body.code).toBe('usage-denied');
+    expect(usageDenied.headers['cache-control']).toBe('no-store');
+    expect(gateway.status().canRead).toBe(true);
+    await expect(gateway.request('sessions.describe', { key: target.sessionKey })).resolves.toHaveProperty('session');
     app.set('trust proxy', 1);
     const denied = await request(app).post(path).set('X-Forwarded-For', '198.51.100.1').auth('fixture-key', { type: 'bearer' }).send(target);
     expect(denied.status).toBe(403); expect(denied.body.code).toBe('transport-required');
