@@ -80,11 +80,17 @@ it('keeps private access disabled when the optional setup example is copied befo
 });
 it('keeps the README task-access example disabled until a generated key is entered', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const example = readme.match(/```dotenv\n([\s\S]*?)```/)?.[1];
-  expect(example).toBeDefined();
-  const environment = parseEnv(example!);
-  expect(environment.PIXEL_CONTROL_TOKEN).toBe('');
-  expect(loadControlConfig(environment, fixture().directory).enabled).toBe(false);
+  const examples = [...readme.matchAll(/```dotenv\n([\s\S]*?)```/g)]
+    .map(match => parseEnv(match[1])).filter(environment => 'PIXEL_CONTROL_TOKEN' in environment);
+  expect(examples.length).toBeGreaterThan(0);
+  const f = fixture(); const key = f.run(['--generate-key']); expect(key.status).toBe(0);
+  for (const environment of examples) {
+    expect(environment.PIXEL_CONTROL_TOKEN).toBe('');
+    expect(environment.OPENCLAW_GATEWAY_URL).toBeTruthy();
+    expect(environment.CONTROL_SEND_ENABLED).toBe('false');
+    expect(loadControlConfig(environment, f.directory).enabled).toBe(false);
+    expect(loadControlConfig({ ...environment, PIXEL_CONTROL_TOKEN: key.stdout.trim() }, f.directory).enabled).toBe(true);
+  }
 });
 it.each(['', '  \t '])('explains a missing or blank startup origin without creating data (%j)', origin => {
   const f = fixture(); const result = f.run([], { CORS_ORIGIN: origin });

@@ -73,9 +73,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Build Docker image
-        run: docker build --tag openclaw-pixel-agents:ci .
-
       - name: Test npm package installation and startup
         run: npm run test:package
 
@@ -92,6 +89,53 @@ jobs:
           npm audit --omit=dev --audit-level=high
           npm audit --audit-level=moderate
         continue-on-error: false
+
+  docker:
+    name: Docker build and startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.22.2
+
+      - name: Check production dependencies support script-free installation
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const { packages } = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          for (const [path, entry] of Object.entries(packages)) {
+            if (path && !entry.dev && entry.hasInstallScript) {
+              throw new Error(`${path} needs install hooks; review Docker's --ignore-scripts policy`);
+            }
+          }
+          NODE
+
+      - name: Build Docker image
+        run: docker build --tag openclaw-pixel-agents:ci .
+
+      - name: Smoke test Docker startup
+        run: |
+          container_name="pixel-ci-${{ github.run_id }}-${{ github.run_attempt }}"
+          cleanup() {
+            docker logs "$container_name" || true
+            docker rm --force "$container_name" > /dev/null || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name "$container_name" \
+            --publish 127.0.0.1:3001:3001 \
+            --env CORS_ORIGIN=http://127.0.0.1:3001 \
+            --env DATA_SOURCE=ingest --env INGEST_API_TOKEN=ci-synthetic-ingest-only \
+            openclaw-pixel-agents:ci
+          curl --fail --silent --show-error --retry 30 --retry-all-errors \
+            --retry-delay 1 --connect-timeout 2 --max-time 2 \
+            http://127.0.0.1:3001/api/status
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3001/
 
   dependency-review:
     name: Dependency review
