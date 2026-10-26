@@ -77,8 +77,58 @@ function client(url?: string, sendEnabled = false, options?: { directory: string
   const gateway = createControlGateway(config); cleanups.push(() => gateway.close()); return gateway;
 }
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
+const existingGrant = 'fixture-existing-read-write-grant';
+const writableHello = (id: string) => hello(id, { auth: { role: 'operator', scopes: ['operator.read', 'operator.write'], deviceToken: existingGrant }, features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.send', 'sessions.create'], events: [] } });
+const startupRefusal = (id: string) => ({ type: 'res', id, ok: false, error: { code: 'UNAVAILABLE', retryable: true, retryAfterMs: 500, details: { reason: 'startup-sidecars' } } });
+function pairedClient(url: string) {
+  const directory = mkdtempSync(join(tmpdir(), 'pixel-paired-restart-'));
+  const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: url, PIXEL_CONTROL_TOKEN: 'fixture-key' }, directory);
+  const identity = devices.loadOrCreateDeviceIdentity(config.deviceDirectory);
+  devices.writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, existingGrant, ['operator.read', 'operator.write']);
+  return client(url, true, { directory, deviceOnly: true });
+}
 
 describe('scoped task Gateway client', () => {
+  it('recovers a signed device-only connection after a native startup refusal without replacing its grant or scopes', async () => {
+    let connections = 0;
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(++connections === 1 ? startupRefusal(frame.id) : writableHello(frame.id))); });
+    const gateway = pairedClient(host.url); gateway.start();
+    await vi.waitFor(() => expect(connections).toBe(2), { timeout: 2000, interval: 10 });
+    await vi.waitFor(() => expect(gateway.status()).toMatchObject({ state: 'ready', canRead: true, canSend: true }));
+    const connects = host.frames.filter(frame => frame.method === 'connect');
+    for (const { params } of connects) {
+      expect(params.auth).toEqual({ deviceToken: existingGrant }); expect(params.scopes).toEqual(['operator.read', 'operator.write']);
+      const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(params.device.publicKey, 'base64url')]), type: 'spki', format: 'der' });
+      const payload = ['v3', params.device.id, 'cli', 'backend', 'operator', params.scopes.join(','), '123', existingGrant, 'fixture-nonce', process.platform, ''].join('|');
+      expect(verify(null, Buffer.from(payload), key, Buffer.from(params.device.signature, 'base64url'))).toBe(true);
+    }
+    expect(connects[1].params.device.id).toBe(connects[0].params.device.id);
+  });
+  it('recovers read/write after a ready connection restarts through native startup refusal without replaying a pending read', async () => {
+    let connections = 0;
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(++connections === 2 ? startupRefusal(frame.id) : writableHello(frame.id))); });
+    const gateway = pairedClient(host.url); await ready(gateway);
+    const pending = gateway.request('sessions.describe', { key: 'agent:cylena:fixture' }).catch(error => error);
+    await vi.waitFor(() => expect(host.frames.filter(frame => frame.method === 'sessions.describe')).toHaveLength(1));
+    [...host.sockets].forEach(socket => socket.destroy()); expect(await pending).toBeInstanceOf(Error);
+    await vi.waitFor(() => expect(connections).toBe(3), { timeout: 2500, interval: 10 });
+    await vi.waitFor(() => expect(gateway.status()).toMatchObject({ state: 'ready', canRead: true, canSend: true }));
+    expect(host.frames.filter(frame => frame.method === 'sessions.describe')).toHaveLength(1);
+    expect(host.frames.some(frame => ['chat.send', 'sessions.create'].includes(frame.method))).toBe(false);
+    for (const frame of host.frames.filter(frame => frame.method === 'connect')) expect(frame.params.auth).toEqual({ deviceToken: existingGrant });
+  });
+  it('cancels a scheduled startup retry when the office closes', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(startupRefusal(frame.id))));
+    const gateway = pairedClient(host.url); gateway.start();
+    await vi.waitFor(() => expect(host.frames).toHaveLength(1));
+    await vi.waitFor(() => expect(gateway.status().state).toBe('unavailable'));
+    gateway.close(); await new Promise(resolve => setTimeout(resolve, 650)); expect(host.frames).toHaveLength(1);
+  });
+  it('honors bounded native retry hints without weakening the reconnect cap', () => {
+    expect(gatewayReconnectDelay(0, () => 0, 500)).toBe(500);
+    expect(gatewayReconnectDelay(0, () => 0, 60000)).toBe(30000);
+    for (const hint of [-1, NaN, Infinity, '500', undefined]) expect(gatewayReconnectDelay(0, () => 0, hint)).toBe(250);
+  });
   it('distinguishes an optional Usage method refusal from loss of base read authority', async () => {
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id)
       : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN' } })));
@@ -278,10 +328,11 @@ describe('scoped task Gateway client', () => {
   it.each([
     ['pairing-required', 'PAIRING_REQUIRED'], ['auth-error', 'AUTH_TOKEN_MISMATCH'], ['auth-error', 'AUTH_SCOPE_MISMATCH'],
   ])('surfaces %s without exposing raw credential diagnostics', async (state, code) => {
-    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode({ type: 'res', id: frame.id, ok: false, error: { message: 'fixture-secret', details: { code } } })); });
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode({ type: 'res', id: frame.id, ok: false, error: { code: 'UNAUTHORIZED', retryable: true, message: 'fixture-secret', details: { code } } })); });
     const gateway = client(host.url); gateway.start();
     await vi.waitFor(() => expect(gateway.status().state).toBe(state), { timeout: 1500 });
     expect(JSON.stringify(gateway.status())).not.toContain('fixture-secret');
+    await new Promise(resolve => setTimeout(resolve, 650)); expect(host.frames).toHaveLength(1);
   });
   it.each([{ nonce: 'fixture', ts: -1 }, { nonce: '', ts: 123 }, { nonce: 'fixture' }])('rejects malformed challenges: %j', async challenge => {
     const host = await fixture(undefined, challenge); const gateway = client(host.url); gateway.start();

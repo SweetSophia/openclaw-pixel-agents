@@ -138,3 +138,4 @@ Docker's `--env-file` supplies process variables; it does not depend on the serv
 - **Secure connection required:** use HTTPS, loopback development, or the explicitly configured direct-Tailnet exception.
 - **Forbidden origin:** set the exact browser origin in `CORS_ORIGIN` and preserve the browser's `Origin` header through any reverse proxy.
 - **Connected roster but unavailable tasks:** the collector feed and private Gateway connection are independent. Check the task connection and device grant separately.
+- **Gateway starting or restarting (source builds):** private panels can be temporarily unavailable while the Gateway starts. An explicitly retryable `UNAVAILABLE` handshake response now reconnects automatically with the existing device grant and bounded backoff; no pairing reset or new office key is needed. Genuine credential, scope and pairing failures still require operator attention. This recovery fix awaits the next npm release.

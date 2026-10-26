@@ -23,8 +23,9 @@ export interface ControlGateway {
 }
 interface Pending { method: ControlMethod; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
-export function gatewayReconnectDelay(attempt: number, random: () => number = Math.random): number {
-  return Math.round(Math.min(30000, 500 * 2 ** Math.min(attempt, 6)) * (0.5 + random() * 0.5));
+export function gatewayReconnectDelay(attempt: number, random: () => number = Math.random, retryAfterMs?: unknown): number {
+  const hint = typeof retryAfterMs === 'number' && Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0 ? Math.min(30000, retryAfterMs) : 0;
+  return Math.max(hint, Math.round(Math.min(30000, 500 * 2 ** Math.min(attempt, 6)) * (0.5 + random() * 0.5)));
 }
 export function createControlGateway(config: ControlConfig): ControlGateway {
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';
@@ -39,14 +40,14 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(Error(message)); }
     pending.clear();
   }
-  function fail(next: ControlGatewayState, retryable = false): void {
+  function fail(next: ControlGatewayState, retryable = false, retryAfterMs?: unknown): void {
     generation++; state = next; writeGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
     rejectPending('Task source connection changed'); emit({ event: 'source.invalidated', payload: null });
     clearTimeout(reconnect); reconnect = undefined;
     if (retryable && !stopped) {
-      reconnect = setTimeout(connect, gatewayReconnectDelay(retry++)); reconnect.unref?.();
+      reconnect = setTimeout(connect, gatewayReconnectDelay(retry++, Math.random, retryAfterMs)); reconnect.unref?.();
     }
   }
   function connect(): void {
@@ -103,7 +104,10 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       if (frame.id === connectId && state === 'connecting') {
         if (!frame.ok) {
           const error = controlRecord(frame.error); const details = controlRecord(error?.details);
-          fail(details?.code === 'PAIRING_REQUIRED' ? 'pairing-required' : 'auth-error'); return;
+          if (details?.code === 'PAIRING_REQUIRED') fail('pairing-required');
+          else if (error?.code === 'UNAVAILABLE' && error.retryable === true) fail('unavailable', true, error.retryAfterMs);
+          else fail('auth-error');
+          return;
         }
         const hello = controlRecord(frame.payload); const auth = controlRecord(hello?.auth);
         const features = controlRecord(hello?.features); const policy = controlRecord(hello?.policy); const server = controlRecord(hello?.server);
