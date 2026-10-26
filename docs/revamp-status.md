@@ -32,7 +32,7 @@ temporary branch, review deadline and merge state belong in the execution ledger
 | Task | State and owner | Branch/PR | Evidence or next gate |
 | --- | --- | --- | --- |
 | Qualify dependency maintenance | Complete — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), squash merge `90e78a7` on 2026-10-26 at 18:27:11 UTC. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322) are closed as superseded. | The full 15-minute review window elapsed before merge. Independent review, 1,407 local tests, package smoke, Docker on Node 26.12.1, required CI/security checks, Kody and Sourcery passed. A clean fresh independent review replaced Kilo's provider-rate-limit failure. The merged tree matches reviewed head `8301f68`. The subsequent `ad7acb3` rollout installed the full qualified dependency tree alongside the runtime. |
-| Recover private access after a Gateway restart | Complete — Codex coordinator | [#326](https://github.com/SweetSophia/openclaw-pixel-agents/pull/326), squash merge `ad7acb3` on 2026-10-26 at 19:28:31 UTC | Independent reviews, 1,411 tests, coverage/types/build/package/audits, required CI, Docker, CodeQL, Kody and Sourcery passed. A clean fresh independent review replaced unavailable Kilo. The reset 15-minute review window elapsed before merge; post-merge main CI and CodeQL passed on `ad7acb3`. |
+| Harden transient Gateway startup recovery | Complete — Codex coordinator | [#326](https://github.com/SweetSophia/openclaw-pixel-agents/pull/326), squash merge `ad7acb3` on 2026-10-26 at 19:28:31 UTC | Independent reviews, 1,411 tests, coverage/types/build/package/audits, required CI, Docker, CodeQL, Kody and Sourcery passed. A clean fresh independent review replaced unavailable Kilo. The reset 15-minute review window elapsed before merge; post-merge main CI and CodeQL passed on `ad7acb3`. |
 | Qualify the current runtime and roll out merged additions | Complete — Codex runtime audit/coordinator | Exact merged source `ad7acb3`; operator backup/rollback record retained | Independently reviewed deployment installed the tested runtime and full qualified dependencies. Fresh roster, private Usage/Results/Workspace, read/send capability and exact-client checks passed. Saved preferences/layouts and current credentials were preserved. No real task was sent. |
 | Publish onboarding and Usage to npm | Deferred — separate release work | No publication included in this closeout | A versioned release must be qualified and explicitly tracked through the [release workflow](releases.md). The already published 1.6.0 package predates these additions. |
 
@@ -57,12 +57,15 @@ client build. The collector remains active and retired previews remain disabled.
 
 Native Chromium confirmed six tabs, a locked Usage panel until the access key is
 entered, and no browser exceptions. That initial acceptance did not establish
-recovery across a later Gateway restart: an external restart exposed a retryable
-startup refusal being treated as terminal authentication failure.
+recovery across a later Gateway restart. Private access was later unavailable
+after an external restart despite a valid retained grant. No retained native
+response establishes the exact rejection behind that live incident.
 
-PR #326 fixes that classification with bounded reconnect policy while preserving
-terminal authentication/scope failures. A compiled synthetic recovery probe
-observed HTTP connecting → ready → unavailable → ready and service restart
+Source inspection and synthetic tests confirmed that retryable startup refusals
+could be misclassified as terminal. PR #326 fixes that classification with bounded
+reconnect policy while preserving terminal authentication/scope failures. A
+compiled synthetic recovery probe observed HTTP connecting → ready → unavailable
+→ ready and transient service
 closures 1012/1013 with the same grant, scopes and signed device authentication.
 It required no office-process restart, real task, session creation or live Gateway
 restart. Untrusted retry hints select only a fixed bounded delay policy.
