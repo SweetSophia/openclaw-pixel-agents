@@ -59,12 +59,12 @@ The example uses **http://localhost:3001**. The server does not load `.env` auto
 The package includes a launcher and release workflow. Usage, setup instructions and transient Gateway-startup recovery require **1.7.0 or newer**; see the [1.7.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.7.0.md) for features and upgrade details. Workspace browsing is available from 1.6.0 and Results/Files from 1.5.0.
 
 ```sh
-npm install --global "openclaw-pixel-agents@^1.7.0"
+npm install --global openclaw-pixel-agents@latest
 openclaw-pixel-agents --help
 openclaw-pixel-agents --env-file /absolute/path/to/.env
 ```
 
-Alternatively, use `npx --yes "openclaw-pixel-agents@^1.7.0" --env-file /absolute/path/to/.env`. Both examples select version 1.7.0 or a newer compatible 1.x release. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
+Alternatively, use `npx --yes openclaw-pixel-agents@latest --env-file /absolute/path/to/.env`. Both examples select the npm registry's current `latest` release. Check the installed version before using features with a newer minimum version above; merging a release-preparation PR does not publish that version. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
 
 The launcher runs in production mode. Its default data directory is **`~/.openclaw-pixel-agents`**, outside the installation, so package upgrades do not replace saved layouts or appearances. Set `DATA_DIR` explicitly for a service account or multiple offices. Obtain an [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example) and follow the [configuration reference](docs/configuration.md).
 
