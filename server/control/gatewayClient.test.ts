@@ -14,6 +14,7 @@ import request from 'supertest';
 import { createWorkspaceService } from './workspaceService';
 import { createTaskService } from './taskService';
 import { createControlRouter } from './routes';
+import { createUsageService } from './usageService';
 
 type Frame = { type: string; id: string; method: string; params: Record<string, any> };
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -78,6 +79,36 @@ function client(url?: string, sendEnabled = false, options?: { directory: string
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 
 describe('scoped task Gateway client', () => {
+  it('keeps usage optional without breaking the existing read-only task connection', async () => {
+    const host = await fixture(); const gateway = client(host.url); await ready(gateway);
+    await expect(gateway.request('sessions.usage', { agentId: 'cylena', key: 'agent:cylena:fixture' })).rejects.toMatchObject({ code: 'unsupported' });
+    expect(gateway.status().canRead).toBe(true); expect(host.frames.some(frame => frame.method === 'sessions.usage')).toBe(false);
+  });
+  it('reads exact usage through the real signed adapter, service and protected HTTP route', async () => {
+    const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'usage-instance' };
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'sessions.usage'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe'
+      ? { session: { ...target, key: target.sessionKey, model: 'fixture', contextTokens: 64000 } }
+      : frame.method === 'sessions.usage' ? { sessions: [{ key: target.sessionKey, agentId: target.agentId, sessionId: target.sessionId, scope: 'instance', usage: { input: 0, output: 42, totalCost: 0, missingCostEntries: 0, computedAt: 100 } }] } : {} })));
+    const gateway = client(host.url); await ready(gateway);
+    const tasks = createTaskService(gateway, () => new Set(['cylena'])); const usage = createUsageService(gateway, tasks);
+    cleanups.push(() => { usage.close(); tasks.close(); });
+    const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: host.url, PIXEL_CONTROL_TOKEN: 'fixture-key' }, '/tmp/usage-fixture');
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, usage, config }));
+    const path = '/api/control/agents/cylena/usage';
+    expect((await request(app).post(path).send(target)).status).toBe(401);
+    expect((await request(app).post(path).auth('fixture-key', { type: 'bearer' }).send({ ...target, url: 'http://private' })).status).toBe(400);
+    expect(host.frames.some(frame => frame.method === 'sessions.usage')).toBe(false);
+    const result = await request(app).post(path).auth('fixture-key', { type: 'bearer' }).send(target);
+    expect(result.status).toBe(200); expect(result.body).toMatchObject({ target, tokens: { input: 0, output: 42 }, cost: { usd: 0 }, computedAt: 100 });
+    expect(result.headers['cache-control']).toBe('no-store');
+    expect(host.frames.filter(frame => frame.method === 'sessions.usage')[0].params).toEqual({ key: target.sessionKey, agentId: target.agentId, range: 'all', groupBy: 'instance', limit: 1, includeContextWeight: false });
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+    app.set('trust proxy', 1);
+    const denied = await request(app).post(path).set('X-Forwarded-For', '198.51.100.1').auth('fixture-key', { type: 'bearer' }).send(target);
+    expect(denied.status).toBe(403); expect(denied.body.code).toBe('transport-required');
+  });
   it('keeps workspace methods optional and old task connections usable', async () => {
     const host = await fixture(); const gateway = client(host.url); await ready(gateway);
     for (const method of ['agents.workspace.list', 'agents.workspace.get'] as const) await expect(gateway.request(method, { agentId: 'cylena', path: '' })).rejects.toMatchObject({ code: 'unsupported' });

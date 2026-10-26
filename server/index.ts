@@ -55,6 +55,7 @@ import { createConversationService, mountControlNamespace } from "./control/conv
 import { createControlRouter } from "./control/routes";
 import { createArtifactService } from "./control/artifactService";
 import { createWorkspaceService } from "./control/workspaceService";
+import { createUsageService } from "./control/usageService";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
 import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
 const app = express();
@@ -1853,11 +1854,12 @@ const controlSends = createSendService(controlGateway, controlTasks);
 const controlConversations = createConversationService(controlGateway, controlTasks);
 const controlArtifacts = createArtifactService(controlGateway, controlTasks);
 const controlWorkspace = createWorkspaceService(controlGateway, () => new Set(AGENT_REGISTRY.keys()));
+const controlUsage = createUsageService(controlGateway, controlTasks);
 const closeControlNamespace = mountControlNamespace(io, { config: controlConfig, tasks: controlTasks, conversations: controlConversations,
   originAllowed: origin => isOriginAllowed(origin, corsConfig), trustProxy: app.get("trust proxy fn") });
-app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts, workspace: controlWorkspace }));
+app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts, workspace: controlWorkspace, usage: controlUsage }));
 server.on("listening", () => controlGateway.start());
-server.on("close", () => { closeControlNamespace(); controlWorkspace.close(); controlArtifacts.close(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close(); });
+server.on("close", () => { closeControlNamespace(); controlUsage.close(); controlWorkspace.close(); controlArtifacts.close(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close(); });
 
 // Unmatched requests that reach the end of the API route chain keep the API
 // representation/status contract. In particular, an unknown GET must not fall

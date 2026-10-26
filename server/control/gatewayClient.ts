@@ -9,7 +9,8 @@ const WRITE_METHODS = ['chat.send', 'sessions.create'] as const;
 const STREAM_METHODS = ['sessions.messages.subscribe', 'sessions.messages.unsubscribe'] as const;
 const ARTIFACT_METHODS = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
 const WORKSPACE_METHODS = ['agents.workspace.list', 'agents.workspace.get'] as const;
-export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number];
+const USAGE_METHODS = ['sessions.usage'] as const;
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
   constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported') { super('Task source request rejected'); }
@@ -154,9 +155,10 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
       const artifact = (ARTIFACT_METHODS as readonly string[]).includes(method);
       const workspace = (WORKSPACE_METHODS as readonly string[]).includes(method);
-      if ((artifact || workspace) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
+      const usage = (USAGE_METHODS as readonly string[]).includes(method);
+      if ((artifact || workspace || usage) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
       const allowed = (READ_METHODS as readonly string[]).includes(method)
-        || artifact || workspace
+        || artifact || workspace || usage
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
       if (!allowed) return Promise.reject(new GatewayRequestError('scope-required'));
