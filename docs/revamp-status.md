@@ -26,14 +26,25 @@ live acceptance today.
 | Task | State and owner | Branch/PR | Completion evidence required |
 | --- | --- | --- | --- |
 | Reconcile plans and keep this tracker current | In progress — Codex documentation agent | `docs/revamp-closeout-20261026`; PR pending independent review | Review the documentation diff, check links and source/evidence consistency, complete the review window, merge. |
-| Qualify dependency maintenance | In progress — Codex coordinator | `chore/revamp-dependencies-20261026`; combined PR pending. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322). | Review the actual combined changes, pass local/package/Docker/security checks and independent review, assess bot findings and merge the latest qualified revision. |
-| Qualify the current runtime and roll out merged additions | Pending — Codex runtime audit/coordinator | No rollout claimed yet | Identify the running source/build, retain a fresh backup and rollback path, preserve data/configuration/current device grants, then verify the exact tested runtime, fresh roster and private reads. Send no real task as an automated smoke test. |
+| Qualify dependency maintenance | Under review — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), Ready for review at `8301f68`, branch `chore/revamp-dependencies-20261026`. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322). | Initial independent review is clean; 1,407 local tests and Docker on Node 26.12.1 pass. The current review window ends **2026-10-26 18:25:23 UTC**; inspect current-head checks and findings before merge. A further push restarts the window. |
+| Qualify the current runtime and roll out merged additions | In progress — Codex runtime audit/coordinator; recovery and rollout acceptance pending | Read-only audit complete; no new rollout claimed | Retain a fresh backup and rollback path, preserve data/configuration/current device grants, independently review office-only recovery, then verify the exact tested runtime, fresh roster and private reads. Send no real task as an automated smoke test. |
 | Publish onboarding and Usage to npm | Deferred — separate release work | No publication included in this closeout | A versioned release must be qualified and explicitly tracked through the [release workflow](releases.md). The already published 1.6.0 package predates these additions. |
 
 For each new or updated PR, the coordinator records its exact pushed revision,
 independent review, 15-minute review deadline, checks and findings. Every push
 restarts that window. An unavailable bot is replaced by a fresh independent
 review; failing enforced checks or repository protections remain blockers.
+
+### Runtime audit snapshot
+
+The read-only audit on 2026-10-26 identified live runtime `4dd179f`
+([PR #313](https://github.com/SweetSophia/openclaw-pixel-agents/pull/313)), before
+onboarding and Usage. The public roster contains eight agents with fresh ingest.
+The private Gateway connection reports `auth-error`, although the retained
+read/write device grant still matches the authoritative source record. This is
+not evidence that a new grant or credential rotation is needed. Office-only
+recovery is awaiting independent review and fresh acceptance evidence; Usage is
+not yet deployed. No recovery, real-task send or npm publication is claimed here.
 
 ## Future capabilities
 
