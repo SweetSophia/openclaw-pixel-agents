@@ -1,0 +1,12 @@
+.conversation-usage { min-width: 0; overflow-wrap: anywhere; }
+.conversation-usage h3 { margin: 20px 0 8px; color: var(--acc-cyan); }
+.conversation-usage h4 { margin: 0 0 10px; font-size: 14px; }
+.usage-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 20px 0; }
+.usage-metrics > div { padding: 14px; border: 1px solid rgba(0, 240, 255, .18); border-radius: 8px; background: rgba(0, 240, 255, .035); }
+.usage-metrics dt, .usage-configuration dt { font-size: 12px; color: var(--text-muted); }
+.usage-metrics dd { margin: 7px 0 0; font-size: 18px; font-variant-numeric: tabular-nums; }
+.usage-cost { padding: 16px; margin-bottom: 24px; border-left: 2px solid var(--acc-cyan); background: rgba(0, 240, 255, .04); }
+.usage-cost > p:first-of-type { font-size: 20px; margin: 4px 0 12px; font-variant-numeric: tabular-nums; }
+.usage-configuration { display: grid; gap: 12px; }
+.usage-configuration dd { margin: 4px 0 0; }
+@media (max-width: 360px) { .usage-metrics { grid-template-columns: minmax(0, 1fr); } }
