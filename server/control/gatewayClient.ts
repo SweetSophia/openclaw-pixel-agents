@@ -23,9 +23,14 @@ export interface ControlGateway {
 }
 interface Pending { method: ControlMethod; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
+function retryHintDelay(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return 0;
+  // Native hints select a fixed policy delay, never an arbitrary timer duration.
+  for (const delay of [0, 500, 1000, 2000, 4000, 8000, 16000, 30000]) if (value <= delay) return delay;
+  return 30000;
+}
 export function gatewayReconnectDelay(attempt: number, random: () => number = Math.random, retryAfterMs?: unknown): number {
-  const hint = typeof retryAfterMs === 'number' && Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0 ? Math.min(30000, retryAfterMs) : 0;
-  return Math.max(hint, Math.round(Math.min(30000, 500 * 2 ** Math.min(attempt, 6)) * (0.5 + random() * 0.5)));
+  return Math.max(retryHintDelay(retryAfterMs), Math.round(Math.min(30000, 500 * 2 ** Math.min(attempt, 6)) * (0.5 + random() * 0.5)));
 }
 export function createControlGateway(config: ControlConfig): ControlGateway {
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';

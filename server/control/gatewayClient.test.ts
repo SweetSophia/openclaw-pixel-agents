@@ -126,6 +126,8 @@ describe('scoped task Gateway client', () => {
   });
   it('honors bounded native retry hints without weakening the reconnect cap', () => {
     expect(gatewayReconnectDelay(0, () => 0, 500)).toBe(500);
+    expect(gatewayReconnectDelay(0, () => 0, 750)).toBe(1000);
+    expect(gatewayReconnectDelay(0, () => 0, 16001)).toBe(30000);
     expect(gatewayReconnectDelay(0, () => 0, 60000)).toBe(30000);
     for (const hint of [-1, NaN, Infinity, '500', undefined]) expect(gatewayReconnectDelay(0, () => 0, hint)).toBe(250);
   });
