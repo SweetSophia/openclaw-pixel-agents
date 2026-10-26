@@ -33,8 +33,10 @@ From a source checkout's root: node bin/openclaw-pixel-agents.mjs setup
    The loopback URL assumes OpenClaw is on this host; use wss:// for a remote Gateway.
    First pairing only: temporarily supply OPENCLAW_GATEWAY_TOKEN or
    OPENCLAW_GATEWAY_PASSWORD for your Gateway's authentication mode.
-   Approve the office device for operator.read, then remove that bootstrap
-   credential and restart the office. Follow the pairing guide for details.
+   Approve the office device for operator.read, then restart the office with
+   that bootstrap credential still configured. Once connected and the scoped
+   device grant is saved, remove the credential and restart again.
+   Follow the pairing guide for details.
    Paste the office key into Unlock task details in the agent's Task tab.
    Keep Gateway bootstrap credentials on the server; never paste them in the browser.
    Sending is optional and additionally requires operator.write and explicit enabling.

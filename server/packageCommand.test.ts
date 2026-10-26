@@ -76,6 +76,15 @@ it('keeps private access disabled when the optional setup example is copied befo
   const environment = parseEnv(example);
   expect(environment.PIXEL_CONTROL_TOKEN).toBe('');
   expect(loadControlConfig(environment, f.directory).enabled).toBe(false);
+  expect(result.stdout).toContain('Fill the empty PIXEL_CONTROL_TOKEN with the generated key');
+});
+it('keeps the README task-access example disabled until a generated key is entered', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const example = readme.match(/```dotenv\n([\s\S]*?)```/)?.[1];
+  expect(example).toBeDefined();
+  const environment = parseEnv(example!);
+  expect(environment.PIXEL_CONTROL_TOKEN).toBe('');
+  expect(loadControlConfig(environment, fixture().directory).enabled).toBe(false);
 });
 it.each(['', '  \t '])('explains a missing or blank startup origin without creating data (%j)', origin => {
   const f = fixture(); const result = f.run([], { CORS_ORIGIN: origin });

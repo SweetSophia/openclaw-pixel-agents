@@ -95,11 +95,11 @@ The next release also includes a short installation notice pointing to the guide
 
    ```dotenv
    OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
-   PIXEL_CONTROL_TOKEN=PASTE_THE_GENERATED_KEY_HERE
+   PIXEL_CONTROL_TOKEN=
    CONTROL_SEND_ENABLED=false
    ```
 
-   The loopback URL assumes the Gateway runs on the same host. Use an encrypted `wss://` endpoint for a remote Gateway. Restart the office after updating its configuration.
+   Fill the empty `PIXEL_CONTROL_TOKEN` with the generated key; never use placeholder text. Leaving it empty keeps private access disabled. The loopback URL assumes the Gateway runs on the same host. Use an encrypted `wss://` endpoint for a remote Gateway. Restart the office after updating its configuration.
 
 3. Pair the office's own device with OpenClaw. First-time pairing may need a temporary server-only Gateway credential and approval of `operator.read`. Follow the [task-access setup guide](docs/task-access-setup.md#3-pair-the-office-with-openclaw), then remove the bootstrap credential once the scoped device grant is saved.
 

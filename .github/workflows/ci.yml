@@ -73,6 +73,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Build Docker image
+        run: docker build --tag openclaw-pixel-agents:ci .
+
       - name: Test npm package installation and startup
         run: npm run test:package
 
