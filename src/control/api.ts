@@ -16,6 +16,7 @@ const messages: Partial<Record<ClientErrorCode, string>> = {
   'file-too-large': 'This file exceeds the supported transfer or preview size.',
   'preview-unsupported': 'This file cannot be previewed safely. Download it instead.',
   'workspace-changed': 'This workspace selection changed. Refresh the directory.',
+  'usage-denied': 'Usage access was denied. Other panels remain unlocked.',
   'timed-out': 'The request timed out. Try again.',
 };
 // Browser-only error copy must not expand the server's rejection vocabulary.
@@ -23,7 +24,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'disabled', 'locked', 'transport-required', 'pairing-required', 'scope-required', 'unsupported',
   'session-changed', 'invalid-target', 'invalid-request', 'rate-limited', 'outcome-unknown',
   'command-not-supported', 'file-unavailable', 'file-too-large', 'preview-unsupported',
-  'workspace-changed', 'unavailable', 'invalid-source',
+  'workspace-changed', 'unavailable', 'invalid-source', 'usage-denied',
 ]);
 export class ControlApiError extends Error {
   constructor(public readonly code: ClientErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

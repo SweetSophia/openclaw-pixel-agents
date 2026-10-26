@@ -6,6 +6,7 @@ import { TaskDetailsView } from './TaskDetails';
 import { AgentConversation } from './AgentConversation';
 import { TaskResults } from './TaskResults';
 import { AgentWorkspace } from './AgentWorkspace';
+import { ConversationUsage } from './ConversationUsage';
 import { useTaskDetails } from '../control/useTaskDetails';
 import './AgentDetailPanel.css';
 
@@ -35,7 +36,7 @@ const activityColors: Record<AgentActivity, string> = {
   sleeping: '#8a93b2',
   error: '#dc3545',
 };
-const detailTabs = ['task', 'conversation', 'results', 'workspace', 'agent'] as const;
+const detailTabs = ['task', 'conversation', 'results', 'workspace', 'usage', 'agent'] as const;
 
 export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -43,7 +44,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const headingId = useId();
   const [tab, setTab] = useState<typeof detailTabs[number]>('task');
   const tabsId = useId();
-  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: tab === 'task' || tab === 'conversation' || tab === 'results', taskActive: tab === 'task', resultsActive: tab === 'results' });
+  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: tab === 'task' || tab === 'conversation' || tab === 'results' || tab === 'usage', taskActive: tab === 'task', resultsActive: tab === 'results', usageActive: tab === 'usage' });
 
   useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
 
@@ -111,6 +112,11 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
         </div>
         <div role="tabpanel" id={`${tabsId}-workspace-panel`} aria-labelledby={`${tabsId}-workspace-tab`} hidden={tab !== 'workspace'}>
           <AgentWorkspace agentId={agent.id} active={tab === 'workspace'} />
+        </div>
+        <div role="tabpanel" id={`${tabsId}-usage-panel`} aria-labelledby={`${tabsId}-usage-tab`} hidden={tab !== 'usage'}>
+          <TaskDetailsView agentId={agent.id} active={tab === 'usage'} state={details}>
+            <ConversationUsage snapshot={details.usage} loading={details.loading || details.sessionsLoading} selected={details.selected !== null} error={details.usageError} />
+          </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
         <p className="detail-subvalue">Office roster summary</p>

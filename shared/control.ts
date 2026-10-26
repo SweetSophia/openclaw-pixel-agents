@@ -66,7 +66,7 @@ export interface ControlSendReceipt {
 export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'pairing-required' | 'scope-required'
   | 'unsupported' | 'unavailable' | 'invalid-source' | 'invalid-target' | 'session-changed'
   | 'invalid-request' | 'rate-limited' | 'outcome-unknown' | 'command-not-supported'
-  | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed';
+  | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed' | 'usage-denied';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }
 export interface ControlConversationEvent {
   target: ControlTarget; kind: 'messages' | 'invalidated' | 'unavailable'; source: ControlSource; messages?: ControlMessage[];

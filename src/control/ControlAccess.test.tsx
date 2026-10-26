@@ -11,6 +11,16 @@ const socketFixture = vi.hoisted(() => ({ io: vi.fn(), disconnect: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: socketFixture.io }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('keeps the key and private drafts after a method-specific Usage denial', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockResolvedValueOnce(json({ code: 'usage-denied' }, 403)).mockResolvedValueOnce(json({ private: 'task-read-still-allowed' }));
+    vi.stubGlobal('fetch', fetch);
+    const { result } = renderHook(() => ({ access: useControlAccess(), drafts: useConversationDrafts()! }), { wrapper });
+    await act(() => result.current.access.unlock('fixture-key')); const generation = result.current.access.generation; result.current.drafts.set('private', 'draft');
+    await act(async () => { await expect(result.current.access.request('/api/control/agents/cylena/usage')).rejects.toMatchObject({ code: 'usage-denied' }); });
+    expect(result.current.access.state).toBe('unlocked'); expect(result.current.access.generation).toBe(generation); expect(result.current.drafts.get('private')).toBe('draft');
+    await act(async () => { expect(await result.current.access.request('/api/control/agents/cylena/task')).toEqual({ private: 'task-read-still-allowed' }); });
+    expect(new Headers(fetch.mock.calls[2][1].headers).get('Authorization')).toBe('Bearer fixture-key');
+  });
   it('owns binary requests too, aborts on lock and rejects a late file', async () => {
     let resolve: (response: Response) => void = () => {};
     const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; })); vi.stubGlobal('fetch', fetch);

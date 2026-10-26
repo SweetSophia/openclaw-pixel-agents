@@ -13,7 +13,7 @@ const target = { agentId: 'cylena', sessionKey: 'agent:cylena:test', sessionId: 
 const snapshot = (changes: Partial<ControlResultsSnapshot> = {}): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'r1' }, source: { state: 'current', observedAt: 123 }, sourceRevision: 'source-1',
   runState: 'completed', responseKind: 'result', response: { id: 'm1', role: 'assistant', text: 'Review complete.\n<script>literal</script>', truncated: false }, artifactState: 'ready',
   artifacts: [{ id: 'file-1', type: 'file', title: 'report.txt', mimeType: 'text/plain', download: 'bytes' }], artifactsTruncated: false, ...changes });
-const state = (results: ControlResultsSnapshot | null): TaskDetailsState => ({ results, selected: { ...target, name: 'Test', hasActiveRun: false, isChild: false }, sessions: [], task: null, loading: false, sessionsLoading: false, error: null,
+const state = (results: ControlResultsSnapshot | null): TaskDetailsState => ({ results, selected: { ...target, name: 'Test', hasActiveRun: false, isChild: false }, sessions: [], task: null, usage: null, loading: false, sessionsLoading: false, error: null, usageError: null,
   refresh: vi.fn(), loadEarlier: vi.fn(), loadMoreSessions: vi.fn(), selectSession: vi.fn(), selectCreatedSession: vi.fn() });
 beforeEach(() => { f.state = 'unlocked'; f.status.canRead = true; vi.stubGlobal('Blob', NodeBlob); f.requestFile.mockReset(); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });

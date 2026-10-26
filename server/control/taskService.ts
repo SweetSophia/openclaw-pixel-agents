@@ -60,6 +60,8 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     registered(target.agentId); if (!parseControlTarget(target)) throw new ControlError('invalid-target');
     const denied = deniedAuthority(); if (denied) throw new ControlError(denied);
     const response = controlRecord(await gateway.request('sessions.describe', { key: target.sessionKey, agentId: target.agentId }, signal));
+    registered(target.agentId);
+    const rejected = deniedAuthority(); if (rejected) throw new ControlError(rejected);
     const row = decorate(owned(response?.session, target.agentId), target.agentId); lifecycle(target, row); return row;
   }
   function listCursor(agentId: string, offset: number): string {

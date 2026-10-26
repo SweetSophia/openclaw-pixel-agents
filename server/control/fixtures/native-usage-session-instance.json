@@ -1,0 +1,41 @@
+{
+  "provenance": {
+    "kind": "isolated native handler",
+    "openclawVersion": "2026.10.3",
+    "handlerModule": "usage-DzR5MPhW.mjs",
+    "handlerSha256": "f9d05ab06cd0a47a9a6406ba30a052d09002b736709a33b8cd186e4982fb2f43",
+    "syntheticOnly": true,
+    "note": "Public identity/scope/counter fields retained; host paths, creator/origin metadata and unrelated aggregates omitted."
+  },
+  "request": {
+    "key": "agent:cylena:usage",
+    "agentId": "cylena",
+    "range": "all",
+    "groupBy": "instance",
+    "limit": 1,
+    "includeContextWeight": false
+  },
+  "response": {
+    "sessions": [
+      {
+        "key": "agent:cylena:usage",
+        "agentId": "cylena",
+        "sessionId": "00000000-0000-4000-8000-000000000323",
+        "scope": "instance",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "totalCost": 0,
+          "missingCostEntries": 0,
+          "computedAt": 1793023498273
+        }
+      }
+    ],
+    "cacheStatus": {
+      "status": "fresh"
+    }
+  }
+}

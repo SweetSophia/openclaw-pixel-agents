@@ -4,6 +4,7 @@ import { useTaskDetails } from './useTaskDetails';
 import type { ControlSession, ControlTaskSnapshot } from '../../shared/control';
 import { ControlApiError } from './api';
 import type { ControlResultsSnapshot } from '../../shared/controlResults';
+import type { ControlUsageSnapshot } from '../../shared/controlUsage';
 
 const f = vi.hoisted(() => ({ request: vi.fn(), generation: 1, state: 'unlocked', sourceState: 'ready' }));
 vi.mock('./ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: f.sourceState, canRead: f.sourceState === 'ready', canSend: false } }) }));
@@ -17,6 +18,71 @@ function setup(sessions = [a, b]) {
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); f.request.mockReset(); });
 describe('task selection and refresh lifecycle', () => {
+  const usage = (target = a): ControlUsageSnapshot => ({ target, source: { state: 'current', observedAt: 100 }, state: 'ready', tokens: { input: 0, output: 20 }, cost: {}, computedAt: 50 });
+  it('shares the selected conversation with Usage and polls no task/history/results on that tab', async () => {
+    setup(); vi.useFakeTimers(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/usage') ? usage(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(({ usageActive }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive, taskActive: !usageActive }), { initialProps: { usageActive: false } });
+    await act(() => vi.advanceTimersByTimeAsync(0)); act(() => result.current.selectSession(b)); await act(() => vi.advanceTimersByTimeAsync(0));
+    rerender({ usageActive: true }); await act(() => vi.advanceTimersByTimeAsync(0)); expect(result.current.usage?.target.sessionId).toBe(b.sessionId);
+    f.request.mockClear(); await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/usage'))).toHaveLength(1);
+    expect(f.request.mock.calls.some(([path]) => /\/(task|history|results)$/.test(String(path)))).toBe(false);
+  });
+  it('retains Usage computation/observation times on failure and clears it on identity or auth rejection', async () => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : usage(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: true, taskActive: false }));
+    await waitFor(() => expect(result.current.usage).toBeTruthy());
+    f.request.mockRejectedValue(new ControlApiError('unavailable')); await act(() => result.current.refresh());
+    expect(result.current.usage?.source).toEqual({ state: 'stale', observedAt: 100 }); expect(result.current.usage?.computedAt).toBe(50);
+    f.request.mockRejectedValue(new ControlApiError('session-changed')); await act(() => result.current.refresh()); expect(result.current.usage).toBeNull();
+    f.state = 'locked'; rerender(); expect(result.current.usage).toBeNull();
+  });
+  it('marks retained Usage stale as soon as the private source becomes unavailable', async () => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : usage(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(() => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: true, taskActive: false }));
+    await waitFor(() => expect(result.current.usage?.state).toBe('ready'));
+    f.sourceState = 'unavailable'; rerender();
+    expect(result.current.usage?.source).toEqual({ state: 'stale', observedAt: 100 });
+    f.sourceState = 'auth-error'; rerender(); expect(result.current.usage).toBeNull();
+  });
+  it.each(['usage', 'results'] as const)('does not relabel the untouched Task snapshot after a %s-only refresh failure', async mode => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/usage') ? usage(JSON.parse(String(init?.body))) : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(({ selectedMode }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: selectedMode === 'usage', resultsActive: selectedMode === 'results', taskActive: selectedMode === 'task' }), { initialProps: { selectedMode: 'task' as 'task' | 'results' | 'usage' } });
+    await waitFor(() => expect(result.current.task).toBeTruthy()); rerender({ selectedMode: mode });
+    await waitFor(() => expect(result.current[mode]).toBeTruthy());
+    f.request.mockImplementation(async (path: string) => { if (path.endsWith(`/${mode}`)) throw new ControlApiError('unavailable'); return page(); });
+    await act(() => result.current.refresh());
+    expect(result.current[mode]?.source).toEqual({ state: 'stale', observedAt: 100 });
+    expect(result.current.task?.source).toEqual({ state: 'current', observedAt: 100 });
+  });
+  it('clears only Usage after an optional-method denial but clears all snapshots after global authority loss', async () => {
+    setup(); f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : path.endsWith('/usage') ? usage(JSON.parse(String(init?.body))) : path.endsWith('/results') ? results(JSON.parse(String(init?.body))) : task(JSON.parse(String(init?.body))));
+    const { result, rerender } = renderHook(({ mode }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active: true, usageActive: mode === 'usage', resultsActive: mode === 'results', taskActive: mode === 'task' }), { initialProps: { mode: 'task' as 'task' | 'results' | 'usage' | 'conversation' } });
+    await waitFor(() => expect(result.current.task).toBeTruthy()); rerender({ mode: 'results' }); await waitFor(() => expect(result.current.results).toBeTruthy());
+    rerender({ mode: 'usage' }); await waitFor(() => expect(result.current.usage).toBeTruthy());
+    f.request.mockImplementation(async (path: string) => { if (path.endsWith('/usage')) throw new ControlApiError('usage-denied'); return page(); });
+    await act(() => result.current.refresh());
+    expect(result.current.usage).toBeNull(); expect(result.current.task?.source.state).toBe('current'); expect(result.current.results?.source.state).toBe('current');
+    expect(result.current.error).toBeNull(); expect(result.current.usageError?.code).toBe('usage-denied');
+    rerender({ mode: 'conversation' }); await act(() => result.current.refresh()); expect(result.current.error).toBeNull();
+    f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : usage(JSON.parse(String(init?.body))));
+    rerender({ mode: 'usage' }); await waitFor(() => expect(result.current.usage).toBeTruthy()); expect(result.current.usageError).toBeNull();
+    f.request.mockImplementation(async (path: string) => { if (path.endsWith('/usage')) throw new ControlApiError('scope-required'); return page(); });
+    await act(() => result.current.refresh()); expect(result.current.error?.code).toBe('scope-required');
+    expect(result.current.task).toBeNull(); expect(result.current.results).toBeNull(); expect(result.current.usage).toBeNull();
+  });
+  it.each(['tab', 'lock', 'hidden', 'target'])('suppresses a late Usage response after a %s change', async change => {
+    setup(); let finish!: (value: unknown) => void; let signal!: AbortSignal;
+    f.request.mockImplementation(async (path: string, init?: RequestInit) => path.includes('/sessions') ? page() : new Promise(resolve => { finish = resolve; signal = init!.signal!; }));
+    const { result, rerender, unmount } = renderHook(({ active }) => useTaskDetails({ agentId: 'cylena', initialSessionKey: a.sessionKey, active, usageActive: true, taskActive: false }), { initialProps: { active: true } });
+    await waitFor(() => expect(finish).toBeTypeOf('function')); const oldFinish = finish; const oldSignal = signal;
+    if (change === 'tab') rerender({ active: false });
+    else if (change === 'lock') { f.state = 'locked'; rerender({ active: true }); }
+    else if (change === 'hidden') { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); act(() => document.dispatchEvent(new Event('visibilitychange'))); }
+    else act(() => result.current.selectSession(b));
+    expect(oldSignal.aborted).toBe(true); await act(async () => oldFinish(usage(a))); expect(result.current.usage).toBeNull(); unmount();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  });
   const results = (target = a): ControlResultsSnapshot => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 100 }, sourceRevision: 'source-1', runState: 'running', responseKind: 'none', artifactState: 'ready', artifacts: [], artifactsTruncated: false });
   it.each(['sessions', 'task', 'results'])('times out a stalled %s read and frees its request slot', async stalled => {
     setup(); vi.useFakeTimers();
