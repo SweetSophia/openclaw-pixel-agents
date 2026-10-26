@@ -21,11 +21,14 @@ The older plans' completion checkboxes are reconciled with their merged PRs and
 recorded release ledgers. Fresh 2026-10-26 runtime acceptance is recorded below;
 older feature-specific results remain historical evidence.
 
-## Active closeout work
+## Closeout tasks
+
+This document reconciles the plans with their source and delivery evidence. The
+accompanying documentation PR records its own review and verification; its
+temporary branch, review deadline and merge state belong in the execution ledger.
 
 | Task | State and owner | Branch/PR | Evidence or next gate |
 | --- | --- | --- | --- |
-| Reconcile plans and keep this tracker current | In progress — Codex documentation agent | `docs/revamp-closeout-20261026`; PR pending independent review | Review the documentation diff, check links and source/evidence consistency, complete the review window, merge. |
 | Qualify dependency maintenance | Under review — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), Ready for review at `8301f68`, branch `chore/revamp-dependencies-20261026`. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322). | Initial independent review is clean; 1,407 local tests, Docker on Node 26.12.1 and all required CI/security checks pass. Kody and Sourcery completed; a clean fresh independent review replaced Kilo's provider-rate-limit failure. The review window ends **2026-10-26 18:25:23 UTC**; refresh the PR state and findings before merge. A further push restarts the window. |
 | Qualify the current runtime and roll out merged additions | Complete — Codex runtime audit/coordinator | Exact merged source `cf1dceb`; operator backup/rollback record retained | Independently reviewed recovery and runtime-only deployment passed fresh roster, private Usage/Results/Workspace, access-capability and tested-client checks. Saved preferences/layouts and current credentials were preserved. No real task was sent. |
 | Publish onboarding and Usage to npm | Deferred — separate release work | No publication included in this closeout | A versioned release must be qualified and explicitly tracked through the [release workflow](releases.md). The already published 1.6.0 package predates these additions. |
