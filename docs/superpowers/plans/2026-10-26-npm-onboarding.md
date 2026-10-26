@@ -41,4 +41,4 @@
 - [x] Extend the tarball smoke's exact file policy and consumer checks to require setup, first-run recovery and an enabled foreground install notice; verify failure before implementation.
 - [x] Add the output-only postinstall script and exact runtime file allowlist entries. Reconcile lockfile metadata without changing dependencies.
 - [x] Verify script-disabled setup and configured consumer startup, assets, key generation, ingest and restart persistence; verify enabled notice in a separate isolated install.
-- [ ] Run typecheck, coverage, build, package smoke, both audits, documentation links and README/image preservation checks. Review and commit; open a PR and address valid review feedback before merge. A new npm publication is a separate release step.
+- [x] Run typecheck, coverage, build, package smoke, both audits, documentation links and README/image preservation checks. Review and commit; open a PR and address valid review feedback before merge. A new npm publication is a separate release step.

@@ -1,5 +1,6 @@
 export const setupInstructions = `OpenClaw Pixel Agents setup
 Run this guide again: openclaw-pixel-agents setup
+From a source checkout's root: node bin/openclaw-pixel-agents.mjs setup
 
 1. Create a private configuration file, for example pixel-agents.env:
 
@@ -20,6 +21,8 @@ Run this guide again: openclaw-pixel-agents setup
 3. Optional Task, Results, Workspace and Conversation access:
    Generate an office key explicitly:
      openclaw-pixel-agents --generate-key
+   From a source checkout's root:
+     node bin/openclaw-pixel-agents.mjs --generate-key
    Add these settings to your private configuration:
      OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
      PIXEL_CONTROL_TOKEN=PASTE_THE_GENERATED_OFFICE_KEY
@@ -32,6 +35,8 @@ Run this guide again: openclaw-pixel-agents setup
 
 4. Start the office with your configuration:
      openclaw-pixel-agents --env-file /absolute/path/to/pixel-agents.env
+   From a source checkout's root:
+     node bin/openclaw-pixel-agents.mjs --env-file /absolute/path/to/pixel-agents.env
    Open http://localhost:3001 for the example above; adjust the URL if configured differently.
 
 This guide does not create files, generate keys, pair devices or start the office.

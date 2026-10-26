@@ -62,6 +62,12 @@ it('prints a repeatable setup guide without reading credentials, writing files o
   expect(result.stdout).not.toContain('synthetic-existing-value'); expect(result.stdout).not.toContain('synthetic-bootstrap-value');
   expect(readdirSync(f.directory)).toEqual([]);
 });
+it('gives source-checkout users copyable key-generation and startup commands', () => {
+  const result = fixture().run(['setup']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('node bin/openclaw-pixel-agents.mjs --generate-key');
+  expect(result.stdout).toContain('node bin/openclaw-pixel-agents.mjs --env-file /absolute/path/to/pixel-agents.env');
+});
 it.each(['', '  \t '])('explains a missing or blank startup origin without creating data (%j)', origin => {
   const f = fixture(); const result = f.run([], { CORS_ORIGIN: origin });
   expect(result.status).toBe(1); expect(result.stderr).toContain('openclaw-pixel-agents setup');
