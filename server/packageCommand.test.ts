@@ -4,7 +4,9 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
+import { loadControlConfig } from './control/config';
 
 const launcher = fileURLToPath(new URL('../bin/openclaw-pixel-agents.mjs', import.meta.url));
 const run = (...args: string[]) => spawnSync(process.execPath, [launcher, ...args], {
@@ -50,7 +52,7 @@ function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'pixel-onboarding-')); directories.push(directory);
   return { directory, run: (args: string[], extra: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [launcher, ...args], {
     encoding: 'utf8', timeout: 5000, cwd: directory,
-    env: { PATH: process.env.PATH, HOME: directory, USERPROFILE: directory, CORS_ORIGIN: '',
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: directory, USERPROFILE: directory, CORS_ORIGIN: '',
       PIXEL_CONTROL_TOKEN: 'synthetic-existing-value', OPENCLAW_GATEWAY_TOKEN: 'synthetic-bootstrap-value', ...extra },
   }) };
 }
@@ -67,6 +69,13 @@ it('gives source-checkout users copyable key-generation and startup commands', (
   expect(result.status).toBe(0);
   expect(result.stdout).toContain('node bin/openclaw-pixel-agents.mjs --generate-key');
   expect(result.stdout).toContain('node bin/openclaw-pixel-agents.mjs --env-file /absolute/path/to/pixel-agents.env');
+});
+it('keeps private access disabled when the optional setup example is copied before entering a generated key', () => {
+  const f = fixture(); const result = f.run(['setup']); expect(result.status).toBe(0);
+  const example = result.stdout.split('\n').filter(line => /^\s*(OPENCLAW_GATEWAY_URL|PIXEL_CONTROL_TOKEN|CONTROL_SEND_ENABLED)=/.test(line)).join('\n');
+  const environment = parseEnv(example);
+  expect(environment.PIXEL_CONTROL_TOKEN).toBe('');
+  expect(loadControlConfig(environment, f.directory).enabled).toBe(false);
 });
 it.each(['', '  \t '])('explains a missing or blank startup origin without creating data (%j)', origin => {
   const f = fixture(); const result = f.run([], { CORS_ORIGIN: origin });

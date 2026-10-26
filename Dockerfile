@@ -11,6 +11,7 @@ WORKDIR /app
 # .npmrc carries engine-strict=true; copy it before `npm ci` so the supported
 # Node engine range is enforced on this Node 26.8.1 image during the build.
 COPY package.json package-lock.json .npmrc ./
+COPY scripts/install-notice.mjs ./scripts/install-notice.mjs
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -23,6 +24,7 @@ ENV NODE_ENV=production
 
 # .npmrc copied here too, so engine-strict guards the runtime install as well.
 COPY package.json package-lock.json .npmrc ./
+COPY scripts/install-notice.mjs ./scripts/install-notice.mjs
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
