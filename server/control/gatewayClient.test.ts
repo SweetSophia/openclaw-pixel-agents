@@ -89,6 +89,16 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it('only permits the optional historical outcome reader when advertised, without changing scopes', async () => {
+    const old = await fixture(); const legacy = client(old.url); await ready(legacy);
+    await expect(legacy.request('audit.activity.list', { agentId: 'a', sessionKey: 'agent:a:x', runId: 'run', kind: 'agent_run', limit: 50 })).rejects.toMatchObject({ code: 'unsupported' });
+    expect(old.frames.some(frame => frame.method === 'audit.activity.list')).toBe(false); expect(legacy.status().canRead).toBe(true);
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, { features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'audit.activity.list'], events: [] } })
+      : { type: 'res', id: frame.id, ok: true, payload: { events: [] } })));
+    const gateway = client(host.url); await ready(gateway); const params = { agentId: 'a', sessionKey: 'agent:a:x', runId: 'run', kind: 'agent_run', limit: 50 };
+    await expect(gateway.request('audit.activity.list', params)).resolves.toEqual({ events: [] });
+    expect(host.frames.find(frame => frame.method === 'audit.activity.list')?.params).toEqual(params); expect(host.frames.find(frame => frame.method === 'connect')?.params.scopes).toEqual(['operator.read']);
+  });
   it('recovers a signed device-only connection after a native startup refusal without replacing its grant or scopes', async () => {
     let connections = 0;
     const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(++connections === 1 ? startupRefusal(frame.id) : writableHello(frame.id))); });

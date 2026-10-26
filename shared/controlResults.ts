@@ -17,7 +17,7 @@ export interface ControlResultsSnapshot {
   artifactState: 'ready' | 'unsupported' | 'unavailable'; artifacts: ControlArtifactSummary[]; artifactsTruncated: boolean;
 }
 export interface ControlFileRequest {
-  target: ControlTarget; scope: ControlArtifactScope; artifactId: string; intent: 'preview' | 'download';
+  target: ControlTarget; scope: ControlArtifactScope; artifactId: string; intent: 'preview' | 'download'; historical?: boolean;
 }
 export interface ControlExternalFile { kind: 'external'; url: string; host: string; title: string }
 
@@ -92,10 +92,10 @@ export function parseControlResultsSnapshot(value: unknown): ControlResultsSnaps
 }
 export function parseControlFileRequest(value: unknown): ControlFileRequest | null {
   if (controlByteSize(value) > CONTROL_LIMITS.responseBytes) return null;
-  const record = exact(value, ['target', 'scope', 'artifactId', 'intent']); if (!record) return null;
+  const record = exact(value, ['target', 'scope', 'artifactId', 'intent', 'historical']); if (!record || (record.historical !== undefined && typeof record.historical !== 'boolean')) return null;
   const parsedTarget = target(record.target); const parsedScope = scope(record.scope);
-  return parsedTarget && parsedScope && opaque(record.artifactId, 512) && oneOf(record.intent, ['preview', 'download'])
-    ? { target: parsedTarget, scope: parsedScope, artifactId: record.artifactId, intent: record.intent } : null;
+  return parsedTarget && parsedScope && (!record.historical || parsedScope.kind === 'run') && opaque(record.artifactId, 512) && oneOf(record.intent, ['preview', 'download'])
+    ? { target: parsedTarget, scope: parsedScope, artifactId: record.artifactId, intent: record.intent, ...(record.historical === undefined ? {} : { historical: record.historical as boolean }) } : null;
 }
 export function parseControlExternalFile(value: unknown): ControlExternalFile | null {
   const record = exact(value, ['kind', 'url', 'host', 'title']);

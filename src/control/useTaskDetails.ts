@@ -9,6 +9,7 @@ import { parseControlUsageSnapshot, type ControlUsageSnapshot } from '../../shar
 const TASK_READ_TIMEOUT_MS = 60000;
 
 export interface TaskDetailsState {
+  historicalRunId?: string;
   sessions: ControlSession[]; selected: ControlSession | null; task: ControlTaskSnapshot | null; results: ControlResultsSnapshot | null; usage: ControlUsageSnapshot | null;
   loading: boolean; sessionsLoading: boolean; error: ControlApiError | null; usageError: ControlApiError | null; selectionNote?: string; nextSessionsCursor?: string;
   selectSession(target: ControlTarget): void; refresh(signal?: AbortSignal): Promise<void>; loadMoreSessions(): Promise<void>; loadEarlier(): Promise<void>;

@@ -10,20 +10,40 @@ import type { ControlErrorCode } from '../../shared/control';
 import type { ArtifactService } from './artifactService';
 import type { ArtifactContent } from './artifactTransfer';
 import { createServer, request as httpRequest } from 'node:http';
+import type { RunHistoryService } from './runHistoryService';
 
 describe('private control routes', () => {
-  function fixture(enabled = true, sendFailure?: ControlErrorCode, artifacts?: ArtifactService) {
+  function fixture(enabled = true, sendFailure?: ControlErrorCode, artifacts?: ArtifactService, runHistory?: RunHistoryService) {
     const config = loadControlConfig(enabled ? { OPENCLAW_GATEWAY_URL: 'ws://localhost:18789', PIXEL_CONTROL_TOKEN: 'fixture-key' } : {}, '/tmp/fixture');
     const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: enabled, state: enabled ? 'ready' : 'disabled', canRead: enabled, canSend: false }), request: vi.fn(async () => ({ sessions: [] })), onEvent: () => () => {} };
     const tasks = createTaskService(gateway, () => new Set(['cylena']));
     const sends = sendFailure ? { send: vi.fn(async () => { throw new ControlError(sendFailure); }), close() {} } : undefined;
     if (sends) config.sendEnabled = true;
     vi.mocked(gateway.request).mockClear();
-    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, sends, artifacts }));
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, sends, artifacts, runHistory }));
     return { app, gateway, tasks };
   }
   const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1' };
   const fileInput = { target, scope: { kind: 'run', runId: 'run-1' }, artifactId: 'artifact-1', intent: 'download' };
+  it('authenticates and strictly validates run discovery without widening Usage or send selections', async () => {
+    const runs: RunHistoryService = { read: vi.fn<RunHistoryService['read']>(async input => ({ target, source: { state: 'current', observedAt: 100 }, runs: [], runsTruncated: false, messages: [], messagesTruncated: false, limitReached: false, loadedRecords: 0, selectedRunId: input.runId })), task: vi.fn(), close() {} };
+    const f = fixture(true, undefined, undefined, runs);
+    expect((await request(f.app).post('/api/control/agents/cylena/runs').send(target)).status).toBe(401); expect(runs.read).not.toHaveBeenCalled();
+    for (const body of [{ ...target, runId: '' }, { ...target, runId: 'bad\nrun' }, { ...target, agentId: 'other' }, { ...target, path: '/private/fixture' }, { ...target, refresh: true, cursor: 'old' }]) {
+      expect((await request(f.app).post('/api/control/agents/cylena/runs').auth('fixture-key', { type: 'bearer' }).send(body)).status).toBe(400);
+    }
+    const body = { ...target, runId: 'older' }; const result = await request(f.app).post('/api/control/agents/cylena/runs').auth('fixture-key', { type: 'bearer' }).send(body);
+    expect(result.status).toBe(200); expect(result.headers['cache-control']).toBe('no-store'); expect(runs.read).toHaveBeenCalledWith(body, expect.any(AbortSignal));
+    expect((await request(f.app).post('/api/control/agents/cylena/usage').auth('fixture-key', { type: 'bearer' }).send(body)).status).toBe(400);
+    expect((await request(f.app).post('/api/control/agents/cylena/send').auth('fixture-key', { type: 'bearer' }).send({ agentId: 'cylena', target: body, newConversation: false, message: 'Hello', idempotencyKey: 'fixture-send' })).status).toBe(400);
+    f.tasks.close();
+  });
+  it('passes an explicit historical run to Results without accepting arbitrary extra fields', async () => {
+    const f = filesFixture(); const body = { ...target, runId: 'older' };
+    expect((await request(f.app).post('/api/control/agents/cylena/results').auth('fixture-key', { type: 'bearer' }).send(body)).status).toBe(200);
+    expect(f.artifacts.read).toHaveBeenCalledWith(body, expect.any(AbortSignal));
+    expect((await request(f.app).post('/api/control/agents/cylena/results').auth('fixture-key', { type: 'bearer' }).send({ ...body, path: '/private/fixture' })).status).toBe(400); f.tasks.close();
+  });
   function filesFixture() {
     const bytes: ArtifactContent = { kind: 'bytes', data: Buffer.from('{"ok":true}'), mimeType: 'application/json', filename: 'Résumé 🧪.json', truncated: false };
     const artifacts: ArtifactService = { read: vi.fn<ArtifactService['read']>(async () => ({ target, scope: { kind: 'run', runId: 'run-1' }, source: { state: 'current', observedAt: 123 },

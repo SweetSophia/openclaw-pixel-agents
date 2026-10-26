@@ -14,7 +14,7 @@ export function TaskDetails({ agentId, initialSessionKey, active }: { agentId: s
   const state = useTaskDetails({ agentId, initialSessionKey, active });
   return <TaskDetailsView agentId={agentId} active={active} state={state} />;
 }
-export function TaskDetailsView({ agentId, active, state, children }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode }) {
+export function TaskDetailsView({ agentId, active, state, children, runNavigation, historical = false }: { agentId: string; active: boolean; state: TaskDetailsState; children?: React.ReactNode; runNavigation?: React.ReactNode; historical?: boolean }) {
   const access = useControlAccess();
   const selectorId = useId();
   const task = state.task && access.status?.canRead === false
@@ -32,10 +32,11 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
       {state.nextSessionsCursor && <button type="button" aria-disabled={state.sessionsLoading} onClick={() => { if (!state.sessionsLoading) void state.loadMoreSessions(); }}>Load more conversations</button>}
       {!state.sessionsLoading && !state.sessions.length && !state.error && access.status?.canRead && <p>No visible conversations for this agent yet.</p>}
     </div>
+    {runNavigation}
     {children}
     {!children && state.loading && !task && <p role="status">Loading verified task facts…</p>}
     {!children && task && <>
-      <p className="task-announcement" role="status" aria-label="Task updates" aria-live="polite" aria-atomic="true">{runLabels[task.runState]} task. {task.runId ? `Following run ${task.runId}.` : 'Task identity unavailable.'}</p>
+      <p className="task-announcement" role="status" aria-label="Task updates" aria-live="polite" aria-atomic="true">{runLabels[task.runState]} task. {task.runId ? `${historical ? 'Selected recorded run' : 'Following run'} ${task.runId}.` : 'Task identity unavailable.'}</p>
       <section className="task-state" aria-label="Run state">
         <div className="task-state-line"><strong className={`task-run-${task.runState}`}>{runLabels[task.runState]}</strong><span className="task-muted">{task.source.state === 'stale' ? 'Last known — connection unavailable' : 'Verified by OpenClaw'}</span></div>
         <p className="task-muted">{time(task.source.observedAt)}</p>
@@ -57,10 +58,10 @@ export function TaskDetailsView({ agentId, active, state, children }: { agentId:
       </section>
       {task.latestResponse && task.latestResponse.id !== task.result?.id && <section className="task-block"><h3>Latest visible response</h3><p className="task-text">{task.latestResponse.text}</p>{task.latestResponse.truncated && <p className="task-muted">Response text shortened for display.</p>}</section>}
       {task.result && <section className="task-block"><h3>Result</h3><p className="task-text">{task.result.text}</p>{task.result.truncated && <p className="task-muted">Result text shortened for display.</p>}</section>}
-      <section className="task-block"><h3>Related child sessions{task.childrenComplete ? ` (${task.children.length})` : ' — loaded subset'}</h3>
+      {!historical && <section className="task-block"><h3>Related child sessions{task.childrenComplete ? ` (${task.children.length})` : ' — loaded subset'}</h3>
         {task.children.length ? <ul className="task-children">{task.children.map(child => <li key={targetIdentity(child)}>{child.agentId !== agentId ? `${child.agentId} · ` : ''}{child.name} · {child.hasActiveRun === true ? 'Running' : child.hasActiveRun === false ? 'Not running' : 'State unknown'}</li>)}</ul> : <p className="task-muted">No related children in the loaded subset.</p>}
-      </section>
-      <p className="task-muted">Task facts follow this conversation. Office activity is a separate roster summary.</p>
+      </section>}
+      <p className="task-muted">{historical ? 'Only source-correlated records for the selected run are shown. Historical terminal state and timing may be unknown.' : 'Task facts follow this conversation. Office activity is a separate roster summary.'}</p>
     </>}
   </ControlAccessPanel>;
 }

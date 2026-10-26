@@ -6,15 +6,19 @@ import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import type { TaskService } from './taskService';
 import { downloadArtifact, type ArtifactContent } from './artifactTransfer';
 import { randomUUID } from 'node:crypto';
+import { isControlRunId } from '../../shared/controlRunHistory';
+import type { RunHistoryService } from './runHistoryService';
+
+type ResultSelection = ControlTarget & { runId?: string };
 
 export interface ArtifactService {
-  read(target: ControlTarget, signal?: AbortSignal): Promise<ControlResultsSnapshot>;
+  read(target: ResultSelection, signal?: AbortSignal): Promise<ControlResultsSnapshot>;
   file(input: ControlFileRequest, signal?: AbortSignal): Promise<ArtifactContent>;
   clear(): void; close(): void;
 }
 interface Cached { snapshot: ControlResultsSnapshot; at: number; valid: boolean }
 interface Flight { target: ControlTarget; controller: AbortController; users: number; observation: { dirty: boolean }; promise: Promise<ControlResultsSnapshot> }
-export function createArtifactService(gateway: ControlGateway, tasks: TaskService): ArtifactService {
+export function createArtifactService(gateway: ControlGateway, tasks: TaskService, history?: RunHistoryService): ArtifactService {
   const cache = new Map<string, Cached>(); const flights = new Map<string, Flight>();
   const contentWork = new Set<AbortController>();
   let closed = false; let epoch = 0;
@@ -34,10 +38,11 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
     for (const [key, entry] of cache) if (Date.now() - entry.at >= CONTROL_RESULT_LIMITS.metadataExpiryMs) cache.delete(key);
     while (cache.size > CONTROL_RESULT_LIMITS.metadataSelections) cache.delete(cache.keys().next().value!);
   }
-  function previous(target: ControlTarget, scope?: ControlArtifactScope): Cached | undefined {
+  function previous(target: ResultSelection, scope?: ControlArtifactScope): Cached | undefined {
     trim();
     return [...cache.values()].reverse().find(entry => artifactTargetIdentity(entry.snapshot.target) === artifactTargetIdentity(target)
-      && (!scope || sameArtifactScope(entry.snapshot.scope, scope)));
+      && (!scope || sameArtifactScope(entry.snapshot.scope, scope))
+      && (!target.runId || (entry.snapshot.scope.kind === 'run' && entry.snapshot.scope.runId === target.runId)));
   }
   const stale = (entry: Cached): ControlResultsSnapshot => ({ ...structuredClone(entry.snapshot), artifactState: 'unavailable', source: { ...entry.snapshot.source, state: 'stale' } });
   function project(task: ControlTaskSnapshot, artifacts: ControlArtifactSummary[], artifactState: ControlResultsSnapshot['artifactState'], truncated = false): ControlResultsSnapshot {
@@ -52,9 +57,12 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
     epoch++; cache.clear(); for (const flight of flights.values()) flight.controller.abort(); flights.clear();
     for (const controller of contentWork) controller.abort(); contentWork.clear();
   }
-  async function perform(target: ControlTarget, signal: AbortSignal, connection: string, observation: { dirty: boolean }): Promise<ControlResultsSnapshot> {
+  const selectedTask = (target: ResultSelection, signal: AbortSignal, fresh = false) => target.runId
+    ? history ? history.task(target, target.runId, signal) : Promise.reject(new ControlError('unsupported'))
+    : tasks.getTask(target, signal, fresh ? { fresh: true, coalesce: false } : undefined);
+  async function perform(target: ResultSelection, signal: AbortSignal, connection: string, observation: { dirty: boolean }): Promise<ControlResultsSnapshot> {
     guard(signal, connection); let task: ControlTaskSnapshot;
-    try { task = await tasks.getTask(target, signal); }
+    try { task = await selectedTask(target, signal); }
     catch (error) {
       guard(signal, connection);
       const old = previous(target);
@@ -79,7 +87,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
       }
     }
     guard(signal, connection);
-    const current = await tasks.getTask(task.target, signal, { fresh: true, coalesce: false });
+    const current = await selectedTask({ ...task.target, ...(target.runId ? { runId: target.runId } : {}) }, signal, true);
     guard(signal, connection);
     if (artifactTargetIdentity(current.target) !== artifactTargetIdentity(task.target) || !sameArtifactScope(artifactScope(current), scope)) throw new ControlError('session-changed');
     if (current.source.state !== 'current') return old ? stale(old) : project(current, [], 'unavailable');
@@ -122,7 +130,11 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
       const combined = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]); const connection = stamp();
       const timer = setTimeout(() => controller.abort(), CONTROL_RESULT_LIMITS.contentDeadlineMs); timer.unref?.();
       const verify = async () => {
-        guard(combined, connection); const task = await tasks.getTask(input.target, combined, { fresh: true, coalesce: false, requireUnchangedObservation: true }); guard(combined, connection);
+        guard(combined, connection);
+        const task = input.historical && input.scope.kind === 'run'
+          ? history ? await history.task(input.target, input.scope.runId, combined) : (() => { throw new ControlError('unsupported'); })()
+          : await tasks.getTask(input.target, combined, { fresh: true, coalesce: false, requireUnchangedObservation: true });
+        guard(combined, connection);
         if (task.source.state !== 'current') throw new ControlError('unavailable');
         if (!sameArtifactScope(artifactScope(task), input.scope)) throw new ControlError('session-changed');
       };
@@ -133,10 +145,11 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
       } finally { clearTimeout(timer); contentWork.delete(controller); }
     },
     read(input, signal) {
-      const target = parseControlTarget(input);
+      const parsed = parseControlTarget(input);
+      const target = parsed && (input.runId === undefined || isControlRunId(input.runId)) ? { ...parsed, ...(input.runId ? { runId: input.runId } : {}) } : null;
       if (!target) return Promise.reject(new ControlError('invalid-target'));
       if (closed || signal?.aborted) return Promise.reject(new ControlError('unavailable'));
-      const connection = stamp(); const key = JSON.stringify([artifactTargetIdentity(target), connection]);
+      const connection = stamp(); const key = JSON.stringify([artifactTargetIdentity(target), target.runId ?? null, connection]);
       let flight = flights.get(key);
       if (!flight) {
         const controller = new AbortController(); const observation = { dirty: false };

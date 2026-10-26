@@ -12,6 +12,7 @@ export interface TaskService {
   listSessions(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ControlSessionPage>;
   getTask(input: ControlTaskRequest, signal?: AbortSignal, options?: TaskReadOptions): Promise<ControlTaskSnapshot>;
   verifyTarget(target: ControlTarget, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  verifyHistoryInfo(target: ControlTarget, value: unknown): void;
   resolveSession(agentId: string, key: string, signal?: AbortSignal): Promise<ControlSession | null>;
   clear(): void; close(): void;
 }
@@ -63,6 +64,13 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
     registered(target.agentId);
     const rejected = deniedAuthority(); if (rejected) throw new ControlError(rejected);
     const row = decorate(owned(response?.session, target.agentId), target.agentId); lifecycle(target, row); return row;
+  }
+  function verifyHistoryInfo(target: ControlTarget, value: unknown): void {
+    registered(target.agentId); const info = controlRecord(value); if (!info) throw new ControlError('invalid-source');
+    for (const [field, expected] of [['agentId', target.agentId], ['key', target.sessionKey], ['sessionKey', target.sessionKey], ['sessionId', target.sessionId], ['lifecycleRevision', target.lifecycleRevision]] as const) {
+      if (info[field] !== undefined && info[field] !== expected) throw new ControlError('session-changed');
+    }
+    if (info.branchId !== undefined && branchIdentity(target.agentId, target.sessionKey, info.branchId) !== target.branchId) throw new ControlError('session-changed');
   }
   function listCursor(agentId: string, offset: number): string {
     const body = Buffer.from(JSON.stringify({ agentId, offset, expires: Date.now() + 60000 })).toString('base64url');
@@ -222,7 +230,7 @@ export function createTaskService(gateway: ControlGateway, registeredAgentIds: (
   });
   if (gateway.status().canRead) void gateway.request('sessions.subscribe', {}).catch(() => {});
   return {
-    listSessions, verifyTarget,
+    listSessions, verifyTarget, verifyHistoryInfo,
     async resolveSession(agentId, key, signal) {
       registered(agentId); const denied = deniedAuthority(); if (denied) throw new ControlError(denied);
       const response = controlRecord(await gateway.request('sessions.describe', { key, agentId }, signal));

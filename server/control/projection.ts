@@ -114,7 +114,7 @@ function projectActivities(rows: Record<string, unknown>[], runId: string | unde
 
 export interface ProjectTaskInput {
   target: ControlTarget; session: unknown; history: unknown; children: unknown[]; childrenComplete: boolean;
-  loadedRecords: number; nextCursor?: string; observedAt: number;
+  loadedRecords: number; nextCursor?: string; observedAt: number; selectedRunId?: string;
 }
 export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
   const target = parseControlTarget(input.target);
@@ -132,9 +132,11 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
   }
   const hasActiveRun = typeof session.hasActiveRun === 'boolean' ? session.hasActiveRun : null;
   const inFlight = controlRecord(history.inFlightRun);
-  const runId = hasActiveRun === true ? opaque(inFlight?.runId) : hasActiveRun === false ? opaque(session.lastRunId) : undefined;
-  let runState: ControlRunState = hasActiveRun === true ? 'running' : runId ? 'not-running' : 'unknown';
-  if (runId && hasActiveRun === false) {
+  const currentRunId = hasActiveRun === true ? opaque(inFlight?.runId) : hasActiveRun === false ? opaque(session.lastRunId) : undefined;
+  const runId = input.selectedRunId ?? currentRunId;
+  const currentRun = !input.selectedRunId || input.selectedRunId === currentRunId;
+  let runState: ControlRunState = currentRun ? hasActiveRun === true ? 'running' : runId ? 'not-running' : 'unknown' : 'unknown';
+  if (currentRun && runId && hasActiveRun === false) {
     if (session.abortedLastRun === true || session.status === 'aborted' || session.status === 'cancelled') runState = 'aborted';
     else if (session.status === 'completed') runState = 'completed';
     else if (session.status === 'failed' || session.status === 'error') runState = 'failed';
@@ -144,7 +146,7 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
   const messages = rows.map(projectMessage).filter((item): item is ProjectedMessage => item !== null);
   const reversed = [...messages].reverse();
   const matchedRequest = runId ? reversed.find(item => item.value.role === 'user' && item.value.runId === runId) : undefined;
-  const request = matchedRequest ?? reversed.find(item => item.value.role === 'user');
+  const request = matchedRequest ?? (input.selectedRunId ? undefined : reversed.find(item => item.value.role === 'user'));
   const response = reversed.find(item => item.value.role === 'assistant' && (!runId || item.value.runId === runId));
   const childSessions = input.children.map(value => {
     const child = controlRecord(value);
@@ -157,8 +159,8 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
     request: request?.value, requestAssociation: matchedRequest ? 'run' : request ? 'latest-recorded' : 'unknown',
     requestState: matchedRequest || (!runId && request) ? 'found' : input.loadedRecords >= CONTROL_LIMITS.maximumHistory ? 'limit-reached'
       : history.hasMore === false ? 'unavailable' : 'not-loaded',
-    startedAt: runId ? timestamp(hasActiveRun === true ? inFlight?.startedAt : session.startedAt) : undefined,
-    endedAt: runId && hasActiveRun === false ? timestamp(session.endedAt) : undefined,
+    startedAt: currentRun && runId ? timestamp(hasActiveRun === true ? inFlight?.startedAt : session.startedAt) : undefined,
+    endedAt: currentRun && runId && hasActiveRun === false ? timestamp(session.endedAt) : undefined,
     latestResponse: response?.value,
     result: runState === 'completed' && response && !response.hasTools && response.stopReason !== 'toolUse' ? response.value : undefined,
     activity: projectActivities(rows, runId), children: childSessions.slice(0, CONTROL_LIMITS.sessions),
