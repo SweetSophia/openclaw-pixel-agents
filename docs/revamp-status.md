@@ -1,6 +1,7 @@
 # Revamp status
 
-Updated 2026-10-26 against source revision `cf1dceb` (Usage PR #323).
+Updated 2026-10-26 against source revision `90e78a7` (Usage PR #323 and dependency
+PR #324). The separately verified live runtime is `cf1dceb`.
 This tracker separates merged source, recorded deployment evidence and work still
 requiring qualification. A source merge does not establish what a live office or
 an already published npm package is running.
@@ -29,7 +30,7 @@ temporary branch, review deadline and merge state belong in the execution ledger
 
 | Task | State and owner | Branch/PR | Evidence or next gate |
 | --- | --- | --- | --- |
-| Qualify dependency maintenance | Under review — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), Ready for review at `8301f68`, branch `chore/revamp-dependencies-20261026`. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322). | Initial independent review is clean; 1,407 local tests, Docker on Node 26.12.1 and all required CI/security checks pass. Kody and Sourcery completed; a clean fresh independent review replaced Kilo's provider-rate-limit failure. The review window ends **2026-10-26 18:25:23 UTC**; refresh the PR state and findings before merge. A further push restarts the window. |
+| Qualify dependency maintenance | Merged and source/package-verified — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), squash merge `90e78a7` on 2026-10-26 at 18:27:11 UTC. Combines the updates from original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322). | The full 15-minute review window elapsed before merge. Independent review, 1,407 local tests, package smoke, Docker on Node 26.12.1, required CI/security checks, Kody and Sourcery passed. A clean fresh independent review replaced Kilo's provider-rate-limit failure. The merged tree matches reviewed head `8301f68`. Existing live host dependencies were not replaced by this merge. |
 | Qualify the current runtime and roll out merged additions | Complete — Codex runtime audit/coordinator | Exact merged source `cf1dceb`; operator backup/rollback record retained | Independently reviewed recovery and runtime-only deployment passed fresh roster, private Usage/Results/Workspace, access-capability and tested-client checks. Saved preferences/layouts and current credentials were preserved. No real task was sent. |
 | Publish onboarding and Usage to npm | Deferred — separate release work | No publication included in this closeout | A versioned release must be qualified and explicitly tracked through the [release workflow](releases.md). The already published 1.6.0 package predates these additions. |
 
@@ -55,6 +56,10 @@ client build. The collector remains active and retired previews remain disabled.
 Native Chromium confirmed six tabs, a locked Usage panel until the access key is
 entered, and no browser exceptions. No real task was sent and npm remains 1.6.0;
 onboarding and Usage publication remains separate release work.
+
+The later dependency merge `90e78a7` is qualified source and package/Docker work;
+it was not installed into the existing live host's `node_modules`. It does not
+change the runtime acceptance revision recorded above.
 
 ## Future capabilities
 
