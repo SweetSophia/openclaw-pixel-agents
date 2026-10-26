@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-# Pin both stages to the Node 26.8.1 alpine *index* digest so a rebuilt
+# Pin both stages to the same Node alpine *index* digest so a rebuilt
 # floating tag cannot silently change the build or runtime image.
 # Dependabot's docker ecosystem refreshes these FROM lines.
 
@@ -9,7 +9,7 @@
 FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS builder
 WORKDIR /app
 # .npmrc carries engine-strict=true; copy it before `npm ci` so the supported
-# Node engine range is enforced on this Node 26.8.1 image during the build.
+# Node engine range is enforced on the pinned image during the build.
 COPY package.json package-lock.json .npmrc ./
 COPY scripts/install-notice.mjs ./scripts/install-notice.mjs
 RUN npm ci
