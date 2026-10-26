@@ -19,7 +19,7 @@ npm start                                # production build; build first
 ```
 
 - Vitest runs in jsdom, loads `src/test/setup.ts`, and excludes `dist/**` plus `.worktrees/**`. Coverage floors (repository-wide, all four evaluated together): branches 36, functions 37, lines 41, statements 39.
-- CI: `codeql.yml` scans JS/TS on every push/PR plus weekly on `main`; `ci.yml` runs typecheck → test → test:coverage → build → `npm audit --omit=dev --audit-level=high` (gate) + `npm audit --audit-level=moderate` (full-tree moderate-or-higher advisory blocker, issue #168); `dependency-review-action` runs on PRs only and fails on high/critical additions. Browser-level geometry and hit-testing are not covered in CI; follow the manual browser-testing steps in `CONTRIBUTING.md` (run `npm run dev` and verify in the browser).
+- CI: `codeql.yml` scans JS/TS on every push/PR plus weekly on `main`; `ci.yml` runs typecheck → test → test:coverage → build → package installation/startup smoke → `npm audit --omit=dev --audit-level=high` (gate) + `npm audit --audit-level=moderate` (full-tree moderate-or-higher advisory blocker, issue #168). Its parallel Docker job builds the image and probes real API/SPA startup with bounded retries and container cleanup. `server/dockerfile.test.ts` guards the runtime's script-free production dependency installation. `dependency-review-action` runs on PRs only and fails on high/critical additions. Reproduce the Docker gate with the commands in `CONTRIBUTING.md`. Browser-level geometry and hit-testing are not covered in CI; follow its manual browser-testing steps (run `npm run dev` and verify in the browser).
 - `npm start` sets `NODE_ENV=production` and runs the non-obvious path `dist/server/server/index.js`.
 
 ## Real Boundaries

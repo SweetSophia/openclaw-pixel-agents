@@ -55,7 +55,30 @@ The dev server runs on `http://localhost:3000` and proxies API requests to the b
    ```
 5. **Open a PR** with a description of what changed and why
 
-Pull requests and updates to `main` run the same gate in GitHub Actions.
+Pull requests and updates to `main` run that gate plus a separate Docker build/startup job in GitHub Actions. The Docker dependency policy is covered by `server/dockerfile.test.ts`, including the requirement that production packages do not need install hooks. With Docker available and port 3001 free, reproduce the container check from a clean checkout:
+
+```sh
+(
+  set -eu
+  docker build --tag openclaw-pixel-agents:ci .
+  container_id=$(docker run --detach --publish 127.0.0.1:3001:3001 \
+    --env CORS_ORIGIN=http://127.0.0.1:3001 \
+    --env DATA_SOURCE=ingest --env INGEST_API_TOKEN=ci-synthetic-ingest-only \
+    openclaw-pixel-agents:ci)
+  cleanup() {
+    docker logs "$container_id" || true
+    docker rm --force "$container_id" > /dev/null || true
+  }
+  trap cleanup EXIT
+  curl --fail --silent --show-error --retry 30 --retry-all-errors \
+    --retry-delay 1 --connect-timeout 2 --max-time 2 \
+    http://127.0.0.1:3001/api/status
+  curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3001/
+)
+```
+
+This uses synthetic configuration and no host data volumes or Gateway credentials; the subshell removes its container on success or failure. See [.github/workflows/ci.yml](.github/workflows/ci.yml) for the CI equivalent.
+
 Repository-wide coverage includes production TypeScript under `src/`, `server/`,
 and `shared/`; the baseline floors are 39% statements, 36% branches, 37%
 functions, and 41% lines. Pull requests also receive a dependency review that
