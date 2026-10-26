@@ -104,6 +104,18 @@ Preview and Download load bytes only after an explicit action. Native `agents.wo
 
 Requests stay relative to the agent's workspace. The Gateway owns filesystem confinement; the office never reads host paths as a fallback. Each file action freshly checks the current parent page, size, modification time, agent and connection revision before exposing bytes. Folder changes, observed file/source changes, closing, Lock and hidden pages cancel work and clear previews. Workspace content stays out of public sockets and browser storage. Native list/get behavior was checked with installed OpenClaw handlers against isolated synthetic files; real framing, service and authenticated-route integration are also covered by controlled fixtures. No real agent task was submitted.
 
+## Conversation usage
+
+Source builds include a read-only **Usage** tab; it awaits an npm release and is not included in published 1.6.0. It follows the conversation selected in Task/Conversation/Results and uses the same office key and `operator.read` device grant. No provider billing credentials are needed.
+
+The optional native `sessions.usage` method supplies recorded input, output, cache-read, cache-write and total tokens over the selected session instance's retained history. These are cumulative recorded model-call totals, not current-task totals, provider quotas, or a lifetime billing ledger. Missing counters display **Not reported**; explicit reported zero stays zero. Earlier instances after resets are not grouped into the selected instance.
+
+Costs are USD values reported or estimated by OpenClaw, not a provider invoice. Missing pricing and incomplete/refreshing source caches remain visibly partial; a zero subtotal with missing prices is not shown as a free session. The office does not calculate its own model prices. The panel distinguishes its source-check time from the Gateway's original usage-computation time, when supplied.
+
+The model and context-window limit come from the verified conversation row. That row does not expose an explicit occupied-context measurement in the supported Gateway contract, so **Occupied context** says **Not reported by this Gateway**. Cumulative usage is never substituted into a context percentage.
+
+Usage refreshes every five seconds while its tab and page are visible, plus manual Refresh. It does not read task transcripts. Close, tab/selection changes, Lock and hidden pages cancel pending reads. Same-target refresh failures retain labelled last-known metrics with their original timestamps; identity or access failures clear them. Usage never enters public roster/socket payloads or browser storage. Gateways without the optional method show an unsupported state while other panels continue to work.
+
 ## Docker
 
 The runtime image includes the key generator. From the repository root, build your image with an explicit tag, then generate a key without needing Node on the host:
