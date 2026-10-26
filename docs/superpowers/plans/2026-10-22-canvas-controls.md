@@ -1,5 +1,7 @@
 # Canvas Controls Implementation Plan
 
+Status (2026-10-26): source and native browser qualification merged in [PR #293](https://github.com/SweetSophia/openclaw-pixel-agents/pull/293). The controls were included in subsequent backed-up, verified Task and Workspace runtimes. Current rollout qualification is tracked separately in [revamp status](../../revamp-status.md).
+
 > **For agentic workers:** Use superpowers:executing-plans to implement and verify each slice.
 
 **Goal:** Fit, zoom and pan the office on desktop and touch screens without changing game coordinates or saved layouts.
@@ -51,4 +53,4 @@ Files: `PixelOffice.tsx`, `PixelOffice.css`, `GameEngine.ts`, `EditorController.
 - [x] Use a copied-data preview in Chromium at 320, 768, 1024 and 1440px; check HUD bounds, Fit/zoom/pan, touch pinch, keyboard, selection, furniture placement/drag/rotation and resize. Twelve room switches retain zoom, resolved seats and valid floor positions without changing saved layout data.
 - [x] Review the complete diff and open PR #293 with precise verification evidence.
 - [x] Address valid bot findings: scrollable workspace and minimum stage for short windows, Safari Pan styles, scoped Escape/context-menu handling, guarded CSS writes, and stronger gesture/lifecycle tests. Verify native scrolling and hit-testing at 640×320 and 320×480 with the palette expanded.
-- [ ] Follow the existing merge/deployment authorization after current checks and reviews finish, backing up current live data first.
+- [x] Follow the existing merge/deployment authorization after current checks and reviews finish, backing up current live data first. Source merged in PR #293; subsequent Task/Workspace rollout records establish preserved-state runtime delivery.

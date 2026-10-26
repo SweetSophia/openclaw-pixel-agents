@@ -1,5 +1,7 @@
 # Workspace Panel Implementation Plan
 
+Status (2026-10-26): complete in [PR #310](https://github.com/SweetSophia/openclaw-pixel-agents/pull/310), followed by reliability fixes in PRs #311–#313 and [1.6.0](../../releases/1.6.0.md). The PR records backed-up deployment and live acceptance with saved state and current credentials preserved. Current rollout qualification is separate in [revamp status](../../revamp-status.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Browse the selected agent's workspace, preview bounded text/images and download supported native files from the office.
@@ -64,5 +66,5 @@
 - [x] Run native browser checks for desktop/phone/short viewport, keyboard tabs and modal restoration, empty/current/stale/unsupported states, text/image/download actions and cleanup. Use a controlled fixture to avoid exposing live private filenames/content in screenshots.
 - [x] Document that Workspace is agent-wide, read-only, native-limited and independent of conversation selection; explain bounds and old Gateway behavior.
 - [x] Run `npm run typecheck`, `npm run test:coverage`, `npm run build`, `npm run test:package`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate`; expected all PASS and zero vulnerabilities.
-- [ ] Commit final evidence/docs, then request one fresh whole-branch review against this plan/spec and inspect current-head bot comments. Address valid findings with targeted regressions before merging under standing authorization.
-- [ ] Deploy through the existing backup/runtime-only path only after checks/review pass; preserve state and collector, keep retired previews disabled and verify fresh roster/private read availability. No new npm publication without release authorization.
+- [x] Commit final evidence/docs, then request one fresh whole-branch review against this plan/spec and inspect current-head bot comments. Address valid findings with targeted regressions before merging under standing authorization.
+- [x] Deploy through the existing backup/runtime-only path only after checks/review pass; preserve state and collector, keep retired previews disabled and verify fresh roster/private read availability. No new npm publication without release authorization. PR #310 and its retained release ledger record successful runtime-only deployment and live Workspace/Results acceptance.
