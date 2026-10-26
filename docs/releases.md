@@ -12,7 +12,7 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
 
 ## Prepare a version
 
-1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. Add `docs/releases/<version>.md` to the same pull request with that version's release notes. Update README installation examples and version-specific availability notices, including the setup/install-message "next release" wording, for the version being published. The first npm release was `1.4.0`, continuing the existing GitHub release series after `v1.3.5`. Results/Files arrived in `1.5.0`; the [1.6.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.6.0.md) cover Workspace browsing and reliability improvements.
+1. Update `package.json` and the root entry in `package-lock.json` together in a pull request. `npm version <version> --no-git-tag-version` can do this. Add `docs/releases/<version>.md` to the same pull request with that version's release notes. Update README installation examples and version-specific availability notices for the version being published. The first npm release was `1.4.0`, continuing the existing GitHub release series after `v1.3.5`. Results/Files arrived in `1.5.0`, Workspace in `1.6.0`, and [1.7.0](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.7.0.md) adds Usage, onboarding instructions and transient Gateway-startup recovery.
 2. Run the checks:
 
    ```sh
@@ -26,13 +26,13 @@ The token reaches only the final publish step. The workflow requests an OIDC ide
    ```
 
 3. Merge after required checks and reviews pass.
-4. Create a **draft** GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.6.0`**. Copy the matching `docs/releases/<version>.md` into the release body (for this release, `docs/releases/1.6.0.md`). Finalize and review the notes before publishing the stable release, which triggers npm publication. Drafts and prereleases do not publish to npm.
+4. Create a **draft** GitHub Release targeting the merged `main` commit, with a tag exactly matching the version, e.g. **`v1.7.0`**. Copy the matching `docs/releases/<version>.md` into the release body (for this release, `docs/releases/1.7.0.md`). Finalize and review the notes before publishing the stable release, which triggers npm publication. Drafts and prereleases do not publish to npm.
 
 Publishing the release authorizes npm publication. Protect release tags and restrict release publishing according to the repository's maintainer policy.
 
 ## What gets published
 
-Version-specific notes live in `docs/releases/` on GitHub. Their installation examples pin that exact release; general README examples select compatible updates. Copy the notes into the GitHub Release body as described above; the publish workflow does not do this automatically. They are not included in the npm package; the README links to them on GitHub. The package includes the installation, configuration, editor, task-access and publishing guides.
+Version-specific notes live in `docs/releases/` on GitHub. Their installation examples pin that exact release; general README examples use the registry's `latest` dist-tag so they remain installable before a prepared version is published. A source merge does not move that tag. Copy the notes into the GitHub Release body as described above; the publish workflow does not do this automatically. They are not included in the npm package; the README links to them on GitHub. The package includes the installation, configuration, editor, task-access and publishing guides.
 
 [The workflow](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.github/workflows/publish.yml) verifies tag/version equality and `main` ancestry, then installs, type-checks, tests coverage, builds and audits.
 
@@ -45,8 +45,8 @@ It then publishes **the same tested tarball** to the public npm registry with pr
 Check Actions, then verify the registry separately, substituting the released version:
 
 ```sh
-npm view openclaw-pixel-agents@1.6.0 version dist.integrity dist.tarball
-npm exec --yes --package=openclaw-pixel-agents@1.6.0 -- openclaw-pixel-agents --version
+npm view openclaw-pixel-agents@1.7.0 version dist.integrity dist.tarball
+npm exec --yes --package=openclaw-pixel-agents@1.7.0 -- openclaw-pixel-agents --version
 ```
 
 Metadata and tarball availability can propagate separately. Allow a short bounded retry after an accepted upload; never republish an accepted immutable version. A successful upload alone does not prove that the public package installs. If a run fails during publication, check whether npm accepted the version before retrying. Corrected artifacts need a new version.

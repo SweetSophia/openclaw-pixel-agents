@@ -1,6 +1,6 @@
 {
   "name": "openclaw-pixel-agents",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Pixel art office dashboard for OpenClaw agents",
   "private": false,
   "bin": {

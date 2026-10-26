@@ -16,7 +16,7 @@ A live pixel-art office for [OpenClaw](https://github.com/openclaw/openclaw): se
 - **Have a conversation.** Read text history, send a message, queue a follow-up while an agent is busy, or start a new conversation. Sending is optional and requires a separately approved write grant.
 - **Collect results and files.** The Results tab shows a verified result or clearly labels the latest response when completion is unconfirmed. Preview delivered text and still PNG/JPEG/WebP images, download other supported files, or explicitly open an external link after checking its host. It follows the selected conversation and task; it is not a workspace file browser.
 - **Browse agent workspaces.** The read-only Workspace tab offers folders, breadcrumbs, paginated file lists, text/image previews and supported downloads for the selected agent. It works without a conversation and uses the existing office key. Requires version **1.6.0 or newer**.
-- **Inspect conversation usage.** Source builds add a read-only Usage tab with recorded input/output/cache tokens, Gateway-reported cost estimates, model and context-window limit. Partial pricing and missing metrics are explicit; cumulative tokens are not treated as occupied context. This feature awaits an npm release and is not in published 1.6.0. See [Usage scope](docs/task-access-setup.md#conversation-usage).
+- **Inspect conversation usage.** The read-only Usage tab shows recorded input/output/cache tokens, Gateway-reported cost estimates, model and context-window limit. Partial pricing and missing metrics are explicit; cumulative tokens are not treated as occupied context. Requires version **1.7.0 or newer**. See [Usage scope](docs/task-access-setup.md#conversation-usage).
 - **Build your office.** Search 25 furniture types, place, drag, rotate and delete items, and save multiple layouts. Footprint previews show overlap and boundaries; layouts auto-save after edits.
 - **Move around comfortably.** Fit, zoom, pan, keyboard navigation and pinch gestures work with the responsive office view and mobile drawers.
 - **Make agents recognizable.** Choose body, hair and outfit, edit tags, and show or hide agents. Customizations live on the server, sync between browsers and survive restarts when the data directory is retained.
@@ -56,29 +56,29 @@ The example uses **http://localhost:3001**. The server does not load `.env` auto
 
 ### npm installation
 
-The package is available on npm with a launcher and release workflow. Workspace browsing requires **1.6.0 or newer**; see the [1.6.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.6.0.md) for features and upgrade details. Results/Files is available from version 1.5.0.
+The package includes a launcher and release workflow. Usage, setup instructions and transient Gateway-startup recovery require **1.7.0 or newer**; see the [1.7.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.7.0.md) for features and upgrade details. Workspace browsing is available from 1.6.0 and Results/Files from 1.5.0.
 
 ```sh
-npm install --global "openclaw-pixel-agents@^1.6.0"
+npm install --global openclaw-pixel-agents@latest
 openclaw-pixel-agents --help
 openclaw-pixel-agents --env-file /absolute/path/to/.env
 ```
 
-Alternatively, use `npx --yes "openclaw-pixel-agents@^1.6.0" --env-file /absolute/path/to/.env`. Both examples select version 1.6.0 or a newer compatible 1.x release. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
+Alternatively, use `npx --yes openclaw-pixel-agents@latest --env-file /absolute/path/to/.env`. Both examples select the npm registry's current `latest` release. Check the installed version before using features with a newer minimum version above; merging a release-preparation PR does not publish that version. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
 
 The launcher runs in production mode. Its default data directory is **`~/.openclaw-pixel-agents`**, outside the installation, so package upgrades do not replace saved layouts or appearances. Set `DATA_DIR` explicitly for a service account or multiple offices. Obtain an [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example) and follow the [configuration reference](docs/configuration.md).
 
 ### Setup instructions
 
-The source launcher includes a repeatable setup guide:
+The launcher includes a repeatable setup guide, available in npm 1.7.0 and newer:
 
 ```sh
-node bin/openclaw-pixel-agents.mjs setup
+openclaw-pixel-agents setup
 ```
 
-It explains private configuration, persistent storage, the collector, optional task-key/device pairing, startup and the browser URL. It does not modify files, generate credentials or start the office. A launch without `CORS_ORIGIN` also prints the guide and exits with a configuration error. Configured launches continue to use `--env-file` or the supplied environment as before. The `setup` command is not included in npm 1.6.0; it will be available in the next release as `openclaw-pixel-agents setup` (or `npx openclaw-pixel-agents setup` for a local installation).
+It explains private configuration, persistent storage, the collector, optional task-key/device pairing, startup and the browser URL. It does not modify files, generate credentials or start the office. A launch without `CORS_ORIGIN` also prints the guide and exits with a configuration error. Configured launches continue to use `--env-file` or the supplied environment as before. From a source checkout, run `node bin/openclaw-pixel-agents.mjs setup`; for a local npm installation, use `npx openclaw-pixel-agents setup`.
 
-The next release also includes a short installation notice pointing to the guide. npm can hide lifecycle output or disable scripts; the first-run guide and `setup` command work independently of that notice. The install script only prints instructions and does not generate keys, modify configuration or start a service.
+Version 1.7.0 also includes a short installation notice pointing to the guide. npm can hide lifecycle output or disable scripts; the first-run guide and `setup` command work independently of that notice. The install script only prints instructions and does not generate keys, modify configuration or start a service.
 
 ## Create your task-access key
 
@@ -136,7 +136,7 @@ If your OpenClaw installation uses different IDs, adapt the registry in a source
 
 **Appearances:** use the agent's palette button and Apply. Portraits, the editor and map share the same recipe. A failed save is reported; keep the same `DATA_DIR` across rebuilds and restarts. The default source-runtime paths differ between development and compiled startup, so set the directory explicitly for production.
 
-**Tasks and conversations:** select an agent and switch between Task, Conversation, Results, Workspace and Agent. The selected conversation stays selected as new work arrives. Load earlier records when needed; unknown run state and stale facts are labelled explicitly. Enter adds a line; Send or Ctrl/Cmd+Enter submits. Send follow-up queues without interrupting work. New conversation creates a session only when sent. If a send reports Outcome unknown, retry the original submission to reconcile its existing identity. Drafts stay in tab memory and clear on Lock or reload. Sending from the office does not post to the conversation's external channel.
+**Tasks and conversations:** select an agent and switch between Task, Conversation, Results, Workspace, Usage and Agent. The selected conversation stays selected as new work arrives. Load earlier records when needed; unknown run state and stale facts are labelled explicitly. Enter adds a line; Send or Ctrl/Cmd+Enter submits. Send follow-up queues without interrupting work. New conversation creates a session only when sent. If a send reports Outcome unknown, retry the original submission to reconcile its existing identity. Drafts stay in tab memory and clear on Lock or reload. Sending from the office does not post to the conversation's external channel.
 
 ## Docker
 

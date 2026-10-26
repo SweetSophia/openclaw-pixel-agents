@@ -1,10 +1,12 @@
 # Revamp status
 
-Updated 2026-10-26 against source and verified live runtime revision `ad7acb3`
+First-phase closeout recorded on 2026-10-26 against source and verified live runtime revision `ad7acb3`
 (Usage PR #323, dependency PR #324 and reconnect reliability PR #326).
 This tracker separates merged source, recorded deployment evidence and work still
 requiring qualification. A source merge does not establish what a live office or
 an already published npm package is running.
+
+The user subsequently authorized the seven-delivery [phase-two plan](superpowers/plans/2026-10-26-revamp-phase-two.md), starting with npm 1.7.0 publication. That work is tracked below; the first-phase evidence remains historical.
 
 ## Merged and source-verified
 
@@ -34,7 +36,7 @@ temporary branch, review deadline and merge state belong in the execution ledger
 | Qualify dependency maintenance | Complete — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), squash merge `90e78a7` on 2026-10-26 at 18:27:11 UTC. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322) are closed as superseded. | The full 15-minute review window elapsed before merge. Independent review, 1,407 local tests, package smoke, Docker on Node 26.12.1, required CI/security checks, Kody and Sourcery passed. A clean fresh independent review replaced Kilo's provider-rate-limit failure. The merged tree matches reviewed head `8301f68`. The subsequent `ad7acb3` rollout installed the full qualified dependency tree alongside the runtime. |
 | Harden transient Gateway startup recovery | Complete — Codex coordinator | [#326](https://github.com/SweetSophia/openclaw-pixel-agents/pull/326), squash merge `ad7acb3` on 2026-10-26 at 19:28:31 UTC | Independent reviews, 1,411 tests, coverage/types/build/package/audits, required CI, Docker, CodeQL, Kody and Sourcery passed. A clean fresh independent review replaced unavailable Kilo. The reset 15-minute review window elapsed before merge; post-merge main CI and CodeQL passed on `ad7acb3`. |
 | Qualify the current runtime and roll out merged additions | Complete — Codex runtime audit/coordinator | Exact merged source `ad7acb3`; operator backup/rollback record retained | Independently reviewed deployment installed the tested runtime and full qualified dependencies. Fresh roster, private Usage/Results/Workspace, read/send capability and exact-client checks passed. Saved preferences/layouts and current credentials were preserved. No real task was sent. |
-| Publish onboarding and Usage to npm | Deferred — separate release work | No publication included in this closeout | A versioned release must be qualified and explicitly tracked through the [release workflow](releases.md). The already published 1.6.0 package predates these additions. |
+| Publish onboarding and Usage to npm | In progress — Codex release author/coordinator; authorized in phase two | Branch `release/1.7.0`; release PR and registry verification pending | The prepared [1.7.0 notes](releases/1.7.0.md) cover these additions. Follow the [release workflow](releases.md); do not count a source merge or accepted upload as verified public installation. At first-phase closeout, npm 1.6.0 predated these additions. |
 
 For each new or updated PR, the coordinator records its exact pushed revision,
 independent review, 15-minute review deadline, checks and findings. Every push
@@ -81,17 +83,28 @@ Repeat live acceptance at 19:32 UTC verified Ready Usage and Results, Workspace,
 eight fresh roster agents, read/send capability, the exact tested client, an active
 collector and disabled retired previews. No real task was sent. The earlier
 `cf1dceb` snapshot remains historical; the current qualified live revision and
-dependency tree are `ad7acb3`. npm remains 1.6.0, with onboarding and Usage
-publication separate release work.
+dependency tree are `ad7acb3`. At first-phase closeout, npm remained 1.6.0 and
+onboarding/Usage publication was separate release work. Phase two now authorizes
+that publication; its registry verification is still pending.
 
-## Future capabilities
+## Phase-two tasks
 
-The [task-controls design](superpowers/specs/2026-10-23-task-controls-design.md)
-identifies approvals, Stop/Steer and other run controls, scheduling and model
-selection as future directions. Attachments/uploads, workspace editing, historical
-run selection, external-channel delivery and multi-user access are also outside
-the delivered plans. They have no agreed implementation acceptance criteria in
-this tracker and are not silently added to the current closeout.
+The user explicitly authorized the previously proposed roadmap after the first
+phase was complete. The [phase-two plan](superpowers/plans/2026-10-26-revamp-phase-two.md)
+records dependencies, acceptance criteria and the shared verification/review
+contract. The coordinator owns integration and merge decisions.
 
-No npm publication, new Gateway permission or real agent task is authorized by a
-completed source checkbox alone.
+| Order | Delivery | State / owner | Branch or next gate |
+| --- | --- | --- | --- |
+| 1 | New npm release | In progress — Codex release author/coordinator | `release/1.7.0`; independent review, release PR, workflow publication and public-consumer verification |
+| 2 | Task/run history | Pending — Codex coordinator | Native contract and exact historical run identity, then read-only selection across private panels |
+| 3 | Stop and Steer | Pending — Codex coordinator | Current verified active-run target and native supported mutation contract |
+| 4 | Approval handling | Pending — Codex coordinator | Native pending-request visibility, scoped authority and decision contract |
+| 5 | Model selection | Pending — Codex coordinator | Native permitted model catalog and exact conversation mutation |
+| 6 | Scheduling | Pending — Codex coordinator | Native scheduling authority, bounded validation and duplicate-safe creation |
+| 7 | Workspace editing and attachments | Pending — Codex coordinator | Native confined writes/uploads/attachment contracts and conflict-safe explicit actions |
+
+External-channel delivery and multi-user access remain future directions outside
+these seven deliveries. No new Gateway permission or real agent task is authorized
+by a completed source checkbox alone; unsupported capabilities and missing grants
+must be reported honestly rather than bypassed.
