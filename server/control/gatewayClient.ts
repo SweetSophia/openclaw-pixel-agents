@@ -133,6 +133,9 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
+        if ((USAGE_METHODS as readonly string[]).includes(item.method)) {
+          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'scope-required' : error?.code === 'INVALID_REQUEST' ? 'unsupported' : 'unavailable')); return;
+        }
         if ((WORKSPACE_METHODS as readonly string[]).includes(item.method)) {
           item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? details?.type === 'workspace_path_invalid' ? 'invalid-request' : 'scope-required' : error?.code !== 'INVALID_REQUEST' ? 'unavailable'
             : details?.type === 'workspace_file_too_large' ? 'file-too-large' : details?.type === 'workspace_file_unsupported' ? 'preview-unsupported'
@@ -156,7 +159,9 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       const artifact = (ARTIFACT_METHODS as readonly string[]).includes(method);
       const workspace = (WORKSPACE_METHODS as readonly string[]).includes(method);
       const usage = (USAGE_METHODS as readonly string[]).includes(method);
-      if ((artifact || workspace || usage) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
+      if ((artifact || workspace) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
+      // OpenClaw's read-scoped compatibility usage method is deliberately unadvertised.
+      // Keep this one allowlisted probe optional and normalize an unsupported contract.
       const allowed = (READ_METHODS as readonly string[]).includes(method)
         || artifact || workspace || usage
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))

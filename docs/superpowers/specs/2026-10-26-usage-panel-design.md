@@ -14,7 +14,7 @@ Model and context limit come from the verified conversation row. Its cumulative 
 
 ## Private contract and lifecycle
 
-Create a bounded shared Usage DTO and `POST /api/control/agents/:id/usage`, accepting only the existing exact ControlTarget shape. Keep the method optional during Gateway negotiation so older Gateways retain all existing functionality. Unsupported usage displays a specific empty state while verified model/context configuration can remain visible.
+Create a bounded shared Usage DTO and `POST /api/control/agents/:id/usage`, accepting only the existing exact ControlTarget shape. Keep the method out of mandatory Gateway negotiation so older Gateways retain all existing functionality. The installed `core-method-policy-CcBevufV.mjs` classifies `sessions.usage` as `operator.read` with `advertise:false`; a targeted allowlisted call must therefore work even when omitted from hello features. An INVALID_REQUEST response means this optional query contract is unsupported. Do not probe arbitrary methods or parse raw diagnostic strings. Unsupported usage displays a specific empty state while verified model/context configuration can remain visible.
 
 Use the existing useTaskDetails selection/polling machinery with a Usage mode. While Usage is active, refresh its snapshot every five seconds plus manual Refresh; do not fetch task history or Results. One read per panel in flight. Changing tab, conversation, agent, source lifecycle, key generation, visibility or closing/locking cancels reads; late replies cannot overwrite another selection. Auth/identity failures clear data. Ordinary same-target failures retain the prior snapshot with its original timestamps and a Last known label. No browser storage or public socket additions.
 

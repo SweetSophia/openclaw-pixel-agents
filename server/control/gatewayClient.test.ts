@@ -80,14 +80,16 @@ const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.wai
 
 describe('scoped task Gateway client', () => {
   it('keeps usage optional without breaking the existing read-only task connection', async () => {
-    const host = await fixture(); const gateway = client(host.url); await ready(gateway);
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id)
+      : { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', message: 'unknown method: sessions.usage' } })));
+    const gateway = client(host.url); await ready(gateway);
     await expect(gateway.request('sessions.usage', { agentId: 'cylena', key: 'agent:cylena:fixture' })).rejects.toMatchObject({ code: 'unsupported' });
-    expect(gateway.status().canRead).toBe(true); expect(host.frames.some(frame => frame.method === 'sessions.usage')).toBe(false);
+    expect(gateway.status().canRead).toBe(true); expect(host.frames.filter(frame => frame.method === 'sessions.usage')).toHaveLength(1);
   });
   it('reads exact usage through the real signed adapter, service and protected HTTP route', async () => {
     const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'usage-instance' };
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
-      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'sessions.usage'], events: [] },
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'], events: [] },
     }) : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe'
       ? { session: { ...target, key: target.sessionKey, model: 'fixture', contextTokens: 64000 } }
       : frame.method === 'sessions.usage' ? { sessions: [{ key: target.sessionKey, agentId: target.agentId, sessionId: target.sessionId, scope: 'instance', usage: { input: 0, output: 42, totalCost: 0, missingCostEntries: 0, computedAt: 100 } }] } : {} })));
