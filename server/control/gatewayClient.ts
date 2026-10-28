@@ -6,15 +6,16 @@ import { isDeviceStorageError } from './errors';
 
 const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'] as const;
 const WRITE_METHODS = ['chat.send', 'sessions.create'] as const;
+const STOP_METHOD = 'chat.abort' as const;
 const STREAM_METHODS = ['sessions.messages.subscribe', 'sessions.messages.unsubscribe'] as const;
 const ARTIFACT_METHODS = ['artifacts.list', 'artifacts.get', 'artifacts.download'] as const;
 const WORKSPACE_METHODS = ['agents.workspace.list', 'agents.workspace.get'] as const;
 const USAGE_METHODS = ['sessions.usage'] as const;
 const HISTORY_METHODS = ['audit.activity.list'] as const;
-export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number];
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STOP_METHOD | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -37,6 +38,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';
   let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined; let writeGranted = false;
   let negotiatedMethods: string[] = [];
+  let stopGranted = false; let writeScopeGranted = false;
   let connectionId: string | undefined;
   let memoryGrant: DeviceGrant | undefined;
   let reconnect: ReturnType<typeof setTimeout> | undefined; let handshake: ReturnType<typeof setTimeout> | undefined;
@@ -47,7 +49,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     pending.clear();
   }
   function fail(next: ControlGatewayState, retryable = false, retryAfterMs?: unknown): void {
-    generation++; state = next; writeGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
+    generation++; state = next; writeGranted = false; stopGranted = false; writeScopeGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
     rejectPending('Task source connection changed'); emit({ event: 'source.invalidated', payload: null });
@@ -124,7 +126,9 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
           || !features || !Array.isArray(methods) || !READ_METHODS.every(method => methods.includes(method))
           || !Array.isArray(features.events)) { fail('unsupported'); return; }
         if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !grants.includes('operator.read')) { fail('auth-error'); return; }
-        writeGranted = config.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write') && WRITE_METHODS.every(method => methods.includes(method));
+        writeScopeGranted = config.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write');
+        writeGranted = writeScopeGranted && WRITE_METHODS.every(method => methods.includes(method));
+        stopGranted = writeScopeGranted && methods.includes(STOP_METHOD);
         negotiatedMethods = methods.filter((method): method is string => typeof method === 'string');
         connectionId = server.connId.length > 0 && server.connId.length <= 256 && !/[\u0000-\u001f\u007f]/.test(server.connId) ? server.connId : undefined;
         if (typeof auth.deviceToken === 'string' && auth.deviceToken.length > 0 && auth.deviceToken.length <= 16384) {
@@ -143,6 +147,9 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
+        if (item.method === STOP_METHOD) {
+          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'stop-denied' : error?.code === 'INVALID_REQUEST' ? 'session-changed' : 'unavailable')); return;
+        }
         if ((USAGE_METHODS as readonly string[]).includes(item.method)) {
           item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'usage-denied' : error?.code === 'INVALID_REQUEST' ? 'unsupported' : 'unavailable')); return;
         }
@@ -161,11 +168,13 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
   }
   return {
     start() { if (stopped || !config.enabled || socket || reconnect) return; connect(); },
-    status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: state === 'ready' && writeGranted }),
+    status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: state === 'ready' && writeGranted, canStop: state === 'ready' && stopGranted }),
     artifactConnection: () => state === 'ready' && socket?.readyState === WebSocket.OPEN && connectionId && config.url
       ? { id: connectionId, generation, gatewayUrl: config.url } : null,
     request(method, params, signal) {
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
+      if (method === STOP_METHOD && !writeScopeGranted) return Promise.reject(new GatewayRequestError('scope-required'));
+      if (method === STOP_METHOD && !stopGranted) return Promise.reject(new GatewayRequestError('unsupported'));
       const artifact = (ARTIFACT_METHODS as readonly string[]).includes(method);
       const workspace = (WORKSPACE_METHODS as readonly string[]).includes(method);
       const usage = (USAGE_METHODS as readonly string[]).includes(method);
@@ -174,7 +183,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       // OpenClaw's read-scoped compatibility usage method is deliberately unadvertised.
       // Keep this one allowlisted probe optional and normalize an unsupported contract.
       const allowed = (READ_METHODS as readonly string[]).includes(method)
-        || artifact || workspace || usage || history
+        || artifact || workspace || usage || history || (method === STOP_METHOD && stopGranted)
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
       if (!allowed) return Promise.reject(new GatewayRequestError('scope-required'));
