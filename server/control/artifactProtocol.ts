@@ -12,7 +12,7 @@ export const artifactQuery = (target: ControlTarget, scope: ControlArtifactScope
 export function nativeArtifactSummary(value: unknown, target: ControlTarget, scope: ControlArtifactScope): ControlArtifactSummary {
   const row = controlRecord(value); const download = controlRecord(row?.download);
   if (!row || !download || (row.sessionKey !== undefined && row.sessionKey !== target.sessionKey)
-    || (scope.kind === 'run' && row.runId !== undefined && row.runId !== scope.runId)) throw new ControlError('invalid-source');
+    || (scope.kind === 'run' && row.runId !== scope.runId)) throw new ControlError('invalid-source');
   const mode = download.mode === 'bytes' ? 'bytes' : download.mode === 'url' ? 'link' : download.mode === 'unsupported' ? 'unavailable' : null;
   const title = typeof row.title === 'string' ? row.title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 512).replace(/[\ud800-\udbff]$/, '') : row.title;
   const summary = mode && parseControlArtifactSummary({ id: row.id, type: row.type, title, download: mode,

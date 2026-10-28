@@ -26,6 +26,15 @@ describe('run selection source fences', () => {
     await waitFor(() => expect(result.current.error?.code).toBe('invalid-source')); expect(result.current.results).toBeNull();
     expect(f.request.mock.calls.find(([path]) => path.endsWith('/results'))?.[1].body).toContain('"runId":"run-a"');
   });
+  it('keeps source-verified historical text when only Results loses the loaded run proof', async () => {
+    setup(); f.request.mockImplementation(async (path, init) => {
+      if (path.endsWith('/runs')) return snapshot(JSON.parse(init.body).runId);
+      throw new ControlApiError('invalid-target');
+    });
+    const { result } = renderHook(() => useRunHistory({ target, runId: 'run-a', active: true, resultsActive: true }));
+    await waitFor(() => expect(result.current.error?.code).toBe('invalid-target'));
+    expect(result.current.snapshot?.task?.runId).toBe('run-a'); expect(result.current.results).toBeNull();
+  });
   it.each(['run', 'session', 'lock', 'generation', 'hidden', 'close'])('discards a late history response after %s changes', async change => {
     setup(); let finish!: (value: unknown) => void; let signal!: AbortSignal;
     f.request.mockImplementation((_path, init) => { signal = init.signal; return new Promise(resolve => { finish = resolve; }); });

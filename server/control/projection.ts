@@ -154,8 +154,8 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
     return projectSession(child, child.agentId);
   }).filter((row): row is ControlSession => row !== null);
   const projected: ControlTaskSnapshot = {
-    target, source: { state: 'current', observedAt: input.observedAt }, hasActiveRun,
-    activeRunIds: exactRuns(session.activeRunIds), runId, runState,
+    target, source: { state: 'current', observedAt: input.observedAt }, hasActiveRun: currentRun ? hasActiveRun : null,
+    activeRunIds: currentRun ? exactRuns(session.activeRunIds) : undefined, runId, runState,
     request: request?.value, requestAssociation: matchedRequest ? 'run' : request ? 'latest-recorded' : 'unknown',
     requestState: matchedRequest || (!runId && request) ? 'found' : input.loadedRecords >= CONTROL_LIMITS.maximumHistory ? 'limit-reached'
       : history.hasMore === false ? 'unavailable' : 'not-loaded',
@@ -165,7 +165,7 @@ export function projectTask(input: ProjectTaskInput): ControlTaskSnapshot {
     result: runState === 'completed' && response && !response.hasTools && response.stopReason !== 'toolUse' ? response.value : undefined,
     activity: projectActivities(rows, runId), children: childSessions.slice(0, CONTROL_LIMITS.sessions),
     childrenComplete: input.childrenComplete && childSessions.length === input.children.length && childSessions.length <= CONTROL_LIMITS.sessions,
-    loadedRecords: input.loadedRecords, nextCursor: input.nextCursor, model: model(session),
+    loadedRecords: input.loadedRecords, nextCursor: input.nextCursor, model: currentRun ? model(session) : undefined,
   };
   while (controlByteSize(projected) > CONTROL_LIMITS.responseBytes) {
     const text = [projected.request, projected.latestResponse, projected.result].find(item => item && item.text.length > 128);

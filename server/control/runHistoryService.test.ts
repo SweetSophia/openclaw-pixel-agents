@@ -10,7 +10,7 @@ function fixture() {
   let row: Record<string, unknown> = { ...target, key: target.sessionKey, hasActiveRun: false, lastRunId: 'latest', status: 'completed', activeLeafEntryId: 'leaf-1' };
   const listeners = new Set<(event: GatewayEvent) => void>();
   let state: 'ready' | 'unavailable' | 'auth-error' = 'ready';
-  const pages = vi.fn(async (offset: number) => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: row,
+  const pages = vi.fn(async (offset: number) => ({ sessionKey: String(row.key), sessionId: String(row.sessionId), sessionInfo: row,
     messages: [{ role: 'user', content: `Prompt ${offset}`, __openclaw: { id: `user-${offset}`, runId: offset ? 'older' : 'latest' } },
       { role: 'assistant', content: `Response ${offset}`, stopReason: 'stop', __openclaw: { id: `answer-${offset}`, runId: offset ? 'older' : 'latest' } }], nextOffset: offset + 50, hasMore: offset < 200 }));
   const rpc = vi.fn<ControlGateway['request']>(async (method, params) => { if (state !== 'ready') throw new GatewayRequestError(state === 'auth-error' ? 'scope-required' : 'unavailable'); return method === 'sessions.describe' ? { session: row } : method === 'chat.history' ? pages(Number(params.offset)) : {}; });
@@ -20,19 +20,19 @@ function fixture() {
 }
 describe('bounded historical run selection', () => {
   it('discovers only recorded run identities, selects exact messages, and never uses the latest outcome for an older run', async () => {
-    const f = fixture(); const page = await f.history.read(target);
+    const f = fixture(); f.row({ activeRunIds: ['live-run'] }); const page = await f.history.read(target);
     expect(page.runs.map(run => run.runId)).toEqual(['latest', 'older']); expect(f.pages).toHaveBeenCalledTimes(4);
     const selected = await f.history.read({ ...target, runId: 'older' });
     expect(selected.task).toMatchObject({ runId: 'older', runState: 'unknown', requestAssociation: 'run', request: { runId: 'older' }, latestResponse: { runId: 'older' } });
-    expect(selected.task?.result).toBeUndefined(); expect(selected.task?.children).toEqual([]);
+    expect(selected.task?.result).toBeUndefined(); expect(selected.task?.children).toEqual([]); expect(selected.task?.activeRunIds).toBeUndefined();
     expect((await f.history.read({ ...target, runId: 'missing' })).task).toBeUndefined();
     f.history.close(); f.tasks.close();
   });
   it('loads earlier through a leaf-bound cursor and invalidates historical proofs on a branch event', async () => {
     const f = fixture(); const page = await f.history.read(target); expect(page.nextCursor).toBeTruthy();
-    const expanded = await f.history.read({ ...target, cursor: page.nextCursor }); expect(expanded.loadedRecords).toBe(10); expect(f.pages).toHaveBeenCalledTimes(5);
     await expect(f.history.read({ ...target, sessionId: 'other', cursor: page.nextCursor })).rejects.toMatchObject({ code: 'invalid-request' });
-    f.row({ activeLeafEntryId: 'leaf-2' }); await expect(f.history.read({ ...target, cursor: page.nextCursor })).rejects.toMatchObject({ code: 'invalid-request' });
+    f.row({ activeLeafEntryId: 'leaf-2' }); await expect(f.history.read({ ...target, cursor: page.nextCursor })).rejects.toMatchObject({ code: 'session-changed' });
+    f.row({ activeLeafEntryId: 'leaf-1' }); const expanded = await f.history.read({ ...target, cursor: page.nextCursor }); expect(expanded.loadedRecords).toBe(10); expect(f.pages).toHaveBeenCalledTimes(5);
     f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey, reason: 'branch-switch' } });
     await expect(f.history.task(target, 'older')).rejects.toMatchObject({ code: 'session-changed' }); f.history.close(); f.tasks.close();
   });
@@ -40,6 +40,7 @@ describe('bounded historical run selection', () => {
     const f = fixture(); f.pages.mockImplementation(async offset => ({ sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: {},
       messages: Array.from({ length: 50 }, (_, index) => ({ role: 'user', content: 'recorded prompt', __openclaw: { id: `record-${offset + index}`, ...(index ? { runId: `run-${offset + index}` } : {}) } })), hasMore: true, nextOffset: offset + 50 } as never));
     let page = await f.history.read(target); expect(page.loadedRecords).toBe(200); expect(page.runs).toHaveLength(100); expect(page.runsTruncated).toBe(true);
+    const oldSelection = await f.history.read({ ...target, runId: 'run-199' }); expect(oldSelection.runs).toHaveLength(100); expect(oldSelection.runs[oldSelection.runs.length - 1]?.runId).toBe('run-199'); expect(oldSelection.runsTruncated).toBe(true);
     while (page.nextCursor) { const before = f.pages.mock.calls.length; page = await f.history.read({ ...target, cursor: page.nextCursor }); expect(f.pages.mock.calls.length - before).toBe(1); }
     expect(page.loadedRecords).toBe(2000); expect(page.limitReached).toBe(true); expect(f.pages).toHaveBeenCalledTimes(40);
     f.history.close(); f.tasks.close();
@@ -73,13 +74,45 @@ describe('bounded historical run selection', () => {
     f.history.close(); f.tasks.close();
   });
   it('uses an exact native audit terminal when available and preserves it as last known on optional-reader failure', async () => {
-    const f = fixture(); const rpc = f.rpc.getMockImplementation()!;
-    f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.resolve({ events: [{ eventType: 'agent_run', kind: 'agent_run', action: 'agent.run.finished', status: 'succeeded',
-      agentId: target.agentId, sessionId: target.sessionId, sessionKey: target.sessionKey, runId: 'older', eventId: 'finished', sequence: 2, sourceSequence: 2, schemaVersion: 1, redaction: 'metadata_only', occurredAt: 50, actor: { type: 'agent', id: target.agentId } }] }) : rpc(method, params, signal));
+    const f = fixture(); const rpc = f.rpc.getMockImplementation()!; const recorded = { events: [{ eventType: 'agent_run', kind: 'agent_run', action: 'agent.run.finished', status: 'succeeded',
+      agentId: target.agentId, sessionId: target.sessionId, sessionKey: target.sessionKey, runId: 'older', eventId: 'finished', sequence: 2, sourceSequence: 2, schemaVersion: 1, redaction: 'metadata_only', occurredAt: 50, actor: { type: 'agent', id: target.agentId } }] };
+    f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.resolve(recorded) : rpc(method, params, signal));
     const snapshot = await f.history.read({ ...target, runId: 'older' }); expect(snapshot.task).toMatchObject({ runState: 'completed', endedAt: 50, result: { runId: 'older' } }); expect(snapshot.outcome?.state).toBe('recorded');
     expect(f.rpc.mock.calls.find(([method]) => method === 'audit.activity.list')?.[1]).toEqual({ agentId: target.agentId, sessionKey: target.sessionKey, runId: 'older', kind: 'agent_run', limit: 50 });
+    f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.resolve({ events: [], nextCursor: 'incomplete' }) : rpc(method, params, signal));
+    const insufficient = await f.history.read({ ...target, runId: 'older' }); expect(insufficient.task?.runState).toBe('completed'); expect(insufficient.outcome).toEqual(snapshot.outcome); expect(insufficient.source.state).toBe('current');
+    f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.resolve(recorded) : rpc(method, params, signal));
+    const refreshed = await f.history.read({ ...target, runId: 'older' }); expect(refreshed.source.state).toBe('current');
     f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.reject(new GatewayRequestError('unavailable')) : rpc(method, params, signal));
-    const retained = await f.history.read({ ...target, runId: 'older' }); expect(retained.task?.runState).toBe('completed'); expect(retained.source).toEqual({ ...snapshot.source, state: 'stale' }); expect(retained.outcome).toEqual(snapshot.outcome);
+    const retained = await f.history.read({ ...target, runId: 'older' }); expect(retained.task?.runState).toBe('completed'); expect(retained.source).toEqual(snapshot.source); expect(retained.outcome).toEqual(refreshed.outcome);
+    f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.resolve(recorded) : rpc(method, params, signal));
+    expect((await f.history.read({ ...target, runId: 'older' })).source.state).toBe('current');
     f.history.close(); f.tasks.close();
+  });
+  it('rejects a malformed native leaf with a typed source error', async () => {
+    const f = fixture(); f.row({ activeLeafEntryId: 'x'.repeat(300) });
+    await expect(f.history.read({ ...target, refresh: true })).rejects.toMatchObject({ code: 'invalid-source' });
+    f.history.close(); f.tasks.close();
+  });
+  it('keeps history usable when optional audit outcomes are unsupported', async () => {
+    const f = fixture(); const rpc = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation((method, params, signal) => method === 'audit.activity.list' ? Promise.reject(new GatewayRequestError('unsupported')) : rpc(method, params, signal));
+    const snapshot = await f.history.read({ ...target, runId: 'older' });
+    expect(snapshot).toMatchObject({ source: { state: 'current' }, selectedRunId: 'older', outcome: { state: 'unsupported' }, task: { runId: 'older' } });
+    expect(snapshot.messages.length).toBeGreaterThan(0); f.history.close(); f.tasks.close();
+  });
+  it('bounds private windows to eight selections and rebuilds expired windows', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000); const f = fixture(); const selections = Array.from({ length: 9 }, (_, index) => ({
+      agentId: target.agentId, sessionKey: `agent:cylena:selection-${index}`, sessionId: `session-${index}`,
+    }));
+    for (const [index, selected] of selections.entries()) {
+      f.row({ ...selected, key: selected.sessionKey, hasActiveRun: false, activeLeafEntryId: `leaf-${index}` }); await f.history.read(selected);
+    }
+    const beforeEvicted = f.pages.mock.calls.length; const first = selections[0];
+    f.row({ ...first, key: first.sessionKey, hasActiveRun: false, activeLeafEntryId: 'leaf-0' }); await f.history.read(first);
+    expect(f.pages.mock.calls.length - beforeEvicted).toBe(4);
+    vi.setSystemTime(61001); const beforeExpired = f.pages.mock.calls.length; const newest = selections[8];
+    f.row({ ...newest, key: newest.sessionKey, hasActiveRun: false, activeLeafEntryId: 'leaf-8' }); await f.history.read(newest);
+    expect(f.pages.mock.calls.length - beforeExpired).toBe(4); f.history.close(); f.tasks.close(); vi.useRealTimers();
   });
 });

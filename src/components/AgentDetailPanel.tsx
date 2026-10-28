@@ -58,7 +58,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const retainedHistory = !!selectedRunId && !history.snapshot?.task && !!history.lastKnown?.task;
   const historicalTask = history.snapshot?.task ?? (history.lastKnown?.task ? { ...history.lastKnown.task, source: { ...history.lastKnown.task.source, state: 'stale' as const } } : null);
   useEffect(() => { setRunSelection(null); }, [agent.id, access.generation]);
-  useEffect(() => { if (access.state !== 'unlocked') setRunSelection(null); }, [access.state]);
+  useEffect(() => { if (access.state !== 'unlocked' || access.status?.canRead === false) setRunSelection(null); }, [access.state, access.status?.canRead]);
   const displayDetails = { ...details, selectSession: (target: Parameters<typeof details.selectSession>[0]) => { setRunSelection(null); details.selectSession(target); },
     ...(selectedRunId ? { historicalRunId: selectedRunId, task: historicalTask, results: history.results, usage: null, loading: history.loading, error: history.error,
       refresh: async () => { await history.refresh(); }, loadEarlier: async () => { await history.loadEarlier(); } } : {}) };

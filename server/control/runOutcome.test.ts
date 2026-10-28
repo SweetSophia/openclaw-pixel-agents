@@ -10,8 +10,12 @@ describe('historical native terminal evidence', () => {
     expect(project([event('agent.run.started', 'started')])).toMatchObject({ state: 'recorded', runState: 'unknown', startedAt: 100 });
     expect(project([]).runState).toBe('unknown');
   });
-  it.each([{ sessionId: 'replacement' }, { sessionId: undefined }, { sessionKey: 'another' }, { agentId: 'other' }, { runId: 'other' }, { schemaVersion: 2 }, { errorCode: 'wrong' }])('rejects mismatched or insufficient provenance %j', extra => {
+  it.each([{ sessionId: 'replacement' }, { sessionId: undefined }, { sessionKey: 'another' }, { agentId: 'other' }, { runId: 'other' }, { schemaVersion: 2 }, { errorCode: 'wrong' },
+    { actor: { type: 'agent', id: 'other' } }, { occurredAt: 60301 }])('rejects mismatched or insufficient provenance %j', extra => {
     expect(project([event('agent.run.finished', 'succeeded', extra)])).toMatchObject({ state: 'unavailable', runState: 'unknown' });
+  });
+  it('accepts a bounded system-authored terminal without treating it as the target agent', () => {
+    expect(project([event('agent.run.finished', 'succeeded', { actor: { type: 'system', id: 'scheduler' } })])).toMatchObject({ state: 'recorded', runState: 'completed' });
   });
   it('does not choose between duplicate executions, conflicting terminals, incomplete pages or impossible timing', () => {
     expect(project([event('agent.run.finished', 'succeeded'), event('agent.run.finished', 'failed', { eventId: 'second', errorCode: 'run_failed' })]).state).toBe('ambiguous');

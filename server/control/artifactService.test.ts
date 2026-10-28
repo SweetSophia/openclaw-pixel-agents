@@ -63,6 +63,21 @@ describe('assistant-delivered results discovery', () => {
   it('does not fetch artifacts for an unobserved historical run or fall back to another run cache', async () => {
     const f = fixture(true); await f.artifacts.read(target); f.list.mockClear();
     await expect(f.artifacts.read({ ...target, runId: 'unobserved' })).rejects.toMatchObject({ code: 'invalid-target' }); expect(f.list).not.toHaveBeenCalled();
+    await expect(f.artifacts.file({ ...fileInput, scope: { kind: 'run', runId: 'unobserved' }, historical: true })).rejects.toMatchObject({ code: 'invalid-target' });
+    expect(f.rpc.mock.calls.filter(([method]) => method === 'artifacts.get' || method === 'artifacts.download')).toHaveLength(0);
+  });
+  it('never serves a historical cache entry as the last-known live result', async () => {
+    const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' });
+    const historical = await f.artifacts.read({ ...target, runId: 'run-1' }); expect(historical.scope).toEqual({ kind: 'run', runId: 'run-1' });
+    f.setStatus('unavailable');
+    await expect(f.artifacts.read(target)).rejects.toMatchObject({ code: 'unavailable' });
+  });
+  it('requires explicit run ownership on every historical artifact summary', async () => {
+    const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' });
+    f.setRun('run-2'); const artifact = f.nativeArtifact(); delete (artifact as { runId?: string }).runId;
+    f.list.mockResolvedValue({ artifacts: [artifact] });
+    const result = await f.artifacts.read({ ...target, runId: 'run-1' });
+    expect(result).toMatchObject({ scope: { kind: 'run', runId: 'run-1' }, artifactState: 'unavailable', artifacts: [] });
   });
   it('starts final content verification after transfer instead of joining an earlier fresh read', async () => {
     const f = fixture(); const artifact = f.nativeArtifact(); let finishDownload: (value: unknown) => void = () => {};

@@ -17,8 +17,8 @@ export function projectRecordedRunOutcome(raw: unknown, target: ControlTarget, r
     const row = controlRecord(value); const actor = controlRecord(row?.actor);
     if (!row || row.schemaVersion !== 1 || row.eventType !== 'agent_run' || row.kind !== 'agent_run' || row.redaction !== 'metadata_only'
       || row.agentId !== target.agentId || row.sessionKey !== target.sessionKey || row.sessionId !== target.sessionId || row.runId !== runId
-      || !isControlRunId(row.eventId) || !integer(row.sequence, 1) || !integer(row.sourceSequence, 1) || !integer(row.occurredAt)
-      || !actor || !['agent', 'system'].includes(String(actor.type)) || !isControlRunId(actor.id)) return unknown;
+      || !isControlRunId(row.eventId) || !integer(row.sequence, 1) || !integer(row.sourceSequence, 1) || !integer(row.occurredAt) || row.occurredAt > observedAt + 60000
+      || !actor || !['agent', 'system'].includes(String(actor.type)) || !isControlRunId(actor.id) || (actor.type === 'agent' && actor.id !== target.agentId)) return unknown;
     if (ids.has(row.eventId)) return { ...unknown, state: 'ambiguous' }; ids.add(row.eventId);
     if (row.action === 'agent.run.started' && row.status === 'started' && row.errorCode === undefined) starts.push(row.occurredAt);
     else if (row.action === 'agent.run.finished') {

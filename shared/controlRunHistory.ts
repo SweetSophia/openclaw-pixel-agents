@@ -9,7 +9,8 @@ export interface ControlRunHistorySnapshot {
   outcome?: { state: 'recorded' | 'unavailable' | 'unsupported' | 'ambiguous'; observedAt: number };
 }
 export function isControlRunId(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 256 && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+  return typeof value === 'string' && value.length > 0 && value.length <= 256 && value.trim() === value
+    && !/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(value);
 }
 export function parseRunHistoryRequest(agentId: string, value: unknown): ControlRunHistoryRequest | null {
   const row = controlRecord(value);

@@ -87,10 +87,15 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
     if (input.cursor && (!cursor || !existing || cursor.window !== existing.id || cursor.key !== key || cursor.runId !== input.runId || cursor.expires <= Date.now())) { reads.delete(controller); throw new ControlError('invalid-request'); }
     try {
       denied(); const row = await tasks.verifyTarget(input, combined); denied();
-      if (cursor && row.activeLeafEntryId !== existing!.leaf) throw new ControlError('invalid-request');
+      if (cursor && row.activeLeafEntryId !== existing!.leaf) throw new ControlError('session-changed');
       let window = existing;
       if (!window || input.refresh || cursor) {
-        window = cursor ? { ...existing!, rows: [...existing!.rows], outcomes: new Map(existing!.outcomes), id: randomUUID() } : { id: randomUUID(), target: parseControlTarget({ ...input, activeLeafEntryId: row.activeLeafEntryId })!, rows: [], offset: 0, loaded: 0, more: true, leaf: row.activeLeafEntryId, total: undefined, observedAt: Date.now(), limitReached: false, stale: false, outcomes: new Map() };
+        if (cursor) window = { ...existing!, rows: [...existing!.rows], outcomes: new Map(existing!.outcomes), id: randomUUID() };
+        else {
+          const selected = parseControlTarget({ ...input, activeLeafEntryId: row.activeLeafEntryId });
+          if (!selected) throw new ControlError('invalid-source');
+          window = { id: randomUUID(), target: selected, rows: [], offset: 0, loaded: 0, more: true, leaf: row.activeLeafEntryId, total: undefined, observedAt: Date.now(), limitReached: false, stale: false, outcomes: new Map() };
+        }
         const budget = cursor ? CONTROL_LIMITS.historyPage : CONTROL_LIMITS.automaticHistory;
         for (let used = 0; used < budget && window.more && window.loaded < CONTROL_LIMITS.maximumHistory; used += CONTROL_LIMITS.historyPage) {
           const limit = Math.min(CONTROL_LIMITS.historyPage, CONTROL_LIMITS.maximumHistory - window.loaded);
@@ -99,7 +104,7 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
             || controlByteSize(page) > CONTROL_LIMITS.responseBytes || page.windowReset === true || (window.total !== undefined && window.total !== page.totalMessages)) throw new ControlError('invalid-source');
           const info = controlRecord(page.sessionInfo);
           if (info) tasks.verifyHistoryInfo(input, info);
-          if (info?.activeLeafEntryId !== undefined && info.activeLeafEntryId !== window.leaf) throw new ControlError('invalid-request');
+          if (info?.activeLeafEntryId !== undefined && info.activeLeafEntryId !== window.leaf) throw new ControlError('session-changed');
           if (controlByteSize([...page.messages, ...window.rows]) > RUN_HISTORY_LIMITS.bytes) { window.limitReached = true; break; }
           window.total = page.totalMessages; window.rows = [...page.messages, ...window.rows]; window.loaded += page.messages.length; window.more = page.hasMore === true;
           if (window.more && (!Number.isSafeInteger(page.nextOffset) || (page.nextOffset as number) <= window.offset)) throw new ControlError('invalid-source');
@@ -110,10 +115,10 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
       if (input.runId && window.rows.some(value => { const row = controlRecord(value); return row && ['user', 'assistant', 'toolResult'].includes(String(row.role)) && runId(row) === input.runId; })) {
         try {
           const raw = await gateway.request('audit.activity.list', { agentId: input.agentId, sessionKey: input.sessionKey, runId: input.runId, kind: 'agent_run', limit: 50 }, combined);
-          window.outcomes.set(input.runId, projectRecordedRunOutcome(raw, input, input.runId, Date.now()));
+          const next = projectRecordedRunOutcome(raw, input, input.runId, Date.now());
+          if (window.outcomes.get(input.runId)?.state !== 'recorded' || next.state === 'recorded') window.outcomes.set(input.runId, next);
         } catch (error) {
-          if (window.outcomes.get(input.runId)?.state === 'recorded') window.stale = true;
-          else window.outcomes.set(input.runId, { state: error instanceof GatewayRequestError && error.code === 'unsupported' ? 'unsupported' : 'unavailable', observedAt: Date.now(), runState: 'unknown' });
+          if (window.outcomes.get(input.runId)?.state !== 'recorded') window.outcomes.set(input.runId, { state: error instanceof GatewayRequestError && error.code === 'unsupported' ? 'unsupported' : 'unavailable', observedAt: Date.now(), runState: 'unknown' });
         }
         while (window.outcomes.size > RUN_HISTORY_LIMITS.choices) window.outcomes.delete(window.outcomes.keys().next().value!);
       }

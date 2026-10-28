@@ -16,7 +16,7 @@ export interface ArtifactService {
   file(input: ControlFileRequest, signal?: AbortSignal): Promise<ArtifactContent>;
   clear(): void; close(): void;
 }
-interface Cached { snapshot: ControlResultsSnapshot; at: number; valid: boolean }
+interface Cached { snapshot: ControlResultsSnapshot; at: number; valid: boolean; selectionRunId?: string }
 interface Flight { target: ControlTarget; controller: AbortController; users: number; observation: { dirty: boolean }; promise: Promise<ControlResultsSnapshot> }
 export function createArtifactService(gateway: ControlGateway, tasks: TaskService, history?: RunHistoryService): ArtifactService {
   const cache = new Map<string, Cached>(); const flights = new Map<string, Flight>();
@@ -42,6 +42,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
     trim();
     return [...cache.values()].reverse().find(entry => artifactTargetIdentity(entry.snapshot.target) === artifactTargetIdentity(target)
       && (!scope || sameArtifactScope(entry.snapshot.scope, scope))
+      && entry.selectionRunId === target.runId
       && (!target.runId || (entry.snapshot.scope.kind === 'run' && entry.snapshot.scope.runId === target.runId)));
   }
   const stale = (entry: Cached): ControlResultsSnapshot => ({ ...structuredClone(entry.snapshot), artifactState: 'unavailable', source: { ...entry.snapshot.source, state: 'stale' } });
@@ -105,7 +106,7 @@ export function createArtifactService(gateway: ControlGateway, tasks: TaskServic
       } catch { return old ? stale(old) : project(current, [], 'unavailable'); }
     }
     const snapshot = project(current, normalized, unsupported ? 'unsupported' : 'ready', truncated);
-    guard(signal, connection); cache.delete(key); cache.set(key, { snapshot: structuredClone(snapshot), at: Date.now(), valid: !observation.dirty }); trim();
+    guard(signal, connection); cache.delete(key); cache.set(key, { snapshot: structuredClone(snapshot), at: Date.now(), valid: !observation.dirty, ...(target.runId ? { selectionRunId: target.runId } : {}) }); trim();
     return snapshot;
   }
   const unsubscribe = gateway.onEvent(event => {

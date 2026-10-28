@@ -14,8 +14,8 @@ export function RunHistoryPicker({ snapshot, lastKnown, runId, loading, error, o
       {runId && !snapshot?.runs.some(run => run.runId === runId) && <option value={runId}>Selected run · {runId}</option>}
       {snapshot?.runs.map(run => <option key={run.runId} value={run.runId}>{run.at === undefined ? 'Recorded run' : new Date(run.at).toLocaleString()} · {run.runId}</option>)}
     </select>
-    <button type="button" aria-disabled={loading} onClick={() => { if (!loading) onRefresh(); }}>Refresh run history</button>
-    {snapshot?.nextCursor && <button type="button" aria-disabled={loading} onClick={() => { if (!loading) onEarlier(); }}>Load earlier runs</button>}
+    <button type="button" disabled={loading} onClick={onRefresh}>Refresh run history</button>
+    {snapshot?.nextCursor && <button type="button" disabled={loading} onClick={onEarlier}>Load earlier runs</button>}
     {loading && <p role="status">Loading recorded runs…</p>}
     {error && <p role="alert">{error.message}</p>}
     {snapshot && <p className="task-muted">History snapshot: {new Date(snapshot.source.observedAt).toLocaleString()} · {snapshot.loadedRecords.toLocaleString()} records loaded{snapshot.source.state === 'stale' ? ' · Last known — connection unavailable' : ''}. This is the loaded subset of recorded runs.</p>}
