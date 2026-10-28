@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentDetailPanel } from './AgentDetailPanel';
 import { parseControlTarget } from '../../shared/control';
@@ -44,4 +44,39 @@ it.each([false, true])('unmounts recorded-mode composer controls and restores li
   await waitFor(() => expect(screen.getByRole('button', { name: 'Steer conversation' })).toHaveAttribute('aria-disabled', 'false')); fireEvent.click(screen.getByRole('button', { name: 'Steer conversation' }));
   await waitFor(() => expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1));
   expect(JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/send'))![1].body)).intent).toBe('steer');
+});
+it.each([false, true])('keeps recorded mode selected and adopts late persisted creation only live (return before receipt: %s)', async returnBeforeReceipt => {
+  const created = { ...selected, sessionKey: 'agent:cylena:created', sessionId: 'created-1', name: 'Created conversation' };
+  let createdVisible = false; let resolve!: (value: unknown) => void;
+  f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/sessions')) return { sessions: createdVisible ? [selected, created] : [selected], source: { state: 'current', observedAt: Date.now() } };
+    const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input); const runId = input.runId ?? 'run-current';
+    const task = { target, source: { state: 'current', observedAt: Date.now() }, hasActiveRun: true, activeRunIds: [runId], runId, runState: 'running', requestAssociation: 'unknown', requestState: 'unavailable', activity: [], children: [], childrenComplete: false, loadedRecords: 4 };
+    if (path.endsWith('/runs')) return { target, source: task.source, runs: [{ runId: 'run-old' }], runsTruncated: false, limitReached: false, loadedRecords: 4, messagesTruncated: false,
+      ...(input.runId ? { selectedRunId: input.runId, task } : {}), messages: [] };
+    if (path.endsWith('/history')) return { target, source: task.source, messages: [] };
+    if (path.endsWith('/send')) return new Promise(done => { resolve = done; });
+    return task;
+  });
+  render(<AgentDetailPanel agent={agent} onClose={vi.fn()} />); await screen.findByRole('option', { name: /run-old/ });
+  fireEvent.click(screen.getByRole('tab', { name: 'Conversation' })); fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Create in this exact conversation' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), { target: { value: 'steer' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Steer conversation' }));
+  await waitFor(() => expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1));
+  const input = JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/send'))![1].body));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Task / run' }), { target: { value: 'run-old' } });
+  await waitFor(() => expect(document.querySelector('.conversation-send')).toBeNull());
+  const settle = async () => { createdVisible = true; resolve({ target: parseControlTarget(created), idempotencyKey: input.idempotencyKey, phase: 'persisted', messageId: 'created-user', messageSeq: 1 }); };
+  if (!returnBeforeReceipt) await act(settle);
+  expect(screen.getByRole('combobox', { name: 'Task / run' })).toHaveValue('run-old');
+  expect(screen.getByRole('combobox', { name: 'Conversation' })).toHaveDisplayValue(/Fixture conversation/);
+  expect(document.querySelector('.conversation-send')).toBeNull();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Task / run' }), { target: { value: '' } });
+  if (returnBeforeReceipt) await act(settle);
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Conversation' })).toHaveValue('["cylena","agent:cylena:created","created-1",null,null]'));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''); expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('steer');
+  expect(screen.getByText('Persisted in the conversation')).toBeInTheDocument();
+  expect(screen.queryByText(/It will be created when you send/)).toBeNull(); expect(screen.queryByRole('button', { name: 'Retry original submission' })).toBeNull();
+  expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1);
 });

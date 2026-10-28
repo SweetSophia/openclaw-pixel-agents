@@ -6,6 +6,8 @@ import { ControlApiError, targetIdentity } from './api';
 
 interface Submission { input: ControlSendRequest; phase: 'sending' | 'accepted' | 'persisted' | 'unknown' | 'rejected'; receipt?: ControlSendReceipt }
 interface Draft { text: string; intent?: 'followup' | 'steer'; creating?: boolean; submission?: Submission }
+// A response owned by an unmounted live form must also update its mounted successor.
+const draftListeners = new WeakMap<Map<string, Draft>, Set<() => void>>();
 export function useConversation(target: ControlTarget | null, active: boolean, options?: { agentId: string; onCreated?(target: ControlTarget): void }) {
   const access = useControlAccess(); const sharedDrafts = useConversationDrafts(); const localDrafts = useRef(new Map<string, unknown>());
   const drafts = (sharedDrafts ?? localDrafts.current) as Map<string, Draft>;
@@ -15,14 +17,28 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
   const agentId = options?.agentId ?? target?.agentId ?? '';
   const targetKey = target ? targetIdentity(target) : ''; const draftKey = isNew ? `new:${agentId}` : targetKey;
   const scope = `${draftKey}:${access.generation}`;
+  const creationReceipt = isNew ? drafts.get(draftKey)?.submission?.receipt : undefined;
   const read = useRef<AbortController | null>(null); const readGeneration = useRef(0);
   const context = useRef({ access, active, target, targetKey, draftKey, scope, isNew, agentId, page, onCreated: options?.onCreated });
   context.current = { access, active, target, targetKey, draftKey, scope, isNew, agentId, page, onCreated: options?.onCreated };
   useEffect(() => () => { context.current.active = false; }, []);
+  useEffect(() => {
+    let listeners = draftListeners.get(drafts);
+    if (!listeners) { listeners = new Set(); draftListeners.set(drafts, listeners); }
+    const notify = () => redraw(n => n + 1); listeners.add(notify);
+    return () => { listeners.delete(notify); if (!listeners.size) draftListeners.delete(drafts); };
+  }, [drafts]);
   const mutate = useCallback((key: string, action: (draft: Draft) => void) => {
     let draft = drafts.get(key); if (!draft) { draft = { text: '' }; drafts.set(key, draft); }
-    action(draft); redraw(n => n + 1);
+    action(draft); draftListeners.get(drafts)?.forEach(notify => notify());
   }, [drafts]);
+  const adoptCreated = useCallback(() => {
+    const current = context.current; const draft = drafts.get(current.draftKey); const receipt = draft?.submission?.receipt;
+    if (!current.active || current.access.state !== 'unlocked' || !current.isNew || !current.onCreated || !draft?.submission?.input.newConversation || !receipt) return;
+    const createdKey = targetIdentity(receipt.target);
+    drafts.set(createdKey, draft); drafts.delete(current.draftKey);
+    mutate(current.targetKey, value => { value.creating = false; }); setNew(false); current.onCreated(receipt.target);
+  }, [drafts, mutate]);
   const refresh = useCallback(async (earlier = false) => {
     const current = context.current; const selected = current.target;
     if (!selected || current.isNew || !current.active || !current.access.status?.canRead || current.access.state !== 'unlocked'
@@ -76,14 +92,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
       if (!receipt || receipt.idempotencyKey !== input.idempotencyKey || receipt.target.agentId !== input.agentId
         || (input.target && targetIdentity(receipt.target) !== targetIdentity(input.target))) throw new ControlApiError('invalid-source');
       mutate(key, value => { value.submission = { input, phase: receipt.phase, receipt }; if (receipt.phase === 'persisted' && value.text === input.message) value.text = ''; });
-      if (input.newConversation && current.onCreated && current.scope === context.current.scope && context.current.active) {
-        const createdKey = targetIdentity(receipt.target);
-        if (createdKey !== key) {
-          drafts.set(createdKey, drafts.get(key)!); drafts.delete(key);
-          mutate(current.targetKey, value => { value.creating = false; }); setNew(false); current.onCreated(receipt.target);
-        }
-      }
-      if (current.scope === context.current.scope) { setError(null); void refresh(); }
+      if (current.scope === context.current.scope) { adoptCreated(); setError(null); void refresh(); }
     } catch (failure) {
       const problem = failure instanceof ControlApiError ? failure : new ControlApiError();
       if (['locked', 'scope-required', 'pairing-required'].includes(problem.code) || current.access.generation !== context.current.access.generation) return;
@@ -91,8 +100,9 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
       mutate(key, value => { value.submission = { input, phase: unknown ? 'unknown' : 'rejected' }; });
       if (current.scope === context.current.scope) { setError(problem); if (['session-changed', 'invalid-target'].includes(problem.code)) setPage(null); }
     }
-  }, [drafts, mutate, refresh]);
+  }, [drafts, mutate, refresh, adoptCreated]);
   useEffect(() => { setNew(drafts.get(targetKey)?.creating === true); }, [targetKey, drafts]);
+  useEffect(() => { adoptCreated(); }, [active, isNew, targetKey, access.state, access.generation, creationReceipt, adoptCreated]);
   useEffect(() => {
     readGeneration.current++; read.current?.abort(); read.current = null; setPage(null); setError(null); setLoading(false);
   }, [scope]);

@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ControlTaskSnapshot } from '../../shared/control';
 import { currentDirectRun, parseControlStopReceipt, type ControlStopReceipt } from '../../shared/controlRun';
 import { useControlAccess } from '../control/ControlAccess';
@@ -11,19 +11,19 @@ export function RunControls({ task, active, readOnly = false, onRefresh }: { tas
   const scope = JSON.stringify([targetIdentity(task.target), task.runId, access.generation, readOnly]);
   const context = useRef({ scope, active, access, task, readOnly }); context.current = { scope, active, access, task, readOnly };
   const attempted = useRef<string | null>(null); const mounted = useRef(true);
+  const cancel = useCallback(() => { setConfirm(false); if (context.current.active) stopButton.current?.focus(); }, []);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => { if (confirm && active) stopButton.current?.focus(); setConfirm(false); setPhase(null); setError(null); }, [scope]);
+  useEffect(() => { if (confirm) cancel(); setPhase(null); setError(null); }, [scope, cancel]);
   const runId = currentDirectRun(task);
   const reason = readOnly ? 'Run history is read-only. Return to Live / latest task to use Stop.'
     : !active || access.state !== 'unlocked' || !access.status?.canRead ? 'Reconnect and unlock to use Stop.'
       : !access.status.canStop ? access.status.stopDisabledReason === 'scope-required' ? 'Stop requires enabled write access.' : 'This Gateway has not enabled exact-run Stop.'
         : !runId ? 'Stop needs fresh, unambiguous direct-run facts. Refresh the task.' : '';
   const blocked = !!reason || phase !== null || attempted.current === scope;
-  useEffect(() => { if (reason || !active) setConfirm(false); }, [reason, active]);
+  useEffect(() => { if (confirm && (reason || !active)) cancel(); }, [reason, active, confirm, cancel]);
   useEffect(() => { if (confirm) cancelButton.current?.focus(); }, [confirm]);
-  function cancel() { setConfirm(false); stopButton.current?.focus(); }
   async function stop() {
-    if (!confirm || blocked || !runId || currentDirectRun(context.current.task) !== runId) { setConfirm(false); return; }
+    if (!confirm || blocked || !runId || currentDirectRun(context.current.task) !== runId) { cancel(); return; }
     const currentScope = scope; attempted.current = scope; setConfirm(false); setPhase('sending'); setError(null);
     const stillSelected = () => mounted.current && context.current.scope === currentScope && !context.current.readOnly && context.current.access.state === 'unlocked';
     const refreshActive = () => { if (context.current.active) { void onRefresh(); stopButton.current?.focus(); } };

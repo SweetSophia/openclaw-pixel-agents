@@ -47,7 +47,17 @@ describe('exact-run Stop controls', () => {
   it('rechecks freshness when confirmation is submitted without a render', () => {
     const snapshot = task(); render(<RunControls task={snapshot} active onRefresh={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Stop run' })); vi.spyOn(Date, 'now').mockReturnValue(snapshot.source.observedAt + 16000);
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm Stop' })); expect(f.request).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Confirm Stop' }); confirm.focus(); fireEvent.click(confirm);
+    expect(f.request).not.toHaveBeenCalled(); expect(screen.queryByRole('group', { name: 'Confirm Stop' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Stop run' })).toHaveFocus();
+  });
+  it.each(['stale', 'ambiguous'] as const)('restores Stop focus when %s facts invalidate an open confirmation without changing its scope', mode => {
+    const snapshot = task(); const view = render(<RunControls task={snapshot} active onRefresh={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' })); expect(screen.getByRole('button', { name: 'Cancel Stop' })).toHaveFocus();
+    const invalidated = mode === 'stale' ? { ...snapshot, source: { ...snapshot.source, state: 'stale' as const } } : { ...snapshot, activeRunIds: ['run1', 'run2'] };
+    view.rerender(<RunControls task={invalidated} active onRefresh={vi.fn()} />);
+    expect(screen.queryByRole('group', { name: 'Confirm Stop' })).toBeNull(); expect(screen.getByRole('button', { name: 'Stop run' })).toHaveFocus();
+    expect(f.request).not.toHaveBeenCalled();
   });
   it('refreshes unknown outcomes without replay across activity changes', async () => {
     f.request.mockRejectedValue(new ControlApiError('timed-out')); const refresh = vi.fn(); const snapshot = task();
