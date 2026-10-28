@@ -11,7 +11,7 @@ export interface ResultContentState {
   act(artifactId: string, intent: 'preview' | 'download'): Promise<void>; clear(): void;
 }
 const empty = { loadingId: null, error: null, external: null, preview: null };
-export function useResultContent(options: { target: ControlTarget | null; scope: ControlArtifactScope | null; sourceRevision?: string; active: boolean; current: boolean }): ResultContentState {
+export function useResultContent(options: { target: ControlTarget | null; scope: ControlArtifactScope | null; sourceRevision?: string; active: boolean; current: boolean; historical?: boolean }): ResultContentState {
   const access = useControlAccess(); const [view, setView] = useState<Omit<ResultContentState, 'act' | 'clear'>>(empty);
   const revision = useRef(0); const pending = useRef<AbortController | null>(null);
   const urls = useRef(new Set<string>()); const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -21,7 +21,7 @@ export function useResultContent(options: { target: ControlTarget | null; scope:
     for (const timer of timers.current) clearTimeout(timer); timers.current.clear();
     for (const url of urls.current) URL.revokeObjectURL(url); urls.current.clear(); setView(empty);
   }, []);
-  const identity = JSON.stringify([options.target && targetIdentity(options.target), options.scope, options.sourceRevision, options.active, options.current,
+  const identity = JSON.stringify([options.target && targetIdentity(options.target), options.scope, options.sourceRevision, options.active, options.current, options.historical,
     access.generation, access.state, access.status?.canRead, access.status?.state]);
   useLayoutEffect(() => { clear(); return clear; }, [identity, clear]);
   useEffect(() => {
@@ -37,7 +37,7 @@ export function useResultContent(options: { target: ControlTarget | null; scope:
     setView({ ...empty, loadingId: artifactId });
     try {
       const value = await owner.requestFile(`/api/control/agents/${encodeURIComponent(selected.target.agentId)}/results/file`, {
-        method: 'POST', signal: controller.signal, body: JSON.stringify({ target: selected.target, scope: selected.scope, artifactId, intent }) });
+        method: 'POST', signal: controller.signal, body: JSON.stringify({ target: selected.target, scope: selected.scope, artifactId, intent, ...(selected.historical ? { historical: true } : {}) }) });
       if (!valid()) return;
       if (value.kind === 'external') { setView({ ...empty, external: value }); return; }
       if (intent === 'download') {

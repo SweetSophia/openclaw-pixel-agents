@@ -15,9 +15,11 @@ import { artifactMime, safeArtifactFilename } from './previewPolicy';
 import type { WorkspaceService } from './workspaceService';
 import { parseWorkspaceFileRequest, parseWorkspaceListRequest } from '../../shared/controlWorkspace';
 import type { UsageService } from './usageService';
+import { isControlRunId, parseRunHistoryRequest } from '../../shared/controlRunHistory';
+import type { RunHistoryService } from './runHistoryService';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService }): Router {
-  const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage } = options; const router = Router();
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService }): Router {
+  const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory } = options; const router = Router();
   const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
@@ -57,9 +59,15 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
     run(req, res, signal => tasks.getTask(input, signal));
   });
   router.post('/agents/:id/results', (req, res) => {
-    const target = parseResultsTarget(String(req.params.id), req.body);
+    const body = controlRecord(req.body); const selectedRunId = body?.runId;
+    const target = body && (selectedRunId === undefined || isControlRunId(selectedRunId)) ? parseResultsTarget(String(req.params.id), Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'runId'))) : null;
     if (!target) { res.status(400).json({ code: 'invalid-request', error: 'Invalid result selection.' }); return; }
-    run(req, res, signal => { if (!artifacts) throw new ControlError('unsupported'); return artifacts.read(target, signal); });
+    run(req, res, signal => { if (!artifacts) throw new ControlError('unsupported'); return artifacts.read({ ...target, ...(selectedRunId ? { runId: selectedRunId as string } : {}) }, signal); });
+  });
+  router.post('/agents/:id/runs', (req, res) => {
+    const input = parseRunHistoryRequest(String(req.params.id), req.body);
+    if (!input) { res.status(400).json({ code: 'invalid-request', error: 'Invalid run history selection.' }); return; }
+    run(req, res, signal => { if (!runHistory) throw new ControlError('unsupported'); return runHistory.read(input, signal); });
   });
   router.post('/agents/:id/usage', (req, res) => {
     const target = parseResultsTarget(String(req.params.id), req.body);

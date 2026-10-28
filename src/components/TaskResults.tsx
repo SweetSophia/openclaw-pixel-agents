@@ -13,7 +13,7 @@ export function TaskResults({ state, active }: { state: TaskDetailsState; active
   const access = useControlAccess(); const result = state.results;
   const matches = !!result && !!state.selected && targetIdentity(result.target) === targetIdentity(state.selected);
   const current = matches && result.source.state === 'current' && result.artifactState === 'ready' && !!access.status?.canRead;
-  const content = useResultContent({ target: matches ? result.target : null, scope: matches ? result.scope : null, sourceRevision: result?.sourceRevision, active, current });
+  const content = useResultContent({ target: matches ? result.target : null, scope: matches ? result.scope : null, sourceRevision: result?.sourceRevision, active, current, historical: !!state.historicalRunId });
   const [copyNote, setCopyNote] = useState(''); const [imageError, setImageError] = useState(false); const copyGeneration = useRef(0);
   const identity = JSON.stringify([result?.target, result?.scope, result?.response, active, access.generation]);
   useEffect(() => { copyGeneration.current++; setCopyNote(''); setImageError(false); return () => { copyGeneration.current++; }; }, [identity]);

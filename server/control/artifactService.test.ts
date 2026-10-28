@@ -5,11 +5,12 @@ import type { ControlFileRequest } from '../../shared/controlResults';
 import { createArtifactService } from './artifactService';
 import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './gatewayClient';
 import { createTaskService } from './taskService';
+import { createRunHistoryService } from './runHistoryService';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 'life-1' };
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0).reverse()) close(); vi.useRealTimers(); });
-function fixture() {
+function fixture(withHistory = false) {
   let runId: string | undefined = 'run-1'; let text: string | undefined = 'The shared fixture report.';
   let state: 'ready' | 'unavailable' | 'auth-error' = 'ready'; let generation = 1; let completed = false;
   const listeners = new Set<(event: GatewayEvent) => void>();
@@ -36,9 +37,10 @@ function fixture() {
   const gateway: ControlGateway = { start() {}, close() {}, status: () => ({ configured: true, state, canRead: state === 'ready', canSend: false }),
     request: rpc, onEvent(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     artifactConnection: () => state === 'ready' ? { id: `fixture-${generation}`, generation, gatewayUrl: 'ws://127.0.0.1:18789/' } : null };
-  const tasks = createTaskService(gateway, () => new Set(['cylena'])); const artifacts = createArtifactService(gateway, tasks);
-  cleanups.push(() => { artifacts.close(); tasks.close(); });
-  return { artifacts, tasks, rpc, list, download, nativeArtifact, setRun: (value: string | undefined) => { runId = value; },
+  const tasks = createTaskService(gateway, () => new Set(['cylena'])); const runHistory = withHistory ? createRunHistoryService(gateway, tasks) : undefined;
+  const artifacts = createArtifactService(gateway, tasks, runHistory);
+  cleanups.push(() => { artifacts.close(); runHistory?.close(); tasks.close(); });
+  return { artifacts, tasks, runHistory, rpc, list, download, nativeArtifact, setRun: (value: string | undefined) => { runId = value; },
     setText: (value: string | undefined) => { text = value; }, complete: () => { completed = true; },
     setStatus: (value: typeof state) => { state = value; }, reconnect: () => { generation++; },
     add: (value: ControlTarget) => rows.set(value.sessionKey, { ...value, key: value.sessionKey }),
@@ -48,6 +50,35 @@ function fixture() {
 
 describe('assistant-delivered results discovery', () => {
   const fileInput: ControlFileRequest = { target, scope: { kind: 'run', runId: 'run-1' }, artifactId: 'artifact-1', intent: 'preview' };
+  it('reads explicitly selected historical files without weakening the live/latest file fence', async () => {
+    const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' }); const oldArtifact = f.nativeArtifact();
+    f.setRun('run-2'); f.list.mockResolvedValue({ artifacts: [oldArtifact] });
+    const results = await f.artifacts.read({ ...target, runId: 'run-1' }); expect(results.scope).toEqual({ kind: 'run', runId: 'run-1' }); expect(results.runState).toBe('unknown');
+    expect(f.list.mock.lastCall?.[0]).toMatchObject({ runId: 'run-1', sessionKey: target.sessionKey });
+    await expect(f.artifacts.file(fileInput)).rejects.toMatchObject({ code: 'session-changed' });
+    const rpc = f.rpc.getMockImplementation()!; f.rpc.mockImplementation((method, params, signal) => method === 'artifacts.get' ? Promise.resolve({ artifact: oldArtifact }) : rpc(method, params, signal));
+    f.download.mockResolvedValue({ artifact: oldArtifact, encoding: 'base64', data: Buffer.from('old bytes').toString('base64') });
+    await expect(f.artifacts.file({ ...fileInput, historical: true })).resolves.toMatchObject({ kind: 'bytes' });
+  });
+  it('does not fetch artifacts for an unobserved historical run or fall back to another run cache', async () => {
+    const f = fixture(true); await f.artifacts.read(target); f.list.mockClear();
+    await expect(f.artifacts.read({ ...target, runId: 'unobserved' })).rejects.toMatchObject({ code: 'invalid-target' }); expect(f.list).not.toHaveBeenCalled();
+    await expect(f.artifacts.file({ ...fileInput, scope: { kind: 'run', runId: 'unobserved' }, historical: true })).rejects.toMatchObject({ code: 'invalid-target' });
+    expect(f.rpc.mock.calls.filter(([method]) => method === 'artifacts.get' || method === 'artifacts.download')).toHaveLength(0);
+  });
+  it('never serves a historical cache entry as the last-known live result', async () => {
+    const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' });
+    const historical = await f.artifacts.read({ ...target, runId: 'run-1' }); expect(historical.scope).toEqual({ kind: 'run', runId: 'run-1' });
+    f.setStatus('unavailable');
+    await expect(f.artifacts.read(target)).rejects.toMatchObject({ code: 'unavailable' });
+  });
+  it('requires explicit run ownership on every historical artifact summary', async () => {
+    const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' });
+    f.setRun('run-2'); const artifact = f.nativeArtifact(); delete (artifact as { runId?: string }).runId;
+    f.list.mockResolvedValue({ artifacts: [artifact] });
+    const result = await f.artifacts.read({ ...target, runId: 'run-1' });
+    expect(result).toMatchObject({ scope: { kind: 'run', runId: 'run-1' }, artifactState: 'unavailable', artifacts: [] });
+  });
   it('starts final content verification after transfer instead of joining an earlier fresh read', async () => {
     const f = fixture(); const artifact = f.nativeArtifact(); let finishDownload: (value: unknown) => void = () => {};
     f.download.mockImplementation(() => new Promise(resolve => { finishDownload = resolve; }));

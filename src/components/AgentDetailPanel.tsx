@@ -1,4 +1,4 @@
-import React, { useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentState, AgentActivity, SubAgentInfo } from '../../shared/types';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -8,6 +8,10 @@ import { TaskResults } from './TaskResults';
 import { AgentWorkspace } from './AgentWorkspace';
 import { ConversationUsage } from './ConversationUsage';
 import { useTaskDetails } from '../control/useTaskDetails';
+import { useRunHistory } from '../control/useRunHistory';
+import { useControlAccess } from '../control/ControlAccess';
+import { targetIdentity } from '../control/api';
+import { HistoricalConversation, RunHistoryPicker } from './RunHistory';
 import './AgentDetailPanel.css';
 
 interface Props {
@@ -44,7 +48,23 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const headingId = useId();
   const [tab, setTab] = useState<typeof detailTabs[number]>('task');
   const tabsId = useId();
-  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: tab === 'task' || tab === 'conversation' || tab === 'results' || tab === 'usage', taskActive: tab === 'task', resultsActive: tab === 'results', usageActive: tab === 'usage' });
+  const access = useControlAccess();
+  const [runSelection, setRunSelection] = useState<{ agentId: string; target: string; runId: string } | null>(null);
+  const historical = runSelection?.agentId === agent.id;
+  const controlActive = tab === 'task' || tab === 'conversation' || tab === 'results' || tab === 'usage';
+  const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: controlActive, taskActive: tab === 'task' && !historical, resultsActive: tab === 'results' && !historical, usageActive: tab === 'usage' && !historical });
+  const selectedRunId = historical && details.selected && runSelection.target === targetIdentity(details.selected) ? runSelection.runId : undefined;
+  const history = useRunHistory({ target: details.selected, runId: selectedRunId, active: controlActive, resultsActive: tab === 'results' && !!selectedRunId });
+  const retainedHistory = !!selectedRunId && !history.snapshot?.task && !!history.lastKnown?.task;
+  const historicalTask = history.snapshot?.task ?? (history.lastKnown?.task ? { ...history.lastKnown.task, source: { ...history.lastKnown.task.source, state: 'stale' as const } } : null);
+  useEffect(() => { setRunSelection(null); }, [agent.id, access.generation]);
+  useEffect(() => { if (access.state !== 'unlocked' || access.status?.canRead === false) setRunSelection(null); }, [access.state, access.status?.canRead]);
+  const displayDetails = { ...details, selectSession: (target: Parameters<typeof details.selectSession>[0]) => { setRunSelection(null); details.selectSession(target); },
+    ...(selectedRunId ? { historicalRunId: selectedRunId, task: historicalTask, results: history.results, usage: null, loading: history.loading, error: history.error,
+      refresh: async () => { await history.refresh(); }, loadEarlier: async () => { await history.loadEarlier(); } } : {}) };
+  const runNavigation = <RunHistoryPicker snapshot={history.snapshot} lastKnown={history.lastKnown} runId={selectedRunId} loading={history.loading} error={history.error}
+    onSelect={runId => { if (runId && details.selected) setRunSelection({ agentId: agent.id, target: targetIdentity(details.selected), runId }); else setRunSelection(null); }}
+    onRefresh={() => { void history.refresh(); }} onEarlier={() => { void history.loadEarlier(); }} />;
 
   useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
 
@@ -98,24 +118,25 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
             }}>{name.charAt(0).toUpperCase() + name.slice(1)}</button>)}
         </div>
         <div role="tabpanel" id={`${tabsId}-task-panel`} aria-labelledby={`${tabsId}-task-tab`} hidden={tab !== 'task'}>
-          <TaskDetailsView agentId={agent.id} active={tab === 'task'} state={details} />
+          <TaskDetailsView agentId={agent.id} active={tab === 'task'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId} retainedHistory={retainedHistory} />
         </div>
         <div role="tabpanel" id={`${tabsId}-conversation-panel`} aria-labelledby={`${tabsId}-conversation-tab`} hidden={tab !== 'conversation'}>
-          <TaskDetailsView agentId={agent.id} active={tab === 'conversation'} state={details}>
-            <AgentConversation target={details.selected} agentId={agent.id} active={tab === 'conversation'} busy={details.selected?.hasActiveRun === true} onCreated={details.selectCreatedSession} />
+          <TaskDetailsView agentId={agent.id} active={tab === 'conversation'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
+            <div hidden={!!selectedRunId}><AgentConversation target={details.selected} agentId={agent.id} active={tab === 'conversation' && !selectedRunId} busy={details.selected?.hasActiveRun === true} onCreated={target => { setRunSelection(null); details.selectCreatedSession(target); }} /></div>
+            {selectedRunId && <HistoricalConversation snapshot={history.snapshot?.task ? history.snapshot : history.lastKnown ?? history.snapshot} />}
           </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-results-panel`} aria-labelledby={`${tabsId}-results-tab`} hidden={tab !== 'results'}>
-          <TaskDetailsView agentId={agent.id} active={tab === 'results'} state={details}>
-            <TaskResults state={details} active={tab === 'results'} />
+          <TaskDetailsView agentId={agent.id} active={tab === 'results'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
+            <TaskResults state={displayDetails} active={tab === 'results'} />
           </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-workspace-panel`} aria-labelledby={`${tabsId}-workspace-tab`} hidden={tab !== 'workspace'}>
           <AgentWorkspace agentId={agent.id} active={tab === 'workspace'} />
         </div>
         <div role="tabpanel" id={`${tabsId}-usage-panel`} aria-labelledby={`${tabsId}-usage-tab`} hidden={tab !== 'usage'}>
-          <TaskDetailsView agentId={agent.id} active={tab === 'usage'} state={details}>
-            <ConversationUsage snapshot={details.usage} loading={details.loading || details.sessionsLoading} selected={details.selected !== null} error={details.usageError} />
+          <TaskDetailsView agentId={agent.id} active={tab === 'usage'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
+            {selectedRunId ? <p className="task-notice">Per-run usage is unavailable from the current Gateway contract. Conversation totals are not shown as usage for this recorded run. Return to Live / latest task to view conversation Usage.</p> : <ConversationUsage snapshot={details.usage} loading={details.loading || details.sessionsLoading} selected={details.selected !== null} error={details.usageError} />}
           </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
