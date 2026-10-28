@@ -1,10 +1,17 @@
-import { controlRecord, type ControlTarget } from '../../shared/control';
+import { CONTROL_LIMITS, controlByteSize, controlRecord, type ControlTarget } from '../../shared/control';
 import { currentDirectRun, parseControlStopRequest, type ControlStopReceipt, type ControlStopRequest } from '../../shared/controlRun';
+import { isControlRunId } from '../../shared/controlRunHistory';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import { ControlError, type TaskService } from './taskService';
 
 export interface RunControlService { stop(input: unknown, signal?: AbortSignal): Promise<ControlStopReceipt>; close(): void }
 const identity = (target: ControlTarget) => [target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null];
+function parseStopAcknowledgement(value: unknown): { aborted: boolean; runIds: string[] } | null {
+  const row = controlRecord(value);
+  if (!row || controlByteSize(row) > CONTROL_LIMITS.responseBytes || Object.keys(row).some(key => !['ok', 'aborted', 'runIds'].includes(key))
+    || row.ok !== true || typeof row.aborted !== 'boolean' || !Array.isArray(row.runIds) || row.runIds.length > 64 || !row.runIds.every(isControlRunId)) return null;
+  return { aborted: row.aborted, runIds: row.runIds };
+}
 export function createRunControlService(gateway: ControlGateway, tasks: TaskService): RunControlService {
   // Retain attempted mutations for this service's lifetime: uncertain cancellation must never be replayed.
   const attempts = new Map<string, Promise<ControlStopReceipt>>(); const controllers = new Set<AbortController>();
@@ -12,7 +19,7 @@ export function createRunControlService(gateway: ControlGateway, tasks: TaskServ
   function authority(): void {
     const status = gateway.status();
     if (closed || !status.canRead) throw new ControlError('unavailable');
-    if (!status.canStop) throw new ControlError(status.canSend ? 'unsupported' : 'scope-required');
+    if (!status.canStop) throw new ControlError(status.stopDisabledReason ?? 'unsupported');
   }
   async function perform(input: ControlStopRequest, signal: AbortSignal, attempted: () => void): Promise<ControlStopReceipt> {
     const task = await tasks.getTask(input.target, signal, { fresh: true, coalesce: false, requireUnchangedObservation: true });
@@ -24,17 +31,18 @@ export function createRunControlService(gateway: ControlGateway, tasks: TaskServ
     if (currentDirectRun(task) !== input.runId) throw new ControlError('session-changed');
     authority();
     attempted();
-    let phase: ControlStopReceipt['phase'] = 'unknown';
+    let reply: unknown;
     try {
-      const result = controlRecord(await gateway.request('chat.abort', { agentId: input.target.agentId, sessionKey: input.target.sessionKey, runId: input.runId }, signal));
-      if (result?.ok === true && Array.isArray(result.runIds)) {
-        if (result.aborted === true && result.runIds.length === 1 && result.runIds[0] === input.runId) phase = 'requested';
-        else if (result.aborted === false && result.runIds.length === 0) phase = 'not-running';
-      }
+      reply = await gateway.request('chat.abort', { agentId: input.target.agentId, sessionKey: input.target.sessionKey, runId: input.runId }, signal);
     } catch (error) {
       if (error instanceof GatewayRequestError && ['stop-denied', 'session-changed', 'unsupported', 'scope-required'].includes(error.code)) throw new ControlError(error.code);
+      return { ...input, phase: 'unknown' };
     }
-    return { ...input, phase };
+    const result = parseStopAcknowledgement(reply);
+    if (!result) throw new ControlError('invalid-source');
+    if (result.aborted && result.runIds.length === 1 && result.runIds[0] === input.runId) return { ...input, phase: 'requested' };
+    if (!result.aborted && result.runIds.length === 0) return { ...input, phase: 'not-running' };
+    throw new ControlError('invalid-source');
   }
   return {
     async stop(value, signal) {

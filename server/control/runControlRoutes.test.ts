@@ -40,7 +40,7 @@ describe('private Stop route', () => {
     const missing = fixture(true, false);
     expect((await request(missing.app).post('/api/control/agents/cylena/stop').auth('fixture-key', { type: 'bearer' }).send(input)).status).toBe(501);
   });
-  it.each([['stop-denied', 403], ['scope-required', 403], ['session-changed', 409], ['invalid-target', 404], ['unsupported', 501], ['rate-limited', 429], ['unavailable', 503]] as const)('maps %s without leaking diagnostics', async (code, status) => {
+  it.each([['stop-denied', 403], ['scope-required', 403], ['session-changed', 409], ['invalid-target', 404], ['unsupported', 501], ['rate-limited', 429], ['unavailable', 503], ['invalid-source', 503]] as const)('maps %s without leaking diagnostics', async (code, status) => {
     const f = fixture(); f.stop.mockRejectedValue(new ControlError(code));
     const response = await request(f.app).post('/api/control/agents/cylena/stop').auth('fixture-key', { type: 'bearer' }).send(input);
     expect(response.status).toBe(status); expect(response.body.code).toBe(code); expect(response.headers['cache-control']).toBe('no-store');

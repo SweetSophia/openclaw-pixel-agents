@@ -90,6 +90,17 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it('reports unsupported Stop rather than missing scope when granted write but neither send/create nor abort is advertised', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.write'] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: {} })));
+    const gateway = client(host.url, true); await ready(gateway);
+    expect(gateway.status()).toMatchObject({ canSend: false, canStop: false, stopDisabledReason: 'unsupported' });
+    const tasks = createTaskService(gateway, () => new Set(['cylena'])); const controls = createRunControlService(gateway, tasks);
+    cleanups.push(() => { controls.close(); tasks.close(); });
+    await expect(controls.stop({ target: { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 's1' }, runId: 'run1' })).rejects.toMatchObject({ code: 'unsupported' });
+    expect(host.frames.some(frame => frame.method === 'chat.abort')).toBe(false);
+  });
   it('keeps exact Stop uncertain without replay after a lost native response and signed reconnect', async () => {
     const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'stop-instance' };
     const host = await fixture((frame, socket) => {

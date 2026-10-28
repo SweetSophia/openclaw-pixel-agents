@@ -37,6 +37,16 @@ describe('exact-run Stop contract', () => {
     expect(parseControlStopReceipt({ ...input, phase: 'completed' })).toBeNull();
     expect(parseControlStopReceipt({ ...input, phase: 'unknown', clearQueued: true })).toBeNull();
   });
+  it.each([['requested'], ['not-running'], ['unknown'], { toString: () => 'requested' }, null, 1, true])('rejects non-string receipt phases without coercion: %j', phase => {
+    expect(parseControlStopReceipt({ ...input, phase })).toBeNull();
+  });
+  it('preserves only valid negotiated Stop denial reasons', () => {
+    const status = { configured: true, state: 'ready', canRead: true, canSend: false, canStop: false };
+    expect(parseControlStatus({ ...status, stopDisabledReason: 'unsupported' })?.stopDisabledReason).toBe('unsupported');
+    expect(parseControlStatus({ ...status, stopDisabledReason: 'scope-required' })?.stopDisabledReason).toBe('scope-required');
+    expect(parseControlStatus({ ...status, stopDisabledReason: 'other' })).toBeNull();
+    expect(parseControlStatus({ ...status, canStop: true, stopDisabledReason: 'unsupported' })).toBeNull();
+  });
   it('requires exactly one identified direct running run and enforces freshness and future-skew bounds', () => {
     const f = fixture(); const now = Date.now();
     for (const offset of [-15000, 5000]) expect(currentDirectRun({ ...f.snapshot, source: { state: 'current', observedAt: now + offset } }, now)).toBe('run1');
@@ -85,6 +95,11 @@ describe('exact-run Stop service', () => {
     const f = fixture(); f.gateway.status = () => ({ configured: true, state: 'ready', canRead: true, canSend: false, canStop: true });
     expect((await f.controls.stop(input)).phase).toBe('requested');
   });
+  it.each(['unsupported', 'scope-required'] as const)('preserves negotiated Stop denial %s when both send/create and Stop are unavailable', async reason => {
+    const f = fixture(); f.gateway.status = () => ({ configured: true, state: 'ready', canRead: true, canSend: false, canStop: false, stopDisabledReason: reason });
+    await expect(f.controls.stop(input)).rejects.toMatchObject({ code: reason });
+    expect(f.tasks.getTask).not.toHaveBeenCalled(); expect(f.gateway.request).not.toHaveBeenCalled();
+  });
   it('denies absent capability and invalid input before private reads', async () => {
     const f = fixture(); f.gateway.status = () => ({ configured: true, state: 'ready', canRead: true, canSend: true, canStop: false });
     await expect(f.controls.stop(input)).rejects.toMatchObject({ code: 'unsupported' });
@@ -96,9 +111,16 @@ describe('exact-run Stop service', () => {
     expect(receipts).toEqual([{ ...input, phase: 'unknown' }, { ...input, phase: 'unknown' }]);
     expect(await f.controls.stop(input)).toEqual({ ...input, phase: 'unknown' }); expect(f.gateway.request).toHaveBeenCalledTimes(1);
   });
-  it.each([{ ok: true, aborted: true, runIds: ['other'] }, { ok: true, aborted: true, runIds: ['run1', 'other'] }, { ok: true }, null])('keeps malformed native acknowledgements uncertain and non-replayable: %j', async reply => {
+  it.each([{ ok: true, aborted: true, runIds: ['other'] }, { ok: true, aborted: true, runIds: ['run1', 'other'] }, { ok: true }, null,
+    { ok: true, aborted: true, runIds: ['run1'], clearQueued: true }, { ok: 'true', aborted: true, runIds: ['run1'] },
+    { ok: true, aborted: 'true', runIds: ['run1'] }, { ok: true, aborted: true, runIds: 'run1' },
+    { ok: true, aborted: true, runIds: [1] }, { ok: true, aborted: true, runIds: ['run\u202e1'] },
+    { ok: true, aborted: true, runIds: ['run1', ...Array.from({ length: 64 }, (_, index) => `run-${index}`)] },
+    { ok: true, aborted: true, runIds: ['x'.repeat(256 * 1024)] }, { ok: true, aborted: false, runIds: ['run1'] },
+  ])('rejects malformed native acknowledgement case %# with a typed error and retains the attempted ledger', async reply => {
     const f = fixture(); vi.mocked(f.gateway.request).mockResolvedValue(reply);
-    expect((await f.controls.stop(input)).phase).toBe('unknown'); expect((await f.controls.stop(input)).phase).toBe('unknown'); expect(f.gateway.request).toHaveBeenCalledTimes(1);
+    await expect(f.controls.stop(input)).rejects.toMatchObject({ code: 'invalid-source' });
+    await expect(f.controls.stop(input)).rejects.toMatchObject({ code: 'invalid-source' }); expect(f.gateway.request).toHaveBeenCalledTimes(1);
   });
   it('reports native no-longer-running without claiming completion', async () => {
     const f = fixture(); vi.mocked(f.gateway.request).mockResolvedValue({ ok: true, aborted: false, runIds: [] });
@@ -126,6 +148,7 @@ describe('exact-run Stop service', () => {
     for (let n = 0; n < 10; n++) {
       f.snapshot.runId = `run${n}`; f.snapshot.activeRunIds = [`run${n}`];
       vi.mocked(f.tasks.verifyTarget).mockResolvedValue({ hasActiveRun: true, activeRunIds: [`run${n}`] });
+      vi.mocked(f.gateway.request).mockResolvedValue({ ok: true, aborted: true, runIds: [`run${n}`] });
       await f.controls.stop({ target, runId: `run${n}` });
     }
     await f.controls.stop(input);

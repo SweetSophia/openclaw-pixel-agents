@@ -11,7 +11,7 @@ export function parseControlStopRequest(value: unknown): ControlStopRequest | nu
 }
 export function parseControlStopReceipt(value: unknown): ControlStopReceipt | null {
   const row = controlRecord(value);
-  if (!row || Object.keys(row).some(key => !['target', 'runId', 'phase'].includes(key)) || !['requested', 'not-running', 'unknown'].includes(String(row.phase))) return null;
+  if (!row || Object.keys(row).some(key => !['target', 'runId', 'phase'].includes(key)) || typeof row.phase !== 'string' || !['requested', 'not-running', 'unknown'].includes(row.phase)) return null;
   const input = parseControlStopRequest({ target: row.target, runId: row.runId });
   return input ? { ...input, phase: row.phase as ControlStopReceipt['phase'] } : null;
 }
