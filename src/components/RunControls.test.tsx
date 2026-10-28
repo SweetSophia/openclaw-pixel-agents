@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ControlTaskSnapshot } from '../../shared/control';
@@ -31,6 +31,33 @@ describe('exact-run Stop controls', () => {
     await act(async () => resolve({ target, runId: 'run1', phase: 'requested' }));
     expect(screen.getByRole('status')).toHaveTextContent('Stop requested'); expect(refresh).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('aria-disabled', 'true');
+  });
+  it('latches duplicate confirmation clicks in the same JavaScript task before a render', () => {
+    f.request.mockImplementation(() => new Promise(() => {}));
+    render(<RunControls task={task()} active onRefresh={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+    const confirm = screen.getByRole('button', { name: 'Confirm Stop' });
+    act(() => { confirm.click(); confirm.click(); });
+    expect(f.request).toHaveBeenCalledOnce();
+    expect(JSON.parse(f.request.mock.calls[0][1].body)).toEqual({ target, runId: 'run1' });
+  });
+  it('rejects a replaced run confirmation during commit before passive invalidation effects', () => {
+    f.request.mockImplementation(() => new Promise(() => {}));
+    let confirm: HTMLElement; let raced = false;
+    function CommitRace({ snapshot }: { snapshot: ControlTaskSnapshot }) {
+      useLayoutEffect(() => {
+        if (snapshot.runId === 'run2') { raced = true; confirm.click(); }
+      }, [snapshot]);
+      return <RunControls task={snapshot} active onRefresh={vi.fn()} />;
+    }
+    const view = render(<CommitRace snapshot={task()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+    confirm = screen.getByRole('button', { name: 'Confirm Stop' });
+    expect(screen.getByRole('group', { name: 'Confirm Stop' })).toHaveTextContent('run1');
+    view.rerender(<CommitRace snapshot={{ ...task(), runId: 'run2', activeRunIds: ['run2'] }} />);
+    expect(raced).toBe(true);
+    expect(f.request).not.toHaveBeenCalled();
+    expect(screen.queryByRole('group', { name: 'Confirm Stop' })).toBeNull();
   });
   it.each(['stale', 'old', 'ambiguous', 'historical', 'locked', 'unsupported', 'read-only'] as const)('explains and prevents Stop for %s facts', mode => {
     const snapshot = task(); if (mode === 'stale') snapshot.source.state = 'stale'; if (mode === 'old') snapshot.source.observedAt -= 16000;
