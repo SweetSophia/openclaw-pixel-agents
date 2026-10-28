@@ -63,8 +63,9 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     if (entry.attempted) {
       if (entry.receipt?.phase === 'accepted' || entry.receipt?.phase === 'persisted') return entry.receipt;
     }
-    if (!input.newConversation && !target.activeLeafEntryId) throw new ControlError('unsupported');
-    if (entry.observedLeaf !== (target.activeLeafEntryId ?? null)) throw new ControlError('outcome-unknown');
+    const steering = input.intent === 'steer';
+    if (!steering && !input.newConversation && !target.activeLeafEntryId) throw new ControlError('unsupported');
+    if (!steering && entry.observedLeaf !== (target.activeLeafEntryId ?? null)) throw new ControlError('outcome-unknown');
     if (input.newConversation && !entry.attempted) {
       const history = controlRecord(await gateway.request('chat.history', { agentId: target.agentId, sessionKey: target.sessionKey, limit: 1, maxBytes: 256 * 1024 }, signal));
       if (!history || history.sessionId !== target.sessionId || history.sessionKey !== target.sessionKey
@@ -75,8 +76,8 @@ export function createSendService(gateway: ControlGateway, tasks: TaskService): 
     try {
       const result = controlRecord(await gateway.request('chat.send', {
         agentId: target.agentId, sessionKey: target.sessionKey, sessionId: target.sessionId, message: input.message,
-        idempotencyKey: input.idempotencyKey, queueMode: 'followup', deliver: false,
-        expectedLeafEntryId: target.activeLeafEntryId ?? null,
+        idempotencyKey: input.idempotencyKey, queueMode: input.intent ?? 'followup', deliver: false,
+        ...(!steering ? { expectedLeafEntryId: target.activeLeafEntryId ?? null } : {}),
       }, signal));
       if (!result || result.runId !== input.idempotencyKey) throw Error('Unconfirmed admission');
       const seq = result.messageSeq; const id = result.messageId;

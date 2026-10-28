@@ -13,6 +13,10 @@ it('does not accept a browser-only timeout as a server rejection code', async ()
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{"code":"timed-out"}', { status: 504 })));
   await expect(controlFetch('/api/control/agents/cylena/send', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'unavailable' });
 });
+it('preserves a typed Stop ownership denial instead of converting it to an uncertain outage', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{"code":"stop-denied"}', { status: 403 })));
+  await expect(controlFetch('/api/control/agents/cylena/stop', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'stop-denied', message: expect.stringContaining('owning device') });
+});
 describe('private file response boundary', () => {
   it('preserves JSON bytes and the UTF-8 filename without treating content as metadata', async () => {
     vi.stubGlobal('Blob', NodeBlob);

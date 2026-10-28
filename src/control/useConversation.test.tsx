@@ -2,12 +2,12 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useConversation } from './useConversation';
 import { ControlApiError } from './api';
-const f = vi.hoisted(() => ({ request: vi.fn(), openSocket: vi.fn(), generation: 1, state: 'unlocked', canSend: true }));
-vi.mock('./ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { canRead: true, canSend: f.canSend } }), useConversationDrafts: () => undefined }));
+const f = vi.hoisted(() => ({ request: vi.fn(), openSocket: vi.fn(), generation: 1, state: 'unlocked', canSend: true, drafts: undefined as Map<string, unknown> | undefined }));
+vi.mock('./ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { canRead: true, canSend: f.canSend } }), useConversationDrafts: () => f.drafts }));
 const a = { agentId: 'cylena', sessionKey: 'agent:cylena:a', sessionId: 's1', activeLeafEntryId: 'leaf1' };
 const b = { ...a, sessionKey: 'agent:cylena:b', sessionId: 's2' };
 function setup() {
-  f.generation = 1; f.state = 'unlocked'; f.canSend = true; f.openSocket.mockReturnValue(null);
+  f.generation = 1; f.state = 'unlocked'; f.canSend = true; f.drafts = undefined; f.openSocket.mockReturnValue(null);
   f.request.mockImplementation(async (path: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));
     return path.endsWith('/history') ? { target: body, messages: [], source: { state: 'current', observedAt: 10 } }
@@ -16,6 +16,36 @@ function setup() {
 }
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('manual conversation submissions', () => {
+  it('defaults to follow-up and retains intent with each exact conversation draft', async () => {
+    setup(); const { result, rerender } = renderHook(({ target, active }) => useConversation(target, active), { initialProps: { target: a, active: true } });
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.intent).toBe('followup'); act(() => { result.current.setDraft('draft A'); result.current.setIntent('steer'); });
+    rerender({ target: b, active: true }); expect(result.current.intent).toBe('followup');
+    act(() => result.current.setDraft('draft B')); rerender({ target: a, active: false });
+    expect(result.current.draft).toBe('draft A'); expect(result.current.intent).toBe('steer');
+    f.request.mockClear(); await act(() => result.current.send()); await act(() => result.current.refresh());
+    expect(f.request).not.toHaveBeenCalled();
+    rerender({ target: a, active: true }); await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.draft).toBe('draft A'); expect(result.current.intent).toBe('steer');
+  });
+  it('keeps original steering intent, message, target and ID across retries and coalesces duplicate clicks', async () => {
+    setup(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation((path, init) => path.endsWith('/send') ? Promise.resolve({ target: a, idempotencyKey: JSON.parse(String(init.body)).idempotencyKey, phase: 'unknown' }) : original(path, init));
+    const { result } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => { result.current.setDraft('original steer'); result.current.setIntent('steer'); });
+    await act(async () => { await Promise.all([result.current.send(), result.current.send()]); });
+    act(() => { result.current.setDraft('later follow-up'); result.current.setIntent('followup'); });
+    await act(() => result.current.retryPending());
+    const sends = f.request.mock.calls.filter(([path]) => String(path).endsWith('/send')).map(([, init]) => JSON.parse(String(init.body)));
+    expect(sends).toHaveLength(2); expect(sends[0]).toEqual(sends[1]); expect(sends[0]).toMatchObject({ intent: 'steer', message: 'original steer', target: a });
+    expect(result.current.intent).toBe('followup'); expect(result.current.draft).toBe('later follow-up');
+  });
+  it.each(['followup', 'steer'] as const)('excludes command drafts at the submission boundary for %s', async intent => {
+    setup(); const { result } = renderHook(() => useConversation(a, true)); await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => { result.current.setDraft('/stop'); result.current.setIntent(intent); }); await act(() => result.current.send());
+    expect(result.current.disabledReason).toContain('not slash commands');
+    expect(f.request.mock.calls.some(([path]) => String(path).endsWith('/send'))).toBe(false);
+  });
   it('settles loading immediately if a private invalidation aborts a pending history read', async () => {
     setup(); const listeners = new Map<string, (...args: any[]) => void>();
     f.openSocket.mockReturnValue({ on: (name: string, fn: (...args: any[]) => void) => listeners.set(name, fn), emit: vi.fn(), connect: vi.fn(), disconnect: vi.fn() });
@@ -45,6 +75,40 @@ describe('manual conversation submissions', () => {
     f.generation++; f.state = 'locked'; rerender();
     await act(async () => { resolve({ target: a, idempotencyKey: input.idempotencyKey, phase: 'accepted' }); await pending; });
     expect(result.current.submission?.phase).not.toBe('accepted');
+  });
+  it('does not navigate away from recorded mode when a new-conversation response arrives after live composer unmount', async () => {
+    setup(); let resolve!: (value: unknown) => void; const original = f.request.getMockImplementation()!; const onCreated = vi.fn();
+    f.request.mockImplementation((path, init) => path.endsWith('/send') ? new Promise(done => { resolve = done; }) : original(path, init));
+    const { result, unmount } = renderHook(() => useConversation(a, true, { agentId: 'cylena', onCreated }));
+    await waitFor(() => expect(result.current.ready).toBe(true)); act(() => result.current.newConversation()); act(() => result.current.setDraft('create later'));
+    let pending!: Promise<void>; act(() => { pending = result.current.send(); });
+    const input = JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/send'))![1].body)); unmount();
+    await act(async () => { resolve({ target: b, idempotencyKey: input.idempotencyKey, phase: 'accepted' }); await pending; });
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+  it.each([
+    { phase: 'accepted', returnBeforeReceipt: false }, { phase: 'persisted', returnBeforeReceipt: false },
+    { phase: 'accepted', returnBeforeReceipt: true }, { phase: 'persisted', returnBeforeReceipt: true },
+  ] as const)('adopts a late $phase creation receipt only in active live work (return before receipt: $returnBeforeReceipt)', async ({ phase, returnBeforeReceipt }) => {
+    setup(); f.drafts = new Map(); let resolve!: (value: unknown) => void;
+    const original = f.request.getMockImplementation()!; const onCreated = vi.fn();
+    f.request.mockImplementation((path, init) => path.endsWith('/send') ? new Promise(done => { resolve = done; }) : original(path, init));
+    const live = renderHook(() => useConversation(a, true, { agentId: 'cylena', onCreated }));
+    await waitFor(() => expect(live.result.current.ready).toBe(true));
+    act(() => live.result.current.newConversation()); act(() => { live.result.current.setDraft('create later'); live.result.current.setIntent('steer'); });
+    let pending!: Promise<void>; act(() => { pending = live.result.current.send(); });
+    const input = JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/send'))![1].body)); live.unmount();
+    const settle = async () => { resolve({ target: b, idempotencyKey: input.idempotencyKey, phase, ...(phase === 'persisted' ? { messageId: 'created-user', messageSeq: 1 } : {}) }); await pending; };
+    if (!returnBeforeReceipt) await act(settle);
+    expect(onCreated).not.toHaveBeenCalled();
+    const restored = renderHook(({ target, active }) => useConversation(target, active, { agentId: 'cylena', onCreated }), { initialProps: { target: a, active: false } });
+    expect(onCreated).not.toHaveBeenCalled(); restored.rerender({ target: a, active: true });
+    if (returnBeforeReceipt) await act(settle);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith(b)); restored.rerender({ target: b, active: true });
+    expect(restored.result.current.isNew).toBe(false); expect(restored.result.current.intent).toBe('steer');
+    expect(restored.result.current.draft).toBe(phase === 'persisted' ? '' : 'create later');
+    expect(restored.result.current.submission).toMatchObject({ input, phase, receipt: { target: b } });
+    expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1);
   });
   it('retains drafts across exact target switches and fences replacements', async () => {
     setup(); const { result, rerender } = renderHook(({ target }) => useConversation(target, true), { initialProps: { target: a } });

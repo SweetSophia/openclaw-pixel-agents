@@ -15,6 +15,7 @@ import { createWorkspaceService } from './workspaceService';
 import { createTaskService } from './taskService';
 import { createControlRouter } from './routes';
 import { createUsageService } from './usageService';
+import { createRunControlService } from './runControlService';
 
 type Frame = { type: string; id: string; method: string; params: Record<string, any> };
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -89,6 +90,70 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it('reports unsupported Stop rather than missing scope when granted write but neither send/create nor abort is advertised', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.write'] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: {} })));
+    const gateway = client(host.url, true); await ready(gateway);
+    expect(gateway.status()).toMatchObject({ canSend: false, canStop: false, stopDisabledReason: 'unsupported' });
+    const tasks = createTaskService(gateway, () => new Set(['cylena'])); const controls = createRunControlService(gateway, tasks);
+    cleanups.push(() => { controls.close(); tasks.close(); });
+    await expect(controls.stop({ target: { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 's1' }, runId: 'run1' })).rejects.toMatchObject({ code: 'unsupported' });
+    expect(host.frames.some(frame => frame.method === 'chat.abort')).toBe(false);
+  });
+  it('keeps exact Stop uncertain without replay after a lost native response and signed reconnect', async () => {
+    const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'stop-instance' };
+    const host = await fixture((frame, socket) => {
+      if (frame.method === 'connect') {
+        const response = writableHello(frame.id); response.payload.features.methods.push('chat.abort'); socket.write(encode(response)); return;
+      }
+      if (frame.method === 'chat.abort') { socket.destroy(); return; }
+      socket.write(encode({ type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe'
+        ? { session: { ...target, key: target.sessionKey, hasActiveRun: true, activeRunIds: ['run1'] } }
+        : frame.method === 'chat.history' ? { sessionKey: target.sessionKey, sessionId: target.sessionId, messages: [], hasMore: false, inFlightRun: { runId: 'run1' } }
+          : { sessions: [], hasMore: false } }));
+    });
+    const gateway = client(host.url, true); await ready(gateway);
+    const tasks = createTaskService(gateway, () => new Set(['cylena'])); const controls = createRunControlService(gateway, tasks);
+    cleanups.push(() => { controls.close(); tasks.close(); });
+    const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: host.url, PIXEL_CONTROL_TOKEN: 'fixture-key', CONTROL_SEND_ENABLED: 'true' }, '/tmp/stop-fixture');
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, runControls: controls }));
+    const body = { target, runId: 'run1' }; const url = '/api/control/agents/cylena/stop';
+    const first = await request(app).post(url).auth('fixture-key', { type: 'bearer' }).send(body);
+    expect(first.status).toBe(200); expect(first.body).toEqual({ ...body, phase: 'unknown' });
+    await vi.waitFor(() => expect(host.frames.filter(frame => frame.method === 'connect')).toHaveLength(2), { timeout: 2000, interval: 10 });
+    await vi.waitFor(() => expect(gateway.status().canStop).toBe(true));
+    const second = await request(app).post(url).auth('fixture-key', { type: 'bearer' }).send(body);
+    expect(second.body).toEqual({ ...body, phase: 'unknown' });
+    expect(host.frames.filter(frame => frame.method === 'chat.abort').map(frame => frame.params)).toEqual([{ agentId: 'cylena', sessionKey: target.sessionKey, runId: 'run1' }]);
+    expect(host.frames.filter(frame => frame.method === 'connect').every(frame => JSON.stringify(frame.params.scopes) === '["operator.read","operator.write"]')).toBe(true);
+  });
+  it('negotiates exact Stop independently of send methods and preserves scoped ownership denial', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.write'] },
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.abort'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN', message: 'private ownership diagnostics' } })));
+    const gateway = client(host.url, true); await ready(gateway);
+    expect(gateway.status()).toMatchObject({ canStop: true, canSend: false });
+    await expect(gateway.request('chat.abort', { agentId: 'a', sessionKey: 'agent:a:fixture', runId: 'run1' })).rejects.toMatchObject({ code: 'stop-denied' });
+    expect(host.frames[0].params.scopes).toEqual(['operator.read', 'operator.write']);
+    gateway.close(); expect(gateway.status().canStop).toBe(false);
+  });
+  it.each([false, true])('does not send unadvertised Stop with send enabled=%s', async enabled => {
+    const host = await fixture((frame, socket) => socket.write(encode(writableHello(frame.id))));
+    const gateway = client(host.url, enabled); await ready(gateway);
+    expect(gateway.status().canStop).toBe(false);
+    await expect(gateway.request('chat.abort', { runId: 'run1' })).rejects.toMatchObject({ code: enabled ? 'unsupported' : 'scope-required' });
+    expect(host.frames.some(frame => frame.method === 'chat.abort')).toBe(false);
+  });
+  it('denies advertised Stop without a negotiated write grant', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.abort'], events: [] },
+    }))));
+    const gateway = client(host.url, true); await ready(gateway); expect(gateway.status().canStop).toBe(false);
+    await expect(gateway.request('chat.abort', { runId: 'run1' })).rejects.toMatchObject({ code: 'scope-required' });
+    expect(host.frames.some(frame => frame.method === 'chat.abort')).toBe(false);
+  });
   it('only permits the optional historical outcome reader when advertised, without changing scopes', async () => {
     const old = await fixture(); const legacy = client(old.url); await ready(legacy);
     await expect(legacy.request('audit.activity.list', { agentId: 'a', sessionKey: 'agent:a:x', runId: 'run', kind: 'agent_run', limit: 50 })).rejects.toMatchObject({ code: 'unsupported' });
@@ -320,7 +385,7 @@ describe('scoped task Gateway client', () => {
   });
   it('does not connect when task configuration is disabled', () => {
     const gateway = client(); gateway.start();
-    expect(gateway.status()).toEqual({ configured: false, state: 'disabled', canRead: false, canSend: false });
+    expect(gateway.status()).toEqual({ configured: false, state: 'disabled', canRead: false, canSend: false, canStop: false });
   });
   it('signs the actual challenge and requests only read authority over native WebSocket frames', async () => {
     const host = await fixture(); const gateway = client(host.url); await ready(gateway);

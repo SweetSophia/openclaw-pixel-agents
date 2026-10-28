@@ -122,7 +122,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
         </div>
         <div role="tabpanel" id={`${tabsId}-conversation-panel`} aria-labelledby={`${tabsId}-conversation-tab`} hidden={tab !== 'conversation'}>
           <TaskDetailsView agentId={agent.id} active={tab === 'conversation'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
-            <div hidden={!!selectedRunId}><AgentConversation target={details.selected} agentId={agent.id} active={tab === 'conversation' && !selectedRunId} busy={details.selected?.hasActiveRun === true} onCreated={target => { setRunSelection(null); details.selectCreatedSession(target); }} /></div>
+            <div hidden={!!selectedRunId}><AgentConversation target={details.selected} agentId={agent.id} active={tab === 'conversation' && !selectedRunId} readOnly={!!selectedRunId} busy={details.selected?.hasActiveRun === true} onCreated={target => { setRunSelection(null); details.selectCreatedSession(target); }} /></div>
             {selectedRunId && <HistoricalConversation snapshot={history.snapshot?.task ? history.snapshot : history.lastKnown ?? history.snapshot} />}
           </TaskDetailsView>
         </div>
