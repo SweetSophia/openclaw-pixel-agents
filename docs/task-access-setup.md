@@ -16,7 +16,7 @@ With an npm installation, run `openclaw-pixel-agents --generate-key` instead. Th
 
 The command prints one new 64-character hexadecimal key using 32 cryptographically secure random bytes from Node's `crypto.randomBytes`. It works wherever the project's supported Node.js version runs, including Windows, macOS and Linux. It does not read an existing key, write a configuration file, or rotate a running server's credentials.
 
-Save the output in your private server configuration as `PIXEL_CONTROL_TOKEN`. Keep the same value to paste into **Unlock task details**. Share it only with people authorized to read private conversations and, when enabled, send messages. The current office uses one shared operator key rather than individual user accounts.
+Save the output in your private server configuration as `PIXEL_CONTROL_TOKEN`. Keep the same value to paste into **Unlock task details**. Share it only with people authorized to read private conversations and, when enabled, send, steer or stop work. The current office uses one shared operator key rather than individual user accounts.
 
 Keep keys out of commits, browser URLs and `VITE_*` variables. This repository does not use a universal key or a developer-specific key file location.
 
@@ -74,13 +74,29 @@ openclaw devices approve <request-id>
 
 Confirm the request belongs to this Pixel Agents office and has the intended scopes before approving it. Restart the office to retry the connection. Once it has connected successfully and saved its scoped device grant, remove the temporary Gateway bootstrap credential and restart again. It then uses its own stored grant. Do not delete or copy another client's identity to bypass pairing.
 
-For sending messages, set `CONTROL_SEND_ENABLED=true` and pair/approve the same office device with `operator.read` plus `operator.write`. A cached read-only grant keeps reads working while sending remains disabled; temporarily supply the bootstrap credential again to request the upgrade, then remove it after the updated grant is stored.
+For sending, steering or stopping, set `CONTROL_SEND_ENABLED=true` and pair/approve the same office device with `operator.read` plus `operator.write`. This existing opt-in gates all three actions; it does not grant authority itself. A cached read-only grant keeps reads working while mutations remain disabled; temporarily supply the bootstrap credential again to request the upgrade, then remove it after the updated grant is stored. No administrator scope is needed or requested.
 
 ## 4. Unlock task details
 
 Open an agent's **Task** tab and paste the **office key from step 1** into **Unlock task details**. It is retained only in that browser tab. Lock or reload clears it.
 
 If the office URL uses HTTP, private access is normally available only from loopback. An operator using a direct encrypted Tailscale connection can explicitly enable `CONTROL_ALLOW_TAILNET_HTTP=true`; this requires actual direct Tailnet endpoints and does not allow ordinary LAN/public HTTP. HTTPS remains the normal remote setup.
+
+## Live follow-ups, steering and Stop
+
+Stop and steering are implemented in the current review branch, not in published npm **1.7.0**. The work remains in review until its future PR merges and post-merge checks pass. Source qualification does not establish deployment or a new npm release.
+
+The Gateway must grant `operator.write` as well as `operator.read`, and advertise the native methods. Sending and steering require `chat.send` and `sessions.create`; Stop independently requires `chat.abort`. One capability does not imply the other. Missing methods show **unsupported**; missing write authority, disabled opt-in, disconnected access and native ownership denial remain explicit unavailable states. Do not bypass them with a generic RPC endpoint, administrator grant or deprecated `sessions.steer`.
+
+In **Conversation**, **Message delivery** defaults to follow-up. Explicit steering uses `chat.send` with `queueMode: steer` and `deliver: false`: it targets the conversation's direct work at native admission, not necessarily the run seen earlier. If that conversation becomes idle first, steering can start a new turn. Neither mode delivers externally. Command-shaped messages are rejected. On an uncertain send, the explicit retry retains the original message, intent, idempotency key and canonical conversation target, even if you edit the draft or selector. Reconnect never automatically resends it.
+
+In the live **Task** view, Stop is available only for one identified, source-verified direct active run in the selected canonical conversation. Observations must be no older than 15 seconds and no more than 5 seconds into the future. Stale, ambiguous, unidentified, replaced or historical work cannot be stopped. Confirmation names the exact run and warns that its controlled child work may also stop; Cancel receives initial focus, Escape closes confirmation, and focus returns to Stop. If the facts become stale or ambiguous while confirmation is open, it closes without submitting. The server re-reads unchanged task facts and verifies ownership, identity, policy and authority immediately before sending `chat.abort` with that exact run ID. Native device/run ownership may still deny Stop despite a write grant.
+
+A Stop receipt labelled **requested** confirms admission, not completion. **Not running** is not a claim that this click stopped the run. **Unknown** means the response was lost or otherwise uncertain: refresh authoritative task facts rather than assuming success or failure. There is no automatic Stop replay, including after reconnect. Duplicate attempts share the process-local attempted-operation record; it is bounded to 1,000 identities and fails closed at capacity. It is not durable across a server restart, so restarting is not a safe retry strategy.
+
+## Recorded runs are read-only
+
+Run history is merged in source but is not included in published npm **1.7.0**. Its selector lets you choose a source-backed recorded run, then return explicitly to **Live / latest task**. Recorded **Task**, **Conversation** and **Results** follow that run; **Usage** explains that per-run usage is unavailable and directs you back to Live for conversation totals, never invented per-run billing. No Stop, send, steer, new-conversation or retry action can mutate from recorded selection. Your live draft and delivery intent remain in private tab memory and return when you choose Live. Lock or reload clears private access; no control payload is added to the public roster/socket or browser storage.
 
 ## Results and delivered files
 

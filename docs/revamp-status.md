@@ -36,7 +36,7 @@ temporary branch, review deadline and merge state belong in the execution ledger
 | Qualify dependency maintenance | Complete — Codex coordinator | [#324](https://github.com/SweetSophia/openclaw-pixel-agents/pull/324), squash merge `90e78a7` on 2026-10-26 at 18:27:11 UTC. Original PRs [#316](https://github.com/SweetSophia/openclaw-pixel-agents/pull/316)–[#322](https://github.com/SweetSophia/openclaw-pixel-agents/pull/322) are closed as superseded. | The full 15-minute review window elapsed before merge. Independent review, 1,407 local tests, package smoke, Docker on Node 26.12.1, required CI/security checks, Kody and Sourcery passed. A clean fresh independent review replaced Kilo's provider-rate-limit failure. The merged tree matches reviewed head `8301f68`. The subsequent `ad7acb3` rollout installed the full qualified dependency tree alongside the runtime. |
 | Harden transient Gateway startup recovery | Complete — Codex coordinator | [#326](https://github.com/SweetSophia/openclaw-pixel-agents/pull/326), squash merge `ad7acb3` on 2026-10-26 at 19:28:31 UTC | Independent reviews, 1,411 tests, coverage/types/build/package/audits, required CI, Docker, CodeQL, Kody and Sourcery passed. A clean fresh independent review replaced unavailable Kilo. The reset 15-minute review window elapsed before merge; post-merge main CI and CodeQL passed on `ad7acb3`. |
 | Qualify the current runtime and roll out merged additions | Complete — Codex runtime audit/coordinator | Exact merged source `ad7acb3`; operator backup/rollback record retained | Independently reviewed deployment installed the tested runtime and full qualified dependencies. Fresh roster, private Usage/Results/Workspace, read/send capability and exact-client checks passed. Saved preferences/layouts and current credentials were preserved. No real task was sent. |
-| Publish onboarding and Usage to npm | In progress — Codex release author/coordinator; authorized in phase two | Branch `release/1.7.0`; release PR and registry verification pending | The prepared [1.7.0 notes](releases/1.7.0.md) cover these additions. Follow the [release workflow](releases.md); do not count a source merge or accepted upload as verified public installation. At first-phase closeout, npm 1.6.0 predated these additions. |
+| Publish onboarding and Usage to npm | Complete — Codex release author/coordinator | [#327](https://github.com/SweetSophia/openclaw-pixel-agents/pull/327), merged `57dbf4b`; [v1.7.0 release](https://github.com/SweetSophia/openclaw-pixel-agents/releases/tag/v1.7.0), published 2026-10-26 | npm 1.7.0 is already published; registry version and integrity were rechecked on 2026-10-28. See [1.7.0 notes](releases/1.7.0.md). That artifact predates run history and Stop/Steer. |
 
 For each new or updated PR, the coordinator records its exact pushed revision,
 independent review, 15-minute review deadline, checks and findings. Every push
@@ -85,7 +85,8 @@ collector and disabled retired previews. No real task was sent. The earlier
 `cf1dceb` snapshot remains historical; the current qualified live revision and
 dependency tree are `ad7acb3`. At first-phase closeout, npm remained 1.6.0 and
 onboarding/Usage publication was separate release work. Phase two now authorizes
-that publication; its registry verification is still pending.
+that publication, which subsequently completed as npm 1.7.0. These historical
+runtime checks do not establish a later run-history or Stop/Steer deployment.
 
 ## Phase-two tasks
 
@@ -96,9 +97,9 @@ contract. The coordinator owns integration and merge decisions.
 
 | Order | Delivery | State / owner | Branch or next gate |
 | --- | --- | --- | --- |
-| 1 | New npm release | In progress — Codex release author/coordinator | `release/1.7.0`; independent review, release PR, workflow publication and public-consumer verification |
-| 2 | Task/run history | Pending — Codex coordinator | Native contract and exact historical run identity, then read-only selection across private panels |
-| 3 | Stop and Steer | Pending — Codex coordinator | Current verified active-run target and native supported mutation contract |
+| 1 | New npm release | Complete — Codex release author/coordinator | [#327](https://github.com/SweetSophia/openclaw-pixel-agents/pull/327), `57dbf4b`, published [v1.7.0](https://github.com/SweetSophia/openclaw-pixel-agents/releases/tag/v1.7.0); no later controls are included |
+| 2 | Task/run history | Complete — Codex coordinator | [#328](https://github.com/SweetSophia/openclaw-pixel-agents/pull/328), merged `26d77d6` on 2026-10-28; source-backed bounded history and read-only selection across private panels. No new npm publication or runtime rollout is claimed. |
+| 3 | Stop and Steer | In review — Codex coordinator | Implemented and locally qualified on `feat/run-controls-main`; [completion plan](superpowers/plans/2026-10-28-run-controls-completion.md), [setup and semantics](task-access-setup.md#live-follow-ups-steering-and-stop). Independent review, future PR/merge and exact post-merge CI/CodeQL remain required; no live mutation, deployment or publication is claimed. |
 | 4 | Approval handling | Pending — Codex coordinator | Native pending-request visibility, scoped authority and decision contract |
 | 5 | Model selection | Pending — Codex coordinator | Native permitted model catalog and exact conversation mutation |
 | 6 | Scheduling | Pending — Codex coordinator | Native scheduling authority, bounded validation and duplicate-safe creation |
