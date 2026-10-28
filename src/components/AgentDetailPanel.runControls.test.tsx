@@ -1,0 +1,47 @@
+import React from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { AgentDetailPanel } from './AgentDetailPanel';
+import { parseControlTarget } from '../../shared/control';
+import type { AgentState } from '../../shared/types';
+
+const f = vi.hoisted(() => ({ request: vi.fn(), state: 'unlocked', generation: 1, drafts: new Map<string, unknown>() }));
+vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: 'ready', canRead: true, canSend: true, canStop: true }, lock: vi.fn() }), useConversationDrafts: () => f.drafts }));
+const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'typing', model: 'fixture', sessionKey: 'agent:cylena:controls', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
+const selected = { agentId: 'cylena', sessionKey: agent.sessionKey, sessionId: 'session-1', activeLeafEntryId: 'leaf-1', name: 'Fixture conversation', isChild: false, hasActiveRun: true };
+afterEach(() => { cleanup(); f.request.mockReset(); f.drafts.clear(); });
+it.each([false, true])('unmounts recorded-mode composer controls and restores live draft/intent (new conversation: %s)', async newConversation => {
+  f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/sessions')) return { sessions: [selected], source: { state: 'current', observedAt: Date.now() } };
+    const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input); const runId = input.runId ?? 'run-current';
+    const task = { target, source: { state: 'current', observedAt: Date.now() }, hasActiveRun: true, activeRunIds: [runId], runId, runState: 'running', request: { id: `request-${runId}`, role: 'user', text: `Request ${runId}`, truncated: false, runId }, requestAssociation: 'run', requestState: 'found', activity: [], children: [], childrenComplete: false, loadedRecords: 4 };
+    if (path.endsWith('/runs')) return { target, source: task.source, runs: [{ runId: 'run-old' }, { runId: 'run-current' }], runsTruncated: false, limitReached: false, loadedRecords: 4, messagesTruncated: false,
+      ...(input.runId ? { selectedRunId: input.runId, task } : {}), messages: [] };
+    if (path.endsWith('/history')) return { target, source: task.source, messages: [] };
+    if (path.endsWith('/send')) return { target, idempotencyKey: input.idempotencyKey, phase: 'accepted', runId: input.idempotencyKey };
+    return task;
+  });
+  const close = vi.fn(); render(<AgentDetailPanel agent={agent} onClose={close} />);
+  await screen.findByRole('option', { name: /run-old/ });
+  expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('aria-disabled', 'false');
+  fireEvent.click(screen.getByRole('button', { name: 'Stop run' })); fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel Stop' }), { key: 'Escape' });
+  expect(close).not.toHaveBeenCalled(); expect(screen.queryByRole('button', { name: 'Confirm Stop' })).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
+  if (newConversation) fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+  const message = await screen.findByRole('textbox', { name: 'Message' });
+  fireEvent.change(message, { target: { value: 'Keep the current steering draft' } }); fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), { target: { value: 'steer' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Task / run' }), { target: { value: 'run-old' } });
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Message', hidden: true })).toBeNull());
+  expect(document.querySelector('.conversation-send')).toBeNull();
+  f.request.mockClear(); fireEvent.click(screen.getByRole('tab', { name: 'Task' })); await screen.findByText('Request run-old');
+  expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('aria-disabled', 'true'); fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
+  expect(screen.queryByRole('button', { name: 'Confirm Stop' })).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
+  expect(f.request.mock.calls.some(([path]) => /\/(history|send|stop)$/.test(String(path)))).toBe(false);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Task / run' }), { target: { value: '' } });
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep the current steering draft'); expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('steer');
+  if (newConversation) expect(screen.getByText(/It will be created when you send/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Steer conversation' })).toHaveAttribute('aria-disabled', 'false')); fireEvent.click(screen.getByRole('button', { name: 'Steer conversation' }));
+  await waitFor(() => expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1));
+  expect(JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/send'))![1].body)).intent).toBe('steer');
+});

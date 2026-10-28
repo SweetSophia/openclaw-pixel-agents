@@ -31,6 +31,38 @@ function fixture() {
   return { sends, request, admitted, sessions, set: (v: { canSend?: boolean; policy?: boolean; replaced?: boolean; persisted?: boolean; loseCreate?: boolean; loseSend?: boolean }) => { canSend = v.canSend ?? canSend; policy = v.policy ?? policy; replaced = v.replaced ?? replaced; persisted = v.persisted ?? persisted; loseCreate = v.loseCreate ?? loseCreate; loseSend = v.loseSend ?? loseSend; } };
 }
 describe('explicit send admission', () => {
+  it('maps explicit steering to native steer without a leaf guard, even after the observed leaf advances', async () => {
+    const f = fixture(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, signal) => {
+      const result = await original(method, params, signal);
+      return method === 'chat.history' ? { ...(result as object), sessionInfo: { activeLeafEntryId: 'leaf-later' } } : result;
+    });
+    await expect(f.sends.send({ ...input, intent: 'steer' })).resolves.toMatchObject({ phase: 'accepted' });
+    expect(f.request).toHaveBeenCalledWith('chat.send', { agentId: 'cylena', sessionKey: target.sessionKey, sessionId: 's1', message: input.message, idempotencyKey: input.idempotencyKey, queueMode: 'steer', deliver: false }, expect.any(AbortSignal));
+    expect(f.request.mock.calls.some(([method]) => String(method) === 'sessions.steer')).toBe(false);
+  });
+  it('accepts only the two delivery intents and fences mode changes under an existing retry identity', async () => {
+    expect(parseSendRequest('cylena', { ...input, intent: 'steer' })?.intent).toBe('steer');
+    for (const intent of ['interrupt', '', null, true]) expect(parseSendRequest('cylena', { ...input, intent })).toBeNull();
+    const f = fixture(); await f.sends.send({ ...input, intent: 'followup' });
+    await expect(f.sends.send({ ...input, intent: 'steer' })).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(f.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+  });
+  it('permits an absent expected leaf only in explicit steering mode', async () => {
+    const f = fixture(); const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, signal) => {
+      const result = await original(method, params, signal);
+      return method === 'chat.history' ? { ...(result as object), sessionInfo: { activeLeafEntryId: null } } : result;
+    });
+    const empty = { ...input, target: { ...target, activeLeafEntryId: undefined } };
+    await expect(f.sends.send(empty)).rejects.toMatchObject({ code: 'unsupported' });
+    await expect(f.sends.send({ ...empty, idempotencyKey: 'steer-empty', intent: 'steer' })).resolves.toMatchObject({ phase: 'accepted' });
+    expect(f.request.mock.calls.find(([method]) => method === 'chat.send')?.[1]).not.toHaveProperty('expectedLeafEntryId');
+  });
+  it.each(['followup', 'steer'] as const)('rejects command inputs before reads or writes in %s mode', async intent => {
+    const f = fixture(); await expect(f.sends.send({ ...input, intent, message: '/stop' })).rejects.toMatchObject({ code: 'command-not-supported' });
+    expect(f.request).not.toHaveBeenCalled();
+  });
   it('retains a regularly retried uncertain creation across the original one-hour age', async () => {
     vi.useFakeTimers(); vi.setSystemTime(0); const f = fixture(); const fresh = { ...input, target: undefined, newConversation: true };
     f.set({ loseCreate: true }); await expect(f.sends.send(fresh)).rejects.toMatchObject({ code: 'outcome-unknown' });

@@ -5,6 +5,7 @@ import { targetIdentity } from '../control/api';
 import { useTaskDetails, type TaskDetailsState } from '../control/useTaskDetails';
 import './TaskDetails.css';
 import { ControlAccessPanel } from './ControlAccessPanel';
+import { RunControls } from './RunControls';
 
 const runLabels: Record<ControlRunState, string> = { running: 'Running', completed: 'Completed', failed: 'Failed', aborted: 'Stopped', 'not-running': 'Not running', unknown: 'Unknown' };
 const outcomeLabels = { pending: 'No result recorded', success: 'Success recorded', error: 'Error recorded', unknown: 'Outcome unavailable' };
@@ -47,6 +48,7 @@ export function TaskDetailsView({ agentId, active, state, children, runNavigatio
         {task.startedAt !== undefined && task.endedAt !== undefined && task.endedAt >= task.startedAt && <p>Duration {Math.round((task.endedAt - task.startedAt) / 1000)} seconds</p>}
         {task.model && <p className="task-muted">Conversation model: <span>{task.model}</span></p>}
       </section>
+      <RunControls task={task} active={active} readOnly={historical} onRefresh={state.refresh} />
       <section className="task-block"><h3>{task.requestAssociation === 'latest-recorded' ? 'Latest recorded request' : 'Task request'}</h3>
         {task.request && <><p className="task-text task-request">{task.request.text}</p>{task.request.truncated && <p className="task-muted">Request text shortened for display.</p>}</>}
         {task.requestAssociation === 'latest-recorded' && <p className="task-muted">Recorded context; its association with current work is unknown.</p>}

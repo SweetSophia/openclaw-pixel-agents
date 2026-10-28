@@ -6,5 +6,6 @@
 .conversation-messages strong { font-size: 12px; color: var(--text-muted); }
 .conversation-messages p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
 .agent-conversation textarea { display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px; max-width: 100%; background: var(--bg-panel, #131c2c); color: var(--text-main); border: 1px solid rgba(255,255,255,.25); border-radius: 8px; padding: 12px; font: inherit; line-height: 1.6; }
-.agent-conversation textarea:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
+.agent-conversation select { display: block; width: 100%; max-width: 100%; box-sizing: border-box; min-height: 44px; padding: 8px 12px; background: var(--bg-panel, #131c2c); color: var(--text-main); border: 1px solid rgba(255,255,255,.25); border-radius: 8px; font: inherit; }
+.agent-conversation textarea:focus-visible, .agent-conversation select:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
 .conversation-send { border-color: var(--acc-cyan) !important; }

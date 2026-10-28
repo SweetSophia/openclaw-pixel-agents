@@ -2,10 +2,19 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentConversation } from './AgentConversation';
-const f = vi.hoisted(() => ({ send: vi.fn(), setDraft: vi.fn(), draft: 'hello', disabledReason: '', retryDisabledReason: '', ready: true, pending: false, retryPending: vi.fn(), newConversation: vi.fn(), submission: null as null | { phase: string } }));
+const f = vi.hoisted(() => ({ send: vi.fn(), setDraft: vi.fn(), setIntent: vi.fn(), intent: 'followup', draft: 'hello', disabledReason: '', retryDisabledReason: '', ready: true, pending: false, retryPending: vi.fn(), newConversation: vi.fn(), submission: null as null | { phase: string } }));
 vi.mock('../control/useConversation', () => ({ useConversation: () => ({ ...f, messages: [{ id: 'a1', role: 'assistant', text: '<script>literal</script>', truncated: false }], loading: false, error: null }) }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); f.disabledReason = ''; f.submission = null; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); f.disabledReason = ''; f.submission = null; f.intent = 'followup'; });
 describe('conversation composer', () => {
+  it('makes steering explicit and explains admission-time targeting without promising the observed run', () => {
+    const view = render(<AgentConversation target={null} agentId="cylena" active busy />);
+    expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('followup');
+    expect(screen.getByRole('button', { name: 'Send follow-up' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), { target: { value: 'steer' } }); expect(f.setIntent).toHaveBeenCalledWith('steer');
+    f.intent = 'steer'; view.rerender(<AgentConversation target={null} agentId="cylena" active busy />);
+    expect(screen.getByText(/at admission/)).toHaveTextContent(/new turn.*idle/);
+    fireEvent.click(screen.getByRole('button', { name: 'Steer conversation' })); expect(f.send).toHaveBeenCalledOnce();
+  });
   it('allows original retry in a newly created empty conversation while fresh sends stay blocked', () => {
     f.disabledReason = 'Start a new conversation to send from an empty or unsupported transcript.'; f.submission = { phase: 'unknown' };
     render(<AgentConversation target={null} agentId="cylena" active />);

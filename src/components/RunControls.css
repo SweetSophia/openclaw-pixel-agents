@@ -1,0 +1,7 @@
+.run-controls { margin: 1rem 0; }
+.run-stop-confirmation { margin-top: .5rem; padding: .75rem; border: 1px solid var(--acc-pink, #e94560); }
+.run-stop-confirmation strong { overflow-wrap: anywhere; }
+.run-stop-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.run-controls button { min-height: 2.75rem; }
+.run-controls button[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+.run-controls button:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 2px; }

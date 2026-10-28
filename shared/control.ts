@@ -58,6 +58,7 @@ export interface ControlHistoryPage {
 }
 export interface ControlSendRequest {
   agentId: string; target?: ControlTarget; newConversation: boolean; message: string; idempotencyKey: string;
+  intent?: 'followup' | 'steer';
 }
 export interface ControlSendReceipt {
   target: ControlTarget; idempotencyKey: string; phase: 'accepted' | 'persisted' | 'unknown';

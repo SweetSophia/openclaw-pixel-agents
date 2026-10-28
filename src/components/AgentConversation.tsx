@@ -2,8 +2,13 @@ import React, { useId } from 'react';
 import { CONTROL_LIMITS, type ControlTarget } from '../../shared/control';
 import { useConversation } from '../control/useConversation';
 import './AgentConversation.css';
-export function AgentConversation({ target, agentId, active, busy, onCreated }: { target: ControlTarget | null; agentId: string; active: boolean; busy?: boolean; onCreated?(target: ControlTarget): void }) {
-  const state = useConversation(target, active, { agentId, onCreated }); const messageId = useId(); const hintId = useId();
+interface Props { target: ControlTarget | null; agentId: string; active: boolean; busy?: boolean; readOnly?: boolean; onCreated?(target: ControlTarget): void }
+export function AgentConversation(props: Props) {
+  // Unmount the live hook and form in recorded mode; private provider drafts survive it.
+  return props.readOnly ? null : <LiveConversation {...props} />;
+}
+function LiveConversation({ target, agentId, active, busy, onCreated }: Props) {
+  const state = useConversation(target, active, { agentId, onCreated }); const messageId = useId(); const hintId = useId(); const intentId = useId(); const deliveryHintId = useId();
   const blocked = !!state.disabledReason || state.pending || !state.draft.trim() || state.draft.length > CONTROL_LIMITS.prompt;
   const send = () => { if (!blocked) void state.send(); };
   const labels = { sending: 'Sending…', accepted: 'Accepted — waiting for transcript persistence', persisted: 'Persisted in the conversation', unknown: 'Outcome unknown — your recovery draft is kept', rejected: 'Not accepted — your draft is kept' };
@@ -19,12 +24,17 @@ export function AgentConversation({ target, agentId, active, busy, onCreated }: 
     {state.error && <p role="alert">{state.error.message}</p>}
     {state.submission && <p role="status" className="task-notice">{labels[state.submission.phase]}</p>}
     {state.submission && ['unknown', 'accepted', 'rejected'].includes(state.submission.phase) && <button type="button" aria-disabled={!!state.retryDisabledReason} onClick={() => { if (!state.retryDisabledReason) void state.retryPending(); }}>Retry original submission</button>}
-    {state.pending && <p className="task-muted">Retry checks the original message and submission ID. Edits below are kept separately until that submission is settled.</p>}
+    {state.pending && <p className="task-muted">Retry checks the original message, delivery mode and submission ID. Edits below are kept separately until that submission is settled.</p>}
+    <label htmlFor={intentId}>Message delivery</label>
+    <select id={intentId} value={state.intent} aria-describedby={deliveryHintId} onChange={event => state.setIntent(event.target.value === 'steer' ? 'steer' : 'followup')}>
+      <option value="followup">Follow-up (default)</option><option value="steer">Steer conversation</option>
+    </select>
+    <p id={deliveryHintId} className="task-muted">{state.intent === 'steer' ? "Steering targets this conversation's direct work at admission, not a previously observed run. It can start a new turn if the conversation becomes idle." : 'A follow-up queues behind current work without interrupting it.'}</p>
     <label htmlFor={messageId}>Message</label>
     <textarea id={messageId} rows={5} maxLength={CONTROL_LIMITS.prompt} value={state.draft} aria-describedby={hintId} onChange={event => state.setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } }} />
     <p id={hintId} className="task-muted">{state.draft.length.toLocaleString()} / {CONTROL_LIMITS.prompt.toLocaleString()} · Enter adds a line. Ctrl/Cmd+Enter sends.</p>
     {state.disabledReason && <p role="status">{state.disabledReason}</p>}
-    <button type="button" className="conversation-send" aria-disabled={blocked} onClick={send}>{busy && !state.isNew ? 'Send follow-up' : 'Send'}</button>
+    <button type="button" className="conversation-send" aria-disabled={blocked} onClick={send}>{state.intent === 'steer' ? 'Steer conversation' : busy && !state.isNew ? 'Send follow-up' : 'Send'}</button>
     <p className="task-muted">Messages stay in this conversation. Sending a follow-up does not interrupt current work. Lock and reload clear private drafts and retry identities.</p>
   </section>;
 }
