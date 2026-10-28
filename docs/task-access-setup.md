@@ -84,7 +84,7 @@ If the office URL uses HTTP, private access is normally available only from loop
 
 ## Live follow-ups, steering and Stop
 
-Stop and steering are implemented in the current review branch, not in published npm **1.7.0**. The work remains in review until its future PR merges and post-merge checks pass. Source qualification does not establish deployment or a new npm release.
+Stop and steering are merged in source through [PR #330](https://github.com/SweetSophia/openclaw-pixel-agents/pull/330) (`c86e6eb`), but are not included in published npm **1.7.0**. Exact post-merge `main` CI and CodeQL passed on that revision. Source qualification does not establish deployment or a new npm release.
 
 The Gateway must grant `operator.write` as well as `operator.read`, and advertise the native methods. Sending and steering require `chat.send` and `sessions.create`; Stop independently requires `chat.abort`. One capability does not imply the other. Missing methods show **unsupported**; missing write authority, disabled opt-in, disconnected access and native ownership denial remain explicit unavailable states. Do not bypass them with a generic RPC endpoint, administrator grant or deprecated `sessions.steer`.
 

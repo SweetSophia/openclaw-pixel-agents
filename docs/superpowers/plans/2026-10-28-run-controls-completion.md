@@ -42,11 +42,11 @@
 - Consumes: `TaskService.getTask(target, signal, { fresh: true, coalesce: false, requireUnchangedObservation: true })`, `TaskService.verifyTarget`, and the negotiated private Gateway status.
 - Produces: `ControlStopRequest`, `ControlStopReceipt`, `currentDirectRun()`, `RunControlService.stop()`, `POST /api/control/agents/:id/stop`, and negotiated `ControlStatus.canStop`.
 
-- [ ] Add focused failing contract/service/route tests for strict request fields, bidi-safe run IDs, 15-second freshness with at most 5 seconds future skew, exactly one direct active run, fresh unchanged re-read, final ownership/authority verification, capability denial, run replacement races, duplicate clicks, lost responses/no replay, rate limits, close/abort, and route status mapping.
-- [ ] Run `npm test -- server/control/runControlService.test.ts server/control/runControlRoutes.test.ts server/control/gatewayClient.test.ts` and confirm the new cases fail for missing behavior.
-- [ ] Implement the minimal shared contract, negotiated `chat.abort` allowlist/capability, service, route, and shutdown wiring. Reuse the merged shared run-ID validator rather than introducing weaker validation.
-- [ ] Rerun the focused tests and `npm run typecheck`; require pass.
-- [ ] Commit as `feat: add verified exact-run stop boundary`.
+- [x] Add focused failing contract/service/route tests for strict request fields, bidi-safe run IDs, 15-second freshness with at most 5 seconds future skew, exactly one direct active run, fresh unchanged re-read, final ownership/authority verification, capability denial, run replacement races, duplicate clicks, lost responses/no replay, rate limits, close/abort, and route status mapping.
+- [x] Run `npm test -- server/control/runControlService.test.ts server/control/runControlRoutes.test.ts server/control/gatewayClient.test.ts` and confirm the new cases fail for missing behavior.
+- [x] Implement the minimal shared contract, negotiated `chat.abort` allowlist/capability, service, route, and shutdown wiring. Reuse the merged shared run-ID validator rather than introducing weaker validation.
+- [x] Rerun the focused tests and `npm run typecheck`; require pass.
+- [x] Commit as `feat: add verified exact-run stop boundary`.
 
 ### Task 2: Steering and accessible live-only controls
 
@@ -58,11 +58,11 @@
 - Consumes: Task 1 Stop request/receipt and the merged run-history selection in `AgentDetailPanel`.
 - Produces: `ControlSendRequest.intent?: 'followup' | 'steer'`, retained per-conversation delivery intent, accessible Stop confirmation/status, and a live-only composer/controls boundary.
 
-- [ ] Add focused failing tests for default follow-up, explicit steering, exact retry preservation, `queueMode: steer`, omitted expected leaf only for steering, command exclusion, retained drafts/intents, duplicate clicks, focus/Escape confirmation behavior, capability/read-only reasons, and recorded-run mutation suppression.
-- [ ] Run `npm test -- server/control/sendService.test.ts src/control/useConversation.test.tsx src/components/AgentConversation.test.tsx src/components/RunControls.test.tsx src/components/AgentDetailPanel.runControls.test.tsx` and confirm the new cases fail for missing behavior.
-- [ ] Implement the minimal steering contract/server mapping and client controls. Keep the real composer mounted only for live work; historical mode must not start reads or mutations and must restore the same draft/intent when live work is selected again.
-- [ ] Rerun the focused tests and `npm run typecheck`; require pass.
-- [ ] Commit as `feat: add explicit conversation steering controls`.
+- [x] Add focused failing tests for default follow-up, explicit steering, exact retry preservation, `queueMode: steer`, omitted expected leaf only for steering, command exclusion, retained drafts/intents, duplicate clicks, focus/Escape confirmation behavior, capability/read-only reasons, and recorded-run mutation suppression.
+- [x] Run `npm test -- server/control/sendService.test.ts src/control/useConversation.test.tsx src/components/AgentConversation.test.tsx src/components/RunControls.test.tsx src/components/AgentDetailPanel.runControls.test.tsx` and confirm the new cases fail for missing behavior.
+- [x] Implement the minimal steering contract/server mapping and client controls. Keep the real composer mounted only for live work; historical mode must not start reads or mutations and must restore the same draft/intent when live work is selected again.
+- [x] Rerun the focused tests and `npm run typecheck`; require pass.
+- [x] Commit as `feat: add explicit conversation steering controls`.
 
 ### Task 3: Documentation and release qualification
 
@@ -74,11 +74,13 @@
 - Consumes: Tasks 1-2 final behavior and the already merged/published 1.7.0 plus merged PR #328 evidence.
 - Produces: truthful setup/capability guidance, reconciled phase-two ledger, and release-ready verification evidence without a real mutation.
 
-- [ ] Document exact Stop/Steer capability, authority, requested/unknown semantics, live-only controls, retry behavior, and unsupported setup states. Reconcile tasks 1 and 2 as complete and task 3 as in review; do not claim merge or deployment before evidence exists.
-- [ ] Run `npm run typecheck`, `npm test`, `npm run test:coverage`, `npm run build`, `npm run test:package`, both repository audit commands, `git diff --check`, and the documented Docker build/startup probes; require all gates to pass.
-- [ ] In an isolated synthetic browser session, verify desktop, phone, and short-window Stop confirmation/focus/Escape, steering draft retention, historical read-only behavior, console errors, requests, and scoped accessibility. Send no real task and perform no real Stop.
-- [ ] Commit documentation/qualification updates as `docs: document stop and steer controls`.
-- [ ] Complete task-scoped reviews and a fresh whole-branch review, then create/update the PR, address every current-head finding, wait the full 15-minute review window after the final push, and merge only with green protections. Verify exact post-merge `main` CI/CodeQL before marking task 3 complete.
+- [x] Document exact Stop/Steer capability, authority, requested/unknown semantics, live-only controls, retry behavior, and unsupported setup states. Tasks 1 and 2 were recorded complete and task 3 remained in review until merge evidence existed; no deployment was claimed.
+- [x] Run `npm run typecheck`, `npm test`, `npm run test:coverage`, `npm run build`, `npm run test:package`, both repository audit commands, `git diff --check`, and the documented Docker build/startup probes; require all gates to pass.
+- [x] In an isolated synthetic browser session, verify desktop, phone, and short-window Stop confirmation/focus/Escape, steering draft retention, historical read-only behavior, console errors, requests, and scoped accessibility. Send no real task and perform no real Stop.
+- [x] Commit documentation/qualification updates as `docs: document stop and steer controls`.
+- [x] Complete task-scoped reviews and a fresh whole-branch review, then create/update the PR, address every current-head finding, wait the full 15-minute review window after the final push, and merge only with green protections. Verify exact post-merge `main` CI/CodeQL before marking task 3 complete.
+
+Closeout: [PR #330](https://github.com/SweetSophia/openclaw-pixel-agents/pull/330) merged as `c86e6eb` on 2026-10-28. Exact post-merge `main` CI and CodeQL passed on that revision. This establishes merged source only; no live deployment or npm publication is claimed.
 
 ## Self-Review
 
