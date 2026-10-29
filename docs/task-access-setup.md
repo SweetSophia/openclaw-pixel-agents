@@ -16,7 +16,7 @@ With an npm installation, run `openclaw-pixel-agents --generate-key` instead. Th
 
 The command prints one new 64-character hexadecimal key using 32 cryptographically secure random bytes from Node's `crypto.randomBytes`. It works wherever the project's supported Node.js version runs, including Windows, macOS and Linux. It does not read an existing key, write a configuration file, or rotate a running server's credentials.
 
-Save the output in your private server configuration as `PIXEL_CONTROL_TOKEN`. Keep the same value to paste into **Unlock task details**. Share it only with people authorized to read private conversations and, when enabled, send, steer or stop work. The current office uses one shared operator key rather than individual user accounts.
+Save the output in your private server configuration as `PIXEL_CONTROL_TOKEN`. Keep the same value to paste into **Unlock task details**. Share it only with people authorized to read private conversations and, when enabled, send, steer, stop work or decide approvals. The current office uses one shared operator key rather than individual user accounts.
 
 Keep keys out of commits, browser URLs and `VITE_*` variables. This repository does not use a universal key or a developer-specific key file location.
 
@@ -34,6 +34,7 @@ CORS_ORIGIN=http://localhost:3001
 OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
 PIXEL_CONTROL_TOKEN=
 CONTROL_SEND_ENABLED=false
+CONTROL_APPROVALS_ENABLED=false
 CONTROL_ALLOW_TAILNET_HTTP=false
 ```
 
@@ -76,6 +77,8 @@ Confirm the request belongs to this Pixel Agents office and has the intended sco
 
 For sending, steering or stopping, set `CONTROL_SEND_ENABLED=true` and pair/approve the same office device with `operator.read` plus `operator.write`. This existing opt-in gates all three actions; it does not grant authority itself. A cached read-only grant keeps reads working while mutations remain disabled; temporarily supply the bootstrap credential again to request the upgrade, then remove it after the updated grant is stored. No administrator scope is needed or requested.
 
+Approval review has a separate opt-in and scope; neither read nor write authority enables it. Follow [private approval handling](#private-approval-handling) before granting it.
+
 ## 4. Unlock task details
 
 Open an agent's **Task** tab and paste the **office key from step 1** into **Unlock task details**. It is retained only in that browser tab. Lock or reload clears it.
@@ -94,9 +97,40 @@ In the live **Task** view, Stop is available only for one identified, source-ver
 
 A Stop receipt labelled **requested** confirms admission, not completion. **Not running** is not a claim that this click stopped the run. **Unknown** means the response was lost or otherwise uncertain: refresh authoritative task facts rather than assuming success or failure. There is no automatic Stop replay, including after reconnect. Duplicate attempts share the process-local attempted-operation record; it is bounded to 1,000 identities and fails closed at capacity. It is not durable across a server restart, so restarting is not a safe retry strategy.
 
+## Private approval handling
+
+Approval handling is implemented on the source branch and remains in review. It is not included in published npm **1.7.0**; no approvals deployment or new package publication is established. The setup below applies to a build containing the approvals implementation, not the older published artifact.
+
+Approvals reviews pending native requests visible to the selected **live conversation audience**. It is separate from message sending and Stop. Enable it only for office-key holders authorized to make those decisions:
+
+1. Set `CONTROL_APPROVALS_ENABLED=true` in the server environment and restart the office. Keep the same private `DATA_DIR` and device identity. With the opt-in disabled, the office does not request approval scope.
+2. Explicitly pair/approve that office device for `operator.read` plus `operator.approvals` in the Gateway's device administration. If it has a cached read-only/read-write grant, temporarily supply the matching Gateway bootstrap credential from step 3 and restart to request the additional scope; inspect the actual pending device request before approving it. Remove the bootstrap credential and restart once the scoped grant is stored. Existing grants are not silently upgraded; do not copy an identity, grant administrator authority, or change reviewer policy to bypass a denial.
+3. Unlock the office, choose a live conversation, and open **Approvals**. The Gateway must advertise `sessions.messages.subscribe`/`sessions.messages.unsubscribe`, `approval.get` and `approval.resolve`, and authorize `includeApprovals`. Its native record reviewer binding must also permit this device. A negotiated approval capability is not a promise that every record can be reviewed.
+
+The supported one-time decisions are **Allow once** (`allow-once`) and **Deny** (`deny`) for safely projected exec, plugin and system-agent requests. There is no standing grant, reviewer override, global approval history, generic RPC or active external verification link. Only bounded reviewer-safe text is shown, including the full ID, kind, expiry, operation and available target/blast-radius warnings; raw policy envelopes are not forwarded.
+
+Audience membership is not exact-run attribution. Explicit source keys distinguish selected versus child conversations. If the native source key is absent, the UI says **source conversation not reported** rather than inventing an origin. A child request can be visible to its parent's authorized audience; it is not thereby associated with a recorded run.
+
+Choosing a decision first inspects that exact record. The named confirmation shows the canonical agent/conversation/session, full approval ID, kind, expiry, source and inspected operation. **Cancel** receives initial focus; Escape cancels only confirmation and leaves the outer detail panel open. Focus returns to a usable approval control. The opaque inspection token binds the shown presentation and target/lifecycle, expires independently after 60 seconds, and cannot be replaced with a remembered ID. Before native dispatch the server refreshes the audience and exact record, compares the inspected presentation, and rechecks target, pending state, expiry and authority. Changed or stale facts require inspection and confirmation again; do not reuse an old confirmation.
+
+| State | Meaning and safe next action |
+| --- | --- |
+| Last known / stale | The original verification time is retained and decisions are disabled. Refresh authoritative facts; stale display is not current permission. |
+| Expired, cancelled or already answered | No fresh decision is submitted. Show the recorded native status. First answer wins. |
+| Not applied by this request (`applied: false`) | A concurrent/native answer is displayed; it is not success attributable to this click. |
+| Approval changed | Reinspect current facts; the attempted decision is not replayed. A previous confirmation never authorizes changed content. |
+| Outcome unknown | A dispatch may have reached the Gateway. Use **Inspect** or **Reconcile** to read native truth; pending alone does not prove failure. Never replay the decision, including after pending refresh, tab remount or reconnect. |
+| Disabled, unsupported, scope required or review denied | Correct the explicit opt-in, supported Gateway contract, paired scope or native reviewer binding as appropriate. The error stays local; unrelated private panels remain unlocked. |
+
+Discovery uses ephemeral, exact-ID observers. Their release must be acknowledged or their actual source connection invalidated; failed cleanup is retried without replaying a decision and blocks new subscriptions until ownership drains. Bounds are four concurrent operations/observers, 1,000 replay records, 100 racing events, 25 displayed records, and 200 remembered audience entries for 60 seconds. Malformed/overflowing decision-relevant data fails closed. A limited page authorizes only its displayed exact records; it is not a global list.
+
+The server retains up to 1,000 attempted full ID/kind identities without eviction, independently of audience refresh/source changes, and admits at most ten new decision operations per minute. Saturation fails closed. The browser also retains a bounded attempted-identity guard across Approvals remounts. These are **process/tab-memory protections, not durable deduplication** across reload or server restart. Restarting is not a safe retry strategy for an uncertain decision; reconcile native state and escalate unresolved uncertainty to the Gateway operator.
+
+Only the visible, unlocked live panel polls. Lock, close, hidden-page, credential-generation and relevant agent/conversation/lifecycle changes cancel reads and clear private display. Recorded-run selection and new-conversation drafts suppress approval reads/actions; return explicitly to the live conversation to review. Approval payloads are never added to the public roster/socket, browser storage or logs.
+
 ## Recorded runs are read-only
 
-Run history is merged in source but is not included in published npm **1.7.0**. Its selector lets you choose a source-backed recorded run, then return explicitly to **Live / latest task**. Recorded **Task**, **Conversation** and **Results** follow that run; **Usage** explains that per-run usage is unavailable and directs you back to Live for conversation totals, never invented per-run billing. No Stop, send, steer, new-conversation or retry action can mutate from recorded selection. Your live draft and delivery intent remain in private tab memory and return when you choose Live. Lock or reload clears private access; no control payload is added to the public roster/socket or browser storage.
+Run history is merged in source but is not included in published npm **1.7.0**. Its selector lets you choose a source-backed recorded run, then return explicitly to **Live / latest task**. Recorded **Task**, **Conversation** and **Results** follow that run; **Usage** explains that per-run usage is unavailable and directs you back to Live for conversation totals, never invented per-run billing. **Approvals** explains that review is live-only and does not mount its reads or actions. No Stop, send, steer, approval decision, new-conversation or retry action can mutate from recorded selection. Your live draft and delivery intent remain in private tab memory and return when you choose Live. Lock or reload clears private access; no control payload is added to the public roster/socket or browser storage.
 
 ## Results and delivered files
 
@@ -151,6 +185,7 @@ Docker's `--env-file` supplies process variables; it does not depend on the serv
 - **Task access is not connected:** check that both `OPENCLAW_GATEWAY_URL` and `PIXEL_CONTROL_TOKEN` reached the actual server process.
 - **Unlock failed:** paste the value configured on that server. Generating another value alone does not change the server's key.
 - **Pairing/scope error:** inspect the Gateway's pending device request and bootstrap authentication, and verify that the granted scopes match read-only or sending access.
+- **Approvals unavailable while Task works:** check `CONTROL_APPROVALS_ENABLED=true`, separately paired `operator.approvals`, advertised native approval methods and record reviewer binding. Do not rotate the office key or lock unrelated panels to fix an approval-local denial.
 - **Secure connection required:** use HTTPS, loopback development, or the explicitly configured direct-Tailnet exception.
 - **Forbidden origin:** set the exact browser origin in `CORS_ORIGIN` and preserve the browser's `Origin` header through any reverse proxy.
 - **Connected roster but unavailable tasks:** the collector feed and private Gateway connection are independent. Check the task connection and device grant separately.
