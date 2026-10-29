@@ -70,10 +70,11 @@ async function fixture(onFrame?: (frame: Frame, socket: Duplex) => void, challen
   cleanups.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
   return { url: `ws://127.0.0.1:${address.port}`, frames, sockets };
 }
-function client(url?: string, sendEnabled = false, options?: { directory: string; deviceOnly: boolean }): ControlGateway {
+function client(url?: string, sendEnabled = false, options?: { directory: string; deviceOnly: boolean; approvalsEnabled?: boolean }): ControlGateway {
   const dir = options?.directory ?? mkdtempSync(join(tmpdir(), 'pixel-gateway-')); cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const config = loadControlConfig(url ? { OPENCLAW_GATEWAY_URL: url, PIXEL_CONTROL_TOKEN: 'fixture-control-key', OPENCLAW_GATEWAY_TOKEN: 'fixture-bootstrap-token' } : {}, dir);
   config.sendEnabled = sendEnabled;
+  config.approvalsEnabled = options?.approvalsEnabled ?? false;
   if (options?.deviceOnly) { config.token = undefined; config.password = undefined; }
   const gateway = createControlGateway(config); cleanups.push(() => gateway.close()); return gateway;
 }
@@ -90,6 +91,62 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it('reads, inspects and resolves through signed approval scope and protected HTTP without sending standing grants', async () => {
+    const target = { agentId: 'cylena', sessionKey: 'agent:cylena:approval-fixture', sessionId: 'approval-session' };
+    const pending = { id: 'exact-full-approval', urlPath: '/approval/exact-full-approval', status: 'pending', createdAtMs: 1, expiresAtMs: Date.now() + 60000,
+      presentation: { kind: 'exec', commandText: 'synthetic command', warningText: 'Synthetic warning', allowedDecisions: ['allow-once', 'deny'] } };
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.approvals'], deviceToken: 'fixture-approval-grant' },
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'sessions.messages.subscribe', 'sessions.messages.unsubscribe', 'approval.get', 'approval.resolve'], events: ['session.approval'] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe' ? { session: { ...target, key: target.sessionKey } }
+      : frame.method === 'sessions.messages.subscribe' ? { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [pending], truncated: false } }
+        : frame.method === 'approval.get' ? { approval: pending }
+          : frame.method === 'approval.resolve' ? { applied: false, approval: { ...pending, status: 'denied', decision: 'deny', reason: 'user', resolvedAtMs: 20 } }
+            : frame.method === 'sessions.messages.unsubscribe' ? { subscribed: false, key: target.sessionKey } : {} })));
+    const directory = mkdtempSync(join(tmpdir(), 'pixel-approval-flow-'));
+    const gateway = client(host.url, false, { directory, deviceOnly: false, approvalsEnabled: true }); await ready(gateway);
+    expect(gateway.status()).toMatchObject({ canReviewApprovals: true, canSend: false, canStop: false });
+    const tasks = createTaskService(gateway, () => new Set(['cylena']));
+    const { createApprovalService } = await import('./approvalService'); const approvals = createApprovalService(gateway, tasks);
+    cleanups.push(() => { approvals.close(); tasks.close(); });
+    const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: host.url, PIXEL_CONTROL_TOKEN: 'fixture-key', CONTROL_APPROVALS_ENABLED: 'true' }, '/tmp/approval-fixture');
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, approvals }));
+    const inspect = await request(app).post('/api/control/agents/cylena/approvals/inspect').auth('fixture-key', { type: 'bearer' }).send({ target, id: pending.id });
+    expect(inspect.status).toBe(200); expect(inspect.body.observationId).toEqual(expect.any(String));
+    expect(inspect.body.approval.details).toContain('Warning: Synthetic warning');
+    const resolved = await request(app).post('/api/control/agents/cylena/approvals/resolve').auth('fixture-key', { type: 'bearer' }).send({ target, id: pending.id, kind: 'exec', decision: 'allow-once', observationId: inspect.body.observationId });
+    expect(resolved.status).toBe(200); expect(resolved.body).toMatchObject({ applied: false, approval: { status: 'denied' } });
+    expect(host.frames.filter(frame => frame.method === 'approval.resolve').map(frame => frame.params)).toEqual([{ id: pending.id, kind: 'exec', decision: 'allow-once' }]);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read', 'operator.approvals']);
+    expect(host.frames.some(frame => ['chat.send', 'chat.abort', 'approval.list', 'approval.history'].includes(frame.method))).toBe(false);
+  });
+  it.each(['missing-method', 'binding-denied'] as const)('keeps approval %s local while ordinary reads stay ready', async variant => {
+    const methods = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'sessions.messages.subscribe', 'sessions.messages.unsubscribe', 'approval.get', ...(variant === 'missing-method' ? [] : ['approval.resolve'])];
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.approvals'] }, features: { methods, events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN', message: 'private binding information' } })));
+    const gateway = client(host.url, false, { directory: mkdtempSync(join(tmpdir(), 'pixel-approval-denial-')), deviceOnly: false, approvalsEnabled: true }); await ready(gateway);
+    expect(gateway.status().canRead).toBe(true);
+    await expect(gateway.request('approval.get', { id: 'synthetic-id' })).rejects.toMatchObject({ code: variant === 'missing-method' ? 'unsupported' : 'approvals-denied' });
+    expect(gateway.status().canRead).toBe(true);
+  });
+  it('negotiates approval scope separately and keeps reads available without that grant', async () => {
+    const host = await fixture(); const directory = mkdtempSync(join(tmpdir(), 'pixel-approvals-'));
+    const gateway = client(host.url, false, { directory, deviceOnly: false, approvalsEnabled: true }); await ready(gateway);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read', 'operator.approvals']);
+    expect(gateway.status()).toMatchObject({ canRead: true, canSend: false, canReviewApprovals: false, approvalsDisabledReason: 'scope-required' });
+    await expect(gateway.request('approval.get', { id: 'id' })).rejects.toMatchObject({ code: 'approvals-denied' });
+  });
+  it('falls back to a stored read grant without requesting an approval upgrade', async () => {
+    const host = await fixture(); const directory = mkdtempSync(join(tmpdir(), 'pixel-approvals-stored-'));
+    const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: host.url, PIXEL_CONTROL_TOKEN: 'fixture-key' }, directory);
+    const identity = devices.loadOrCreateDeviceIdentity(config.deviceDirectory);
+    devices.writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, 'existing-read-grant', ['operator.read']);
+    const gateway = client(host.url, true, { directory, deviceOnly: true, approvalsEnabled: true }); await ready(gateway);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+    expect(host.frames[0].params.auth.deviceToken).toBe('existing-read-grant');
+    expect(gateway.status()).toMatchObject({ canRead: true, canReviewApprovals: false, approvalsDisabledReason: 'scope-required' });
+  });
   it('reports unsupported Stop rather than missing scope when granted write but neither send/create nor abort is advertised', async () => {
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
       auth: { role: 'operator', scopes: ['operator.read', 'operator.write'] },

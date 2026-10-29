@@ -1,0 +1,11 @@
+.conversation-approvals { display: grid; gap: 0.75rem; min-width: 0; }
+.conversation-approvals p { overflow-wrap: anywhere; }
+.approval-record, .approval-confirmation { border: 1px solid var(--border-color, #47516f); padding: 0.75rem; min-width: 0; }
+.approval-record h4 { margin: 0 0 0.5rem; }
+.approval-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: inherit; max-width: 100%; }
+.approval-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.approval-actions button, .conversation-approvals > button { min-height: 2.75rem; }
+.approval-confirmation { position: sticky; bottom: 0; background: var(--bg-secondary, #202238); max-height: 70dvh; overflow: auto; z-index: 1; }
+.approval-confirmation .approval-actions { position: sticky; bottom: -0.75rem; background: var(--bg-secondary, #202238); padding: 0.5rem 0; }
+.conversation-approvals button:focus-visible { outline: 2px solid var(--accent, #4ecca3); outline-offset: 2px; }
+@media (max-width: 400px) { .approval-actions button { flex: 1 1 auto; } }

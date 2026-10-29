@@ -27,7 +27,7 @@ export interface ControlTarget {
   agentId: string; sessionKey: string; sessionId: string;
   lifecycleRevision?: string; branchId?: string; activeLeafEntryId?: string;
 }
-export interface ControlStatus { configured: boolean; state: ControlGatewayState; canRead: boolean; canSend: boolean; canStop?: boolean; stopDisabledReason?: 'scope-required' | 'unsupported' }
+export interface ControlStatus { configured: boolean; state: ControlGatewayState; canRead: boolean; canSend: boolean; canStop?: boolean; stopDisabledReason?: 'scope-required' | 'unsupported'; canReviewApprovals?: boolean; approvalsDisabledReason?: 'disabled' | 'scope-required' | 'unsupported' }
 export interface ControlSource { state: 'current' | 'stale'; observedAt: number }
 export interface ControlSession extends ControlTarget {
   name: string; channel?: string; isChild: boolean; hasActiveRun: boolean | null;
@@ -67,7 +67,8 @@ export interface ControlSendReceipt {
 export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'pairing-required' | 'scope-required'
   | 'unsupported' | 'unavailable' | 'invalid-source' | 'invalid-target' | 'session-changed'
   | 'invalid-request' | 'rate-limited' | 'outcome-unknown' | 'command-not-supported'
-  | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed' | 'usage-denied' | 'stop-denied';
+  | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed' | 'usage-denied' | 'stop-denied'
+  | 'approvals-denied' | 'approval-unavailable' | 'approval-changed' | 'approval-outcome-unknown';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }
 export interface ControlConversationEvent {
   target: ControlTarget; kind: 'messages' | 'invalidated' | 'unavailable'; source: ControlSource; messages?: ControlMessage[];
@@ -139,9 +140,11 @@ export function parseControlStatus(value: unknown): ControlStatus | null {
   const status = object<ControlStatus>(value, {
     configured: bool, canRead: bool, canSend: bool, canStop: optional(bool),
     stopDisabledReason: optional(oneOf(['scope-required', 'unsupported'])),
+    canReviewApprovals: optional(bool), approvalsDisabledReason: optional(oneOf(['disabled', 'scope-required', 'unsupported'])),
     state: oneOf(['disabled', 'connecting', 'ready', 'pairing-required', 'auth-error', 'unsupported', 'unavailable']),
   });
   if (!status || (status.canRead && status.state !== 'ready') || (status.canSend && !status.canRead) || (status.canStop && !status.canRead)
+    || (status.canReviewApprovals && !status.canRead) || (status.approvalsDisabledReason !== undefined && (status.canReviewApprovals || status.state !== 'ready'))
     || (status.stopDisabledReason !== undefined && (status.canStop || status.state !== 'ready'))
     || (!status.configured && (status.state !== 'disabled' || status.canRead || status.canSend))) return null;
   return status;

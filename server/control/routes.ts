@@ -19,9 +19,11 @@ import { isControlRunId, parseRunHistoryRequest } from '../../shared/controlRunH
 import type { RunHistoryService } from './runHistoryService';
 import { parseControlStopRequest } from '../../shared/controlRun';
 import type { RunControlService } from './runControlService';
+import { parseApprovalReadRequest, parseApprovalInspectRequest, parseApprovalResolveRequest } from '../../shared/controlApprovals';
+import { ApprovalNotDispatchedError, type ApprovalService } from './approvalService';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService }): Router {
-  const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls } = options; const router = Router();
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService }): Router {
+  const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls, approvals } = options; const router = Router();
   const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
@@ -36,16 +38,28 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
       if (res.headersSent) { res.destroy(); return; }
       res.removeHeader('X-Pixel-Control-File'); res.removeHeader('X-Pixel-Preview-Truncated'); res.removeHeader('Content-Disposition');
       const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
-      const status = code === 'scope-required' || code === 'pairing-required' || code === 'usage-denied' || code === 'stop-denied' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
-        : code === 'invalid-target' || code === 'file-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
-          : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
-      res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.' });
+      const status = code === 'scope-required' || code === 'pairing-required' || code === 'usage-denied' || code === 'stop-denied' || code === 'approvals-denied' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
+        : code === 'invalid-target' || code === 'file-unavailable' || code === 'approval-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
+          : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' || code === 'approval-changed' || code === 'approval-outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
+      res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.',
+        ...(error instanceof ApprovalNotDispatchedError ? { approvalDisposition: error.approvalDisposition } : {}) });
     }).finally(() => { res.off('close', close); req.off('aborted', close); });
   }
   router.get('/agents/:id/sessions', (req, res) => {
     const cursor = req.query.cursor;
     if (cursor !== undefined && (typeof cursor !== 'string' || !cursor || cursor.length > 2048)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid conversation cursor.' }); return; }
     run(req, res, signal => tasks.listSessions(String(req.params.id), cursor, signal));
+  });
+  for (const action of ['list', 'inspect', 'resolve'] as const) router.post(`/agents/:id/approvals/${action}`, (req, res) => {
+    const input = action === 'list' ? parseApprovalReadRequest(req.body) : action === 'inspect' ? parseApprovalInspectRequest(req.body) : parseApprovalResolveRequest(req.body);
+    if (!input || input.target.agentId !== String(req.params.id)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid approval selection.' }); return; }
+    run<unknown>(req, res, signal => {
+      if (!config.approvalsEnabled) throw new ControlError('approvals-denied');
+      if (!approvals) throw new ControlError('unsupported');
+      if (action === 'list') return approvals.read(input.target, signal);
+      if (action === 'inspect') return approvals.inspect(parseApprovalInspectRequest(req.body)!, signal);
+      return approvals.resolve(parseApprovalResolveRequest(req.body)!, signal);
+    });
   });
   router.post('/agents/:id/selection', (req, res) => {
     const body = controlRecord(req.body);

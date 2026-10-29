@@ -31,6 +31,7 @@ Existing process environment variables take precedence over an env file. Start w
 | `OPENCLAW_GATEWAY_URL` | None | Private task Gateway endpoint. Remote connections require encrypted WebSockets; plain connections are loopback-only. No embedded credentials, query or fragment. |
 | `PIXEL_CONTROL_TOKEN` | None | Separate operator key generated for this office. Both this and the Gateway URL are required for task access. |
 | `CONTROL_SEND_ENABLED` | `false` | Enable message sends when the office device also has `operator.write`. |
+| `CONTROL_APPROVALS_ENABLED` | `false` | Only exact `true` opts into native approval review. Requires separately paired `operator.approvals`, supported native methods and record reviewer binding; read/write grants do not imply it. |
 | `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_GATEWAY_PASSWORD` | None | Temporary server-only bootstrap credential for pairing. Remove after the scoped grant is saved. |
 | `CONTROL_ALLOW_TAILNET_HTTP` | `false` | Explicit direct-Tailscale HTTP exception for private access. Actual local and peer Tailnet socket addresses must qualify; forwarded headers cannot enable it. |
 | `LOG_LEVEL` | `info` | Server log level. |
@@ -87,3 +88,5 @@ The trusted proxy must overwrite client-supplied forwarding headers. Use the act
 The shared office key unlocks private task and conversation access; it does not create per-user accounts or protect every public roster/editor route. Deploy on a trusted network or behind your own access control.
 
 Private task payloads stay off the public office socket and out of browser storage. Pairing uses the office's own device and scoped permissions. See [task access setup](task-access-setup.md) for the full procedure, key rotation and troubleshooting.
+
+Approval review is independent of `CONTROL_SEND_ENABLED`. When enabled, the office additionally requests `operator.approvals`; it never silently upgrades a cached grant. Missing approval scope, methods or record reviewer binding is local to Approvals and does not lock other private panels. See [private approval handling](task-access-setup.md#private-approval-handling) for explicit pairing, confirmation and uncertain-outcome guidance.

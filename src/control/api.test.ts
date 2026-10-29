@@ -17,6 +17,12 @@ it('preserves a typed Stop ownership denial instead of converting it to an uncer
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{"code":"stop-denied"}', { status: 403 })));
   await expect(controlFetch('/api/control/agents/cylena/stop', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'stop-denied', message: expect.stringContaining('owning device') });
 });
+it.each(['approval-changed', 'approval-unavailable', 'rate-limited'])('parses only closed proven-not-dispatched approval rejection %s', async code => {
+  for (const [extra, expected] of [[{ approvalDisposition: 'not-dispatched' }, 'not-dispatched'], [{}, undefined], [{ approvalDisposition: 'attempted' }, undefined], [{ approvalDisposition: 'not-dispatched', unexpected: true }, undefined]] as const) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code, error: 'Rejected before native dispatch.', ...extra }), { status: code === 'rate-limited' ? 429 : 409 })));
+    await expect(controlFetch('/api/control/agents/cylena/approvals/resolve', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code, approvalDisposition: expected });
+  }
+});
 describe('private file response boundary', () => {
   it('preserves JSON bytes and the UTF-8 filename without treating content as metadata', async () => {
     vi.stubGlobal('Blob', NodeBlob);
