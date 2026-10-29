@@ -71,3 +71,13 @@ it('retains explicit unknown-outcome inspection when polling drops the record fr
   expect(screen.getByText(/Pending does not establish failure/)).toBeVisible();
   expect(screen.getByRole('button', { name: 'Reconcile approval-1' })).toBeEnabled();
 });
+it('does not infer originating conversation when the native source key is absent, including confirmation', async () => {
+  delete item.sourceSessionKey;
+  render(<ConversationApprovals target={target} active />);
+  await screen.findByRole('button', { name: 'Deny' });
+  expect(screen.getByText(/Source: source conversation not reported; visible to this conversation audience/)).toBeVisible();
+  expect(screen.queryByText(/Source: selected conversation|Source: child conversation/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Confirm deny' });
+  expect(within(dialog).getByText(/Source: source conversation not reported; visible to this conversation audience/)).toBeVisible();
+});
