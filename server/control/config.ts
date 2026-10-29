@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 export interface ControlConfig {
   enabled: boolean; url?: string; controlToken?: string; token?: string; password?: string;
-  deviceDirectory: string; sendEnabled: boolean; allowTailnetHttp: boolean;
+  deviceDirectory: string; sendEnabled: boolean; approvalsEnabled: boolean; allowTailnetHttp: boolean;
 }
 export function loadControlConfig(env: NodeJS.ProcessEnv, dataDir: string): ControlConfig {
   const url = env.OPENCLAW_GATEWAY_URL?.trim();
@@ -10,6 +10,7 @@ export function loadControlConfig(env: NodeJS.ProcessEnv, dataDir: string): Cont
   const config: ControlConfig = {
     enabled: Boolean(url && controlToken), deviceDirectory: join(dataDir, 'control'),
     sendEnabled: env.CONTROL_SEND_ENABLED === 'true', allowTailnetHttp: env.CONTROL_ALLOW_TAILNET_HTTP === 'true',
+    approvalsEnabled: env.CONTROL_APPROVALS_ENABLED === 'true',
   };
   if (!config.enabled) return config;
   let endpoint: URL;

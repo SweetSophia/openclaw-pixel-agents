@@ -4,6 +4,10 @@ import { loadControlConfig } from './config';
 
 const key = 'fixture-control-access-key';
 describe('opt-in task Gateway configuration', () => {
+  it('requires an exact explicit approvals opt-in independent of sending', () => {
+    for (const value of [undefined, 'false', 'TRUE', '1']) expect(loadControlConfig({ CONTROL_APPROVALS_ENABLED: value }, '/tmp/fixture').approvalsEnabled).toBe(false);
+    expect(loadControlConfig({ CONTROL_APPROVALS_ENABLED: 'true' }, '/tmp/fixture')).toMatchObject({ approvalsEnabled: true, sendEnabled: false });
+  });
   it('disables task access when URL or separate operator key is missing', () => {
     expect(loadControlConfig({}, '/tmp/fixture').enabled).toBe(false);
     expect(loadControlConfig({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:18789' }, '/tmp/fixture').enabled).toBe(false);
