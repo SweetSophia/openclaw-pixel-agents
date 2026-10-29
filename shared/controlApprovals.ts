@@ -14,10 +14,18 @@ export interface ApprovalReadRequest { target: ControlTarget }
 export interface ApprovalInspectRequest extends ApprovalReadRequest { id: string }
 export interface ApprovalResolveRequest extends ApprovalInspectRequest { kind: ApprovalKind; decision: ApprovalDecision; observationId: string }
 export interface ControlApprovalResult { target: ControlTarget; source: ControlSource; approval: ControlApproval; applied: boolean; observationId?: string }
+export type ApprovalNonDispatchCode = 'approval-changed' | 'approval-unavailable' | 'rate-limited';
+export interface ApprovalResolveRejection { code: ApprovalNonDispatchCode; error: string; approvalDisposition: 'not-dispatched' }
 const keys = (row: Record<string, unknown>, fields: string[]) => Object.keys(row).every(key => fields.includes(key));
 const bounded = (value: unknown, max: number, opaque = false): value is string => typeof value === 'string' && value.length > 0 && value.length <= max
   && (!opaque || (!/[\u0000-\u001f\u007f]/.test(value) && value.trim() === value));
 const timestamp = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+export function parseApprovalResolveRejection(value: unknown): ApprovalResolveRejection | null {
+  const row = controlRecord(value);
+  return row && keys(row, ['code', 'error', 'approvalDisposition']) && row.approvalDisposition === 'not-dispatched'
+    && typeof row.code === 'string' && ['approval-changed', 'approval-unavailable', 'rate-limited'].includes(row.code) && bounded(row.error, 512)
+    ? row as unknown as ApprovalResolveRejection : null;
+}
 export const isApprovalKind = (value: unknown): value is ApprovalKind => typeof value === 'string' && ['exec', 'plugin', 'system-agent'].includes(value);
 export const isApprovalId = (value: unknown): value is string => bounded(value, 512, true) && value !== '.' && value !== '..'
   && !/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(value)

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { CONTROL_LIMITS, controlByteSize, controlRecord, type ControlTarget } from '../../shared/control';
 import { APPROVAL_LIMITS, parseApprovalInspectRequest, parseApprovalReadRequest, parseApprovalResolveRequest,
-  type ApprovalInspectRequest, type ApprovalResolveRequest, type ControlApproval, type ControlApprovalPage, type ControlApprovalResult } from '../../shared/controlApprovals';
+  type ApprovalInspectRequest, type ApprovalNonDispatchCode, type ApprovalResolveRequest, type ControlApproval, type ControlApprovalPage, type ControlApprovalResult } from '../../shared/controlApprovals';
 import { GatewayRequestError, type ControlGateway } from './gatewayClient';
 import { ControlError, type TaskService } from './taskService';
 import { projectApproval } from './approvalProjection';
@@ -11,6 +11,11 @@ export interface ApprovalService {
   inspect(input: ApprovalInspectRequest, signal?: AbortSignal): Promise<ControlApprovalResult>;
   resolve(input: ApprovalResolveRequest, signal?: AbortSignal): Promise<ControlApprovalResult>;
   close(): void;
+}
+// Created only by the pre-native resolve fence, never inferred from a native error code.
+export class ApprovalNotDispatchedError extends ControlError {
+  readonly approvalDisposition = 'not-dispatched' as const;
+  constructor(code: ApprovalNonDispatchCode) { super(code); }
 }
 const identity = (target: ControlTarget) => JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
 export function createApprovalService(gateway: ControlGateway, tasks: TaskService): ApprovalService {
@@ -182,13 +187,30 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
   async function resolve(input: ApprovalResolveRequest, signal?: AbortSignal): Promise<ControlApprovalResult> {
     if (!parseApprovalResolveRequest(input)) throw new ControlError('invalid-request');
     input = structuredClone(input);
+    // All actual attempts, even native rejections, retain the authoritative ledger entry.
+    // These three local rejection codes can be recoverable only before that entry exists.
+    try { return await resolveOnce(input, signal); }
+    catch (error) {
+      const nativeIdentity = JSON.stringify([input.id, input.kind]);
+      if (!attempted.has(nativeIdentity) && error instanceof ControlError
+        && (error.code === 'approval-changed' || error.code === 'approval-unavailable' || error.code === 'rate-limited')) {
+        throw new ApprovalNotDispatchedError(error.code);
+      }
+      throw error;
+    }
+  }
+  async function resolveOnce(input: ApprovalResolveRequest, signal?: AbortSignal): Promise<ControlApprovalResult> {
     authority(); const epoch = generation; const nativeIdentity = JSON.stringify([input.id, input.kind]);
     if (attempted.has(nativeIdentity)) throw new ControlError('approval-outcome-unknown');
     const known = observations.get(key(input.target, input.id));
-    if (!known || known.expires <= Date.now() || !known.inspectionExpires || known.inspectionExpires <= Date.now() || known.observationId !== input.observationId) throw new ControlError('approval-unavailable');
+    if (!known || known.expires <= Date.now() || !known.inspectionExpires
+      || known.inspectionExpires <= Date.now() || known.observationId !== input.observationId) {
+      throw new ControlError('approval-unavailable');
+    }
     const inspected = structuredClone(known.approval);
     if (inspected.kind !== input.kind) throw new ControlError('invalid-request');
-    if (resolving.has(nativeIdentity)) throw new ControlError('rate-limited'); resolving.add(nativeIdentity);
+    if (resolving.has(nativeIdentity)) throw new ControlError('rate-limited');
+    resolving.add(nativeIdentity);
     try {
       return await operation(signal, async active => {
         const page = await discover(input.target, active);
@@ -203,7 +225,10 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
         if (approval.expiresAtMs <= Date.now() || !approval.allowedDecisions.includes(input.decision)) throw new ControlError('approval-unavailable');
         await tasks.verifyTarget(input.target, active); current(epoch, active);
         const final = observations.get(key(input.target, input.id));
-        if (!final || final.observationId !== input.observationId || final.expires <= Date.now() || !final.inspectionExpires || final.inspectionExpires <= Date.now()) throw new ControlError('approval-changed');
+        if (!final || final.observationId !== input.observationId || final.expires <= Date.now()
+          || !final.inspectionExpires || final.inspectionExpires <= Date.now()) {
+          throw new ControlError('approval-changed');
+        }
         if (approval.expiresAtMs <= Date.now()) throw new ControlError('approval-unavailable');
         while (decisionTimes.length && Date.now() - decisionTimes[0] >= 60000) decisionTimes.shift();
         if (decisionTimes.length >= APPROVAL_LIMITS.decisionsPerMinute || attempted.size >= APPROVAL_LIMITS.attempts) throw new ControlError('rate-limited');

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseApprovalReadRequest, parseApprovalResolveRequest, parseApprovalInspectRequest, parseApprovalPage, parseApprovalResult, parseControlApproval, isApprovalId } from './controlApprovals';
+import { parseApprovalReadRequest, parseApprovalResolveRequest, parseApprovalInspectRequest, parseApprovalPage, parseApprovalResult, parseControlApproval, isApprovalId, parseApprovalResolveRejection } from './controlApprovals';
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:main', sessionId: 'session-1' };
 describe('private approval contract', () => {
+  it('accepts only the closed, bounded pre-native resolve disposition', () => {
+    const rejection = { code: 'approval-unavailable', error: 'Inspection expired.', approvalDisposition: 'not-dispatched' };
+    expect(parseApprovalResolveRejection(rejection)).toEqual(rejection);
+    for (const change of [{ code: 'approval-outcome-unknown' }, { code: 'approvals-denied' }, { approvalDisposition: 'attempted' }, { approvalDisposition: undefined }, { error: '' }, { error: 'x'.repeat(513) }, { raw: 'diagnostic' }]) expect(parseApprovalResolveRejection({ ...rejection, ...change })).toBeNull();
+  });
   it('never interprets expiry or owner cancellation as an applied reviewer decision', () => {
     for (const status of ['expired', 'cancelled']) {
       const approval = { id: 'full-id', kind: 'exec', title: 'Run command', text: 'synthetic command', details: [], status,

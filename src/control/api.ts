@@ -1,5 +1,6 @@
 import { CONTROL_LIMITS, controlRecord, type ControlErrorCode, type ControlTarget } from '../../shared/control';
 import { CONTROL_RESULT_LIMITS, parseControlExternalFile, type ControlExternalFile } from '../../shared/controlResults';
+import { parseApprovalResolveRejection } from '../../shared/controlApprovals';
 
 type ClientErrorCode = ControlErrorCode | 'timed-out';
 const messages: Partial<Record<ClientErrorCode, string>> = {
@@ -20,7 +21,7 @@ const messages: Partial<Record<ClientErrorCode, string>> = {
   'stop-denied': 'Stop was denied by OpenClaw. Only the owning device may be allowed to stop this run; task reads remain available.',
   'approvals-denied': 'Approval review was denied by OpenClaw. Other task panels remain unlocked.',
   'approval-unavailable': 'This approval is no longer available to this conversation audience.',
-  'approval-changed': 'This approval changed. Inspect the current record; the attempted decision will not be replayed.',
+  'approval-changed': 'This approval changed. Inspect the current record and explicitly confirm any new decision.',
   'approval-outcome-unknown': 'Approval outcome is unknown. Inspect the record to reconcile; this decision will not be replayed.',
   'timed-out': 'The request timed out. Try again.',
 };
@@ -33,7 +34,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'approvals-denied', 'approval-unavailable', 'approval-changed', 'approval-outcome-unknown',
 ]);
 export class ControlApiError extends Error {
-  constructor(public readonly code: ClientErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
+  constructor(public readonly code: ClientErrorCode = 'unavailable', public readonly approvalDisposition?: 'not-dispatched') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
 }
 export function targetIdentity(target: ControlTarget): string {
   return JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
@@ -75,7 +76,7 @@ async function readJson(response: Response, signal?: AbortSignal): Promise<unkno
   catch { throw new ControlApiError('invalid-source'); }
   if (!response.ok) {
     const code = controlRecord(value)?.code;
-    throw new ControlApiError(typeof code === 'string' && serverCodes.has(code) ? code as ControlErrorCode : 'unavailable');
+    throw new ControlApiError(typeof code === 'string' && serverCodes.has(code) ? code as ControlErrorCode : 'unavailable', parseApprovalResolveRejection(value)?.approvalDisposition);
   }
   return value;
 }

@@ -68,11 +68,14 @@ export function ConversationApprovals({ target, active, readOnly = false }: { ta
       </div>
     </article>)}
     {state.outcomes.map(result => <div key={result.approval.id}>
+      <p className="task-muted">{result.source.state === 'stale' ? 'Last known — decisions disabled' : 'Verified by OpenClaw'} · {time(result.source.observedAt)}</p>
       <p role="status">{result.approval.id}: {result.approval.status === 'pending' ? 'Outcome unknown. Pending does not establish failure; inspect explicitly. This decision cannot be replayed.'
         : `${result.approval.status}. ${result.applied ? 'Applied by this request.' : 'Not applied by this request; showing the recorded native status.'}`}</p>
       {result.approval.status === 'pending' && <button type="button" disabled={!!state.busy || !state.enabled} onClick={() => { void state.inspect(result.approval); }}>Reconcile {result.approval.id}</button>}
     </div>)}
-    {state.inspected && !confirmation && <section aria-label="Inspected approval"><h3>Inspected record</h3><Presentation approval={state.inspected.approval} target={state.inspected.target} /></section>}
+    {state.inspected && !confirmation && <section aria-label="Inspected approval"><h3>Inspected record</h3>
+      <p className="task-muted">{state.inspected.source.state === 'stale' ? 'Last known — decisions disabled' : 'Verified by OpenClaw'} · {time(state.inspected.source.observedAt)}</p>
+      <Presentation approval={state.inspected.approval} target={state.inspected.target} /></section>}
     {confirmation && <Confirmation key={`${confirmation.owner}:${confirmation.observationId}`} {...confirmation} onCancel={state.cancel} onConfirm={() => { void state.confirm(); }} />}
   </section>;
 }

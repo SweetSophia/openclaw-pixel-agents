@@ -27,6 +27,44 @@ function fixture() {
   return { service, gateway, tasks, request, listeners, setItems(value: unknown[]) { items = value; }, emit(event: GatewayEvent) { for (const listener of listeners) listener(event); } };
 }
 describe('private conversation approvals', () => {
+  it.each(['expired-inspection', 'changed', 'rate-limit'] as const)('proves non-dispatch for %s and accepts only a fresh inspection/decision', async scenario => {
+    vi.useFakeTimers(); vi.setSystemTime(1000000);
+    const host = fixture(); let changed = false; let selectedId = 'exact-full-id';
+    const record = () => native({ id: selectedId, expiresAtMs: 2000000, ...(changed ? { presentation: { kind: 'exec', commandText: 'changed command', allowedDecisions: ['deny'] } } : {}) });
+    host.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.messages.subscribe') return { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [record()], truncated: false } };
+      if (method === 'approval.get') return { approval: record() };
+      if (method === 'approval.resolve') return { applied: true, approval: native({ id: String(params!.id), expiresAtMs: 2000000, status: 'denied', resolvedAtMs: Date.now() }) };
+      return { subscribed: false, key: target.sessionKey };
+    });
+    if (scenario === 'rate-limit') for (let i = 0; i < 10; i++) {
+      selectedId = `prior-${i}`; const inspected = await host.service.inspect({ target, id: selectedId });
+      await host.service.resolve({ target, id: selectedId, kind: 'exec', decision: 'deny', observationId: inspected.observationId! });
+    }
+    selectedId = 'exact-full-id'; const first = await host.service.inspect({ target, id: selectedId });
+    if (scenario === 'expired-inspection') vi.advanceTimersByTime(60001);
+    if (scenario === 'changed') changed = true;
+    const input = { target, id: selectedId, kind: 'exec' as const, decision: 'deny' as const, observationId: first.observationId! };
+    const before = host.request.mock.calls.filter(call => call[0] === 'approval.resolve').length;
+    await expect(host.service.resolve(input)).rejects.toMatchObject({ code: scenario === 'changed' ? 'approval-changed' : scenario === 'rate-limit' ? 'rate-limited' : 'approval-unavailable', approvalDisposition: 'not-dispatched' });
+    expect(host.request.mock.calls.filter(call => call[0] === 'approval.resolve')).toHaveLength(before);
+    if (scenario === 'rate-limit') vi.advanceTimersByTime(60001);
+    const fresh = await host.service.inspect({ target, id: selectedId });
+    expect(fresh.observationId).not.toBe(first.observationId);
+    await expect(host.service.resolve({ ...input, observationId: fresh.observationId! })).resolves.toMatchObject({ applied: true });
+    expect(host.request.mock.calls.filter(call => call[0] === 'approval.resolve')).toHaveLength(before + 1);
+  });
+  it('never labels native approval-unavailable as proven non-dispatch, including after reconnect', async () => {
+    const host = fixture(); const inspected = await host.service.inspect({ target, id: 'exact-full-id' });
+    const original = host.request.getMockImplementation()!;
+    host.request.mockImplementation(async (...args) => { if (args[0] === 'approval.resolve') throw new GatewayRequestError('approval-unavailable'); return original(...args); });
+    const input = { target, id: 'exact-full-id', kind: 'exec' as const, decision: 'deny' as const, observationId: inspected.observationId! };
+    const error = await host.service.resolve(input).catch(error => error);
+    expect(error.code).toBe('approval-unavailable'); expect(error.approvalDisposition).toBeUndefined();
+    host.emit({ event: 'source.invalidated', payload: null });
+    await expect(host.service.resolve(input)).rejects.toMatchObject({ code: 'approval-outcome-unknown' });
+    expect(host.request.mock.calls.filter(call => call[0] === 'approval.resolve')).toHaveLength(1);
+  });
   it.each([
     { decision: 'allow-always', reason: 'user' }, { decision: 'deny', reason: 'user' },
     { decision: 'allow-once', reason: 'timeout' }, { decision: 'invalid', reason: 'user' },

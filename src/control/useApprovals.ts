@@ -11,6 +11,19 @@ const empty = (): View => ({ page: null, confirmation: null, inspected: null, ou
 // No payloads or credentials; keep attempted identities across tab unmounts, never in browser storage.
 const attempts = new WeakMap<object, Set<string>>();
 const fingerprint = (approval: ControlApproval) => JSON.stringify(approval);
+const invalidatesPresentation = (failure: ControlApiError) => [
+  'locked', 'session-changed', 'invalid-target', 'approvals-denied', 'scope-required', 'pairing-required',
+  'disabled', 'transport-required', 'unsupported',
+].includes(failure.code);
+function failedView(previous: View, error: ControlApiError): View {
+  if (invalidatesPresentation(error)) return { ...empty(), error };
+  // Last-known payloads retain their own verification times, never fresh action authority.
+  const staleResult = (result: ControlApprovalResult) => ({ ...result, source: { ...result.source, state: 'stale' as const } });
+  return { ...previous, error, loading: false, busy: null, confirmation: null,
+    page: previous.page ? { ...previous.page, source: { ...previous.page.source, state: 'stale' } } : null,
+    inspected: previous.inspected ? staleResult(previous.inspected) : null,
+    outcomes: previous.outcomes.map(staleResult) };
+}
 
 export function useApprovals(target: ControlTarget | null, active: boolean) {
   const access = useControlAccess(); const canonical = target && parseControlTarget(target);
@@ -31,9 +44,11 @@ export function useApprovals(target: ControlTarget | null, active: boolean) {
   }, [stop]);
   const ledger = () => {
     const request = context.current.access.request;
-    let values = attempts.get(request); if (!values) { values = new Set(); attempts.set(request, values); } return values;
+    let values = attempts.get(request);
+    if (!values) { values = new Set(); attempts.set(request, values); }
+    return values;
   };
-  const identity = (item: ControlApproval) => JSON.stringify([context.current.target && targetIdentity(context.current.target), item.kind, item.id]);
+  const identity = (item: ControlApproval) => JSON.stringify([item.kind, item.id]);
   const canDecide = (item: ControlApproval) => permitted() && !operation.current && data.current.page?.source.state === 'current'
     && item.status === 'pending' && item.expiresAtMs > Date.now() && !ledger().has(identity(item)) && ledger().size < APPROVAL_LIMITS.attempts;
   const refresh = useCallback(async () => {
@@ -52,8 +67,7 @@ export function useApprovals(target: ControlTarget | null, active: boolean) {
     } catch (error) {
       if (!same(selected, generation) || (controller.signal.aborted && controller.signal.reason?.code !== 'timed-out')) return;
       const failure = controlReadError(controller, error);
-      const clear = ['locked', 'session-changed', 'invalid-target', 'approvals-denied', 'scope-required', 'pairing-required'].includes(failure.code);
-      update(old => ({ ...old, loading: false, error: failure, confirmation: null, page: clear ? null : old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
+      update(old => failedView(old, failure));
     } finally { dispose(); if (read.current === controller) read.current = null; }
   }, [update]);
   useEffect(() => {
@@ -82,8 +96,9 @@ export function useApprovals(target: ControlTarget | null, active: boolean) {
         outcomes: approval.status !== 'pending' ? [result, ...old.outcomes.filter(entry => entry.approval.id !== approval.id)].slice(0, APPROVAL_LIMITS.items) : old.outcomes,
         uncertain: approval.status !== 'pending' ? old.uncertain.filter(id => id !== approval.id) : old.uncertain }));
     } catch (error) {
-      if (same(selected, generation) && (!controller.signal.aborted || controller.signal.reason?.code === 'timed-out')) update(old => ({ ...old, busy: null, confirmation: null, inspected: null, error: controlReadError(controller, error),
-        page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
+      if (same(selected, generation) && (!controller.signal.aborted || controller.signal.reason?.code === 'timed-out')) {
+        update(old => failedView(old, controlReadError(controller, error)));
+      }
     } finally { dispose(); if (read.current === controller) read.current = null; if (same(selected, generation)) operation.current = false; }
   }, [update]);
   const confirm = useCallback(async () => {
@@ -92,7 +107,8 @@ export function useApprovals(target: ControlTarget | null, active: boolean) {
     if (!captured || captured.owner !== current.owner || !current.target || !canDecide(captured.approval) || !present || fingerprint(present) !== fingerprint(captured.approval)) {
       update(old => ({ ...old, confirmation: null })); return;
     }
-    const attempted = identity(captured.approval); ledger().add(attempted); operation.current = true;
+    const attempted = identity(captured.approval);
+    const attemptLedger = ledger(); attemptLedger.add(attempted); operation.current = true;
     epoch.current++; read.current?.abort(); read.current = null; const generation = epoch.current; const selected = current.owner;
     update(old => ({ ...old, confirmation: null, busy: captured.approval.id, error: null }));
     try {
@@ -104,12 +120,20 @@ export function useApprovals(target: ControlTarget | null, active: boolean) {
         uncertain: unknown ? [...new Set([...old.uncertain, captured.approval.id])] : old.uncertain.filter(id => id !== captured.approval.id),
         page: old.page ? { ...old.page, items: old.page.items.map(item => item.id === result.approval.id ? result.approval : item) } : null }));
     } catch (error) {
-      if (!same(selected, generation)) return;
       const failure = error instanceof ControlApiError ? error : new ControlApiError('approval-outcome-unknown');
-      const unknown = ['unavailable', 'invalid-source', 'timed-out', 'approval-outcome-unknown'].includes(failure.code);
-      update(old => ({ ...old, busy: null, error: failure, uncertain: unknown ? [...new Set([...old.uncertain, captured.approval.id])] : old.uncertain,
-        outcomes: unknown ? [{ target: captured.target, source: old.inspected?.source ?? { state: 'stale', observedAt: 0 }, approval: captured.approval, applied: false }, ...old.outcomes.filter(entry => entry.approval.id !== captured.approval.id)].slice(0, APPROVAL_LIMITS.items) : old.outcomes,
-        page: old.page ? { ...old.page, source: { ...old.page.source, state: 'stale' } } : null }));
+      const notDispatched = failure.approvalDisposition === 'not-dispatched';
+      // A code alone is not proof. Native approval-unavailable can follow an actual attempt.
+      // Release only on the closed server disposition; a new inspection/confirmation is still required.
+      if (notDispatched) attemptLedger.delete(attempted);
+      if (!same(selected, generation)) return;
+      update(old => {
+        const failed = failedView(old, failure);
+        if (invalidatesPresentation(failure) || notDispatched) return failed;
+        const outcome: ControlApprovalResult = { target: captured.target,
+          source: { state: 'stale', observedAt: old.inspected?.source.observedAt ?? 0 }, approval: captured.approval, applied: false };
+        return { ...failed, uncertain: [...new Set([...old.uncertain, captured.approval.id])],
+          outcomes: [outcome, ...failed.outcomes.filter(entry => entry.approval.id !== captured.approval.id)].slice(0, APPROVAL_LIMITS.items) };
+      });
     } finally { if (same(selected, generation)) operation.current = false; }
   }, [update]);
   const disabledReason = access.state !== 'unlocked' ? 'Unlock task access to review approvals.'

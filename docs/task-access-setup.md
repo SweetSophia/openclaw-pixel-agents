@@ -118,7 +118,7 @@ Choosing a decision first inspects that exact record. The named confirmation sho
 | Last known / stale | The original verification time is retained and decisions are disabled. Refresh authoritative facts; stale display is not current permission. |
 | Expired, cancelled or already answered | No fresh decision is submitted. Show the recorded native status. First answer wins. |
 | Not applied by this request (`applied: false`) | A concurrent/native answer is displayed; it is not success attributable to this click. |
-| Approval changed | Reinspect current facts; the attempted decision is not replayed. A previous confirmation never authorizes changed content. |
+| Proven not dispatched | An expired inspection token, changed presentation or office rate limit can be rejected before native resolution. Only an explicit server `not-dispatched` disposition releases the browser attempt guard. Refresh, inspect and explicitly confirm a new decision; no old confirmation or decision is replayed. Actual approval expiry still disables decisions. |
 | Outcome unknown | A dispatch may have reached the Gateway. Use **Inspect** or **Reconcile** to read native truth; pending alone does not prove failure. Never replay the decision, including after pending refresh, tab remount or reconnect. |
 | Disabled, unsupported, scope required or review denied | Correct the explicit opt-in, supported Gateway contract, paired scope or native reviewer binding as appropriate. The error stays local; unrelated private panels remain unlocked. |
 
@@ -127,6 +127,8 @@ Discovery uses ephemeral, exact-ID observers. Their release must be acknowledged
 The server retains up to 1,000 attempted full ID/kind identities without eviction, independently of audience refresh/source changes, and admits at most ten new decision operations per minute. Saturation fails closed. The browser also retains a bounded attempted-identity guard across Approvals remounts. These are **process/tab-memory protections, not durable deduplication** across reload or server restart. Restarting is not a safe retry strategy for an uncertain decision; reconcile native state and escalate unresolved uncertainty to the Gateway operator.
 
 Only the visible, unlocked live panel polls. Lock, close, hidden-page, credential-generation and relevant agent/conversation/lifecycle changes cancel reads and clear private display. Recorded-run selection and new-conversation drafts suppress approval reads/actions; return explicitly to the live conversation to review. Approval payloads are never added to the public roster/socket, browser storage or logs.
+
+Identity/lifecycle or authority rejection clears the pending list, inspected record, confirmation and outcomes together, retaining only the non-payload attempted-identity guard. Transient failures may retain labelled last-known records with each record's original verification time, never action authority. An error code alone (including native `approval-unavailable` or an unclassified rate limit) cannot prove non-dispatch: lost/malformed responses, possible native attempts and pending-only reconciliation remain non-replayable.
 
 ## Recorded runs are read-only
 

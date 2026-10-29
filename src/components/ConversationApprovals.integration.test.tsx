@@ -2,12 +2,51 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentDetailPanel } from './AgentDetailPanel';
+import { ConversationApprovals } from './ConversationApprovals';
 import { ControlAccessProvider, useControlAccess } from '../control/ControlAccess';
 import { parseControlTarget } from '../../shared/control';
 import type { AgentState } from '../../shared/types';
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'typing', model: 'fixture', sessionKey: 'agent:cylena:main', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
 const selected = { agentId: agent.id, sessionKey: agent.sessionKey, sessionId: 'session-1', name: 'Visible selected conversation', isChild: false, hasActiveRun: true };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+it.each(['session-changed', 'invalid-target', 'approvals-denied', 'locked', 'scope-required', 'pairing-required', 'unavailable'] as const)('fences inspected, terminal and unknown operation payloads after %s', async code => {
+  for (const outcome of ['inspected', 'terminal', 'unknown'] as const) {
+    let denial = false;
+    const target = parseControlTarget(selected)!;
+    const approval = { id: 'private-operation-id', kind: 'exec', title: 'Private operation title', text: 'PRIVATE OPERATION TEXT', details: ['PRIVATE TARGET DETAILS'], sourceSessionKey: 'private-child-source', status: 'pending', createdAtMs: 1, expiresAtMs: Date.now() + 600000, allowedDecisions: ['allow-once', 'deny'] };
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+      const source = { state: 'current', observedAt: 1234 };
+      const failed = path.endsWith('/list') && denial;
+      const unknown = path.endsWith('/resolve') && outcome === 'unknown';
+      const body = path.endsWith('/status') ? { configured: true, state: 'ready', canRead: true, canSend: false, canReviewApprovals: true }
+        : failed ? { code } : unknown ? { code: 'approval-outcome-unknown' }
+          : path.endsWith('/list') ? { target, source, items: [approval], truncated: false }
+            : { target, source, approval: path.endsWith('/resolve') ? { ...approval, status: 'denied', resolvedAtMs: 22, allowedDecisions: [] } : approval, applied: path.endsWith('/resolve'), ...(path.endsWith('/inspect') ? { observationId: 'private-observation' } : {}) };
+      return new Response(JSON.stringify(body), { status: failed ? 403 : unknown ? 409 : 200 });
+    }));
+    function Harness() { const access = useControlAccess(); return <><button onClick={() => void access.unlock('fixture-key')}>Unlock</button><span data-testid="access">{access.state}</span><ConversationApprovals target={target} active /></>; }
+    render(<ControlAccessProvider><Harness /></ControlAccessProvider>); fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Deny' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Confirm deny' });
+    fireEvent.click(within(dialog).getByRole('button', { name: outcome === 'inspected' ? 'Cancel' : 'Confirm deny' }));
+    await screen.findByRole('region', { name: 'Inspected approval' });
+    denial = true; fireEvent.click(screen.getByRole('button', { name: 'Refresh approvals' }));
+    if (code === 'unavailable') {
+      await screen.findByRole('alert');
+      expect(screen.getAllByText('PRIVATE OPERATION TEXT').length).toBeGreaterThan(0);
+      const inspected = screen.getByRole('region', { name: 'Inspected approval' });
+      expect(within(inspected).getByText(`Last known — decisions disabled · ${new Date(1234).toLocaleString()}`)).toBeInTheDocument();
+      expect(screen.queryByText(/Verified by OpenClaw/)).toBeNull();
+      for (const button of screen.queryAllByRole('button', { name: /^(Deny|Allow once)$/ })) expect(button).toBeDisabled();
+      expect(screen.queryByRole('dialog', { name: 'Confirm deny' })).toBeNull(); cleanup(); continue;
+    }
+    await waitFor(() => expect(screen.queryByText('PRIVATE OPERATION TEXT')).toBeNull());
+    for (const text of ['PRIVATE TARGET DETAILS', 'private-child-source', 'private-operation-id', 'Private operation title']) expect(document.body.textContent).not.toContain(text);
+    expect(screen.queryByRole('dialog', { name: 'Confirm deny' })).toBeNull();
+    if (['session-changed', 'invalid-target', 'approvals-denied'].includes(code)) expect(screen.getByTestId('access')).toHaveTextContent('unlocked');
+    cleanup();
+  }
+});
 it('uses real private access/hook/panel routes, isolates local errors, and unmounts approval reads for history and new drafts', async () => {
   const calls: string[] = [];
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {

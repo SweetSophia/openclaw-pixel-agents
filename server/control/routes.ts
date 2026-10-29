@@ -20,7 +20,7 @@ import type { RunHistoryService } from './runHistoryService';
 import { parseControlStopRequest } from '../../shared/controlRun';
 import type { RunControlService } from './runControlService';
 import { parseApprovalReadRequest, parseApprovalInspectRequest, parseApprovalResolveRequest } from '../../shared/controlApprovals';
-import type { ApprovalService } from './approvalService';
+import { ApprovalNotDispatchedError, type ApprovalService } from './approvalService';
 
 export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService }): Router {
   const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls, approvals } = options; const router = Router();
@@ -41,7 +41,8 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
       const status = code === 'scope-required' || code === 'pairing-required' || code === 'usage-denied' || code === 'stop-denied' || code === 'approvals-denied' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
         : code === 'invalid-target' || code === 'file-unavailable' || code === 'approval-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
           : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' || code === 'approval-changed' || code === 'approval-outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
-      res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.' });
+      res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.',
+        ...(error instanceof ApprovalNotDispatchedError ? { approvalDisposition: error.approvalDisposition } : {}) });
     }).finally(() => { res.off('close', close); req.off('aborted', close); });
   }
   router.get('/agents/:id/sessions', (req, res) => {

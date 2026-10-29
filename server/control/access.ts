@@ -41,9 +41,15 @@ export function createControlAccess(config: ControlConfig): RequestHandler {
   }
   return (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
+    const rateLimited = (error: string) => {
+      // This middleware exits before any route/native work. Mark only approval resolution.
+      const approvalResolve = req.method === 'POST' && /^\/agents\/[^/]+\/approvals\/resolve\/?$/.test(req.path);
+      res.status(429).json({ code: 'rate-limited', error,
+        ...(approvalResolve ? { approvalDisposition: 'not-dispatched' } : {}) });
+    };
     if (!config.enabled) { res.status(503).json({ code: 'disabled', error: 'Task access is not configured.' }); return; }
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    if (!budget(failed, ip, 60, false)) { res.status(429).json({ code: 'rate-limited', error: 'Too many access attempts.' }); return; }
+    if (!budget(failed, ip, 60, false)) { rateLimited('Too many access attempts.'); return; }
     if (!controlTransportAllowed(req, config.allowTailnetHttp)) {
       budget(failed, ip, 60, true); res.status(403).json({ code: 'transport-required', error: 'Task access requires a secure connection.' }); return;
     }
@@ -51,7 +57,7 @@ export function createControlAccess(config: ControlConfig): RequestHandler {
     if (typeof auth !== 'string' || !auth.startsWith('Bearer ') || !matchesControlToken(auth.slice(7), config.controlToken!)) {
       budget(failed, ip, 60, true); res.status(401).json({ code: 'locked', error: 'Unlock task details to continue.' }); return;
     }
-    if (!isResultContentRequest(req) && !budget(reads, ip, 120, true)) { res.status(429).json({ code: 'rate-limited', error: 'Too many task requests.' }); return; }
+    if (!isResultContentRequest(req) && !budget(reads, ip, 120, true)) { rateLimited('Too many task requests.'); return; }
     next();
   };
 }

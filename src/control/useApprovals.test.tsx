@@ -63,8 +63,13 @@ it('clears and aborts on hidden page, resumes only fresh reads, and cancels on u
 });
 it('preserves the original last-known timestamp on read failure and disables confirmation', async () => {
   const { result } = renderHook(() => useApprovals(target, true)); await waitFor(() => expect(result.current.page).not.toBeNull());
+  await act(() => result.current.prepare(item, 'deny')); await act(() => result.current.confirm());
+  item = { ...pending(), id: 'unattempted-pending' }; await act(() => result.current.refresh());
+  expect(result.current.canDecide(item)).toBe(true);
   access.request.mockRejectedValue(new ControlApiError('unavailable'));
   await act(() => result.current.refresh()); expect(result.current.page?.source).toEqual({ state: 'stale', observedAt: 1234 });
+  expect(result.current.inspected?.source).toEqual({ state: 'stale', observedAt: 1234 });
+  expect(result.current.outcomes[0].source).toEqual({ state: 'stale', observedAt: 1234 });
   await act(() => result.current.prepare(result.current.page!.items[0], 'deny')); expect(result.current.confirmation).toBeNull();
 });
 it('does not read when disabled or inactive', async () => {
@@ -79,13 +84,58 @@ it('rejects replaced decision-relevant presentation and expiry before confirmati
   await act(() => result.current.prepare(result.current.page!.items[0], 'deny')); vi.spyOn(Date, 'now').mockReturnValue(item.expiresAtMs + 1);
   await act(() => result.current.confirm()); expect(resolves()).toHaveLength(0);
 });
-it.each(['approval-outcome-unknown', 'unavailable', 'approval-changed', 'approvals-denied', 'approval-unavailable'] as const)('never replays attempted native identity after %s, even after explicit pending inspection', async code => {
+it.each(['approval-outcome-unknown', 'unavailable', 'invalid-source', 'timed-out', 'approval-changed', 'approvals-denied', 'approval-unavailable', 'rate-limited'] as const)('never replays an unclassified attempt after %s, even after explicit pending inspection', async code => {
   access.request.mockImplementation(async (path, init) => { if (path.endsWith('/resolve')) throw new ControlApiError(code); return response(path, init); });
   const { result } = renderHook(() => useApprovals(target, true)); await waitFor(() => expect(result.current.page).not.toBeNull());
   await act(() => result.current.prepare(result.current.page!.items[0], 'deny'));
   await act(async () => { await Promise.all([result.current.confirm(), result.current.confirm()]); }); expect(resolves()).toHaveLength(1);
   await act(() => result.current.refresh()); await act(() => result.current.inspect(item)); await act(() => result.current.prepare(item, 'deny')); await act(() => result.current.confirm());
   expect(resolves()).toHaveLength(1); expect(result.current.canDecide(item)).toBe(false);
+});
+it.each(['approval-unavailable', 'approval-changed', 'rate-limited'] as const)('requires fresh explicit inspection and confirmation after proven pre-native %s', async code => {
+  const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation(async (path, init) => {
+    if (path.endsWith('/resolve') && resolves().length === 1) throw Object.assign(new ControlApiError(code), { approvalDisposition: 'not-dispatched' });
+    return original(path, init);
+  });
+  const { result } = renderHook(() => useApprovals(target, true));
+  await waitFor(() => expect(result.current.page).not.toBeNull());
+  await act(() => result.current.prepare(item, 'deny')); await act(() => result.current.confirm());
+  expect(result.current.confirmation).toBeNull(); expect(resolves()).toHaveLength(1);
+  await act(() => result.current.confirm()); expect(resolves()).toHaveLength(1);
+  observation = 'fresh-observation'; await act(() => result.current.refresh());
+  await act(() => result.current.prepare(item, 'deny'));
+  expect(result.current.confirmation?.observationId).toBe('fresh-observation');
+  expect(resolves()).toHaveLength(1);
+  await act(() => result.current.confirm()); expect(resolves()).toHaveLength(2);
+  expect(result.current.outcomes[0]).toMatchObject({ applied: true, approval: { status: 'denied' } });
+});
+it.each(['refresh', 'inspect', 'confirm'] as const)('clears all private presentations on terminal errors during %s', async action => {
+  for (const code of ['locked', 'session-changed', 'invalid-target', 'approvals-denied', 'scope-required', 'pairing-required'] as const) {
+    access.request = vi.fn(async (path, init) => response(path, init));
+    const { result, unmount } = renderHook(() => useApprovals(target, true));
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    await act(() => result.current.prepare(item, 'deny')); await act(() => result.current.confirm());
+    expect(result.current.inspected).not.toBeNull(); expect(result.current.outcomes).toHaveLength(1);
+    // A different pending identity permits an additional inspection/decision error after the terminal outcome.
+    item = { ...pending(), id: `${action}-${code}` }; await act(() => result.current.refresh());
+    if (action === 'confirm') await act(() => result.current.prepare(item, 'deny'));
+    access.request.mockRejectedValue(new ControlApiError(code));
+    await act(() => action === 'refresh' ? result.current.refresh() : action === 'inspect' ? result.current.inspect(item) : result.current.confirm());
+    expect(result.current.page).toBeNull(); expect(result.current.inspected).toBeNull();
+    expect(result.current.outcomes).toEqual([]); expect(result.current.confirmation).toBeNull();
+    expect(result.current.uncertain).toEqual([]); unmount();
+  }
+});
+it('keeps unknown attempts latched across audiences, remounts and transient reconciliation', async () => {
+  access.request.mockImplementation(async (path, init) => { if (path.endsWith('/resolve')) throw new ControlApiError('approval-unavailable'); return response(path, init); });
+  const first = renderHook(() => useApprovals(target, true));
+  await waitFor(() => expect(first.result.current.page).not.toBeNull());
+  await act(() => first.result.current.prepare(item, 'deny')); await act(() => first.result.current.confirm()); first.unmount();
+  const second = renderHook(() => useApprovals({ ...target, sessionKey: 'agent:cylena:parent', sessionId: 'parent' }, true));
+  await waitFor(() => expect(second.result.current.page).not.toBeNull());
+  await act(() => second.result.current.inspect(item)); await act(() => second.result.current.prepare(item, 'deny')); await act(() => second.result.current.confirm());
+  expect(resolves()).toHaveLength(1); expect(second.result.current.canDecide(item)).toBe(false);
 });
 it('reconciles unknown terminal truth only through explicit inspection without claiming operator success', async () => {
   access.request.mockImplementation(async (path, init) => { if (path.endsWith('/resolve')) throw new ControlApiError('approval-outcome-unknown'); return response(path, init); });
