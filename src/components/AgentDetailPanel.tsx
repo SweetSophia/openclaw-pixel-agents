@@ -7,9 +7,10 @@ import { AgentConversation } from './AgentConversation';
 import { TaskResults } from './TaskResults';
 import { AgentWorkspace } from './AgentWorkspace';
 import { ConversationUsage } from './ConversationUsage';
+import { ConversationApprovals } from './ConversationApprovals';
 import { useTaskDetails } from '../control/useTaskDetails';
 import { useRunHistory } from '../control/useRunHistory';
-import { useControlAccess } from '../control/ControlAccess';
+import { useControlAccess, useConversationDrafts } from '../control/ControlAccess';
 import { targetIdentity } from '../control/api';
 import { HistoricalConversation, RunHistoryPicker } from './RunHistory';
 import './AgentDetailPanel.css';
@@ -40,7 +41,7 @@ const activityColors: Record<AgentActivity, string> = {
   sleeping: '#8a93b2',
   error: '#dc3545',
 };
-const detailTabs = ['task', 'conversation', 'results', 'workspace', 'usage', 'agent'] as const;
+const detailTabs = ['task', 'conversation', 'results', 'workspace', 'usage', 'approvals', 'agent'] as const;
 
 export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -49,11 +50,13 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const [tab, setTab] = useState<typeof detailTabs[number]>('task');
   const tabsId = useId();
   const access = useControlAccess();
+  const drafts = useConversationDrafts();
   const [runSelection, setRunSelection] = useState<{ agentId: string; target: string; runId: string } | null>(null);
   const historical = runSelection?.agentId === agent.id;
-  const controlActive = tab === 'task' || tab === 'conversation' || tab === 'results' || tab === 'usage';
+  const controlActive = tab === 'task' || tab === 'conversation' || tab === 'results' || tab === 'usage' || tab === 'approvals';
   const details = useTaskDetails({ agentId: agent.id, initialSessionKey: agent.sessionKey, active: controlActive, taskActive: tab === 'task' && !historical, resultsActive: tab === 'results' && !historical, usageActive: tab === 'usage' && !historical });
   const selectedRunId = historical && details.selected && runSelection.target === targetIdentity(details.selected) ? runSelection.runId : undefined;
+  const newConversationDraft = (details.selected && drafts?.get(targetIdentity(details.selected)) as { creating?: boolean } | undefined)?.creating === true;
   const history = useRunHistory({ target: details.selected, runId: selectedRunId, active: controlActive, resultsActive: tab === 'results' && !!selectedRunId });
   const retainedHistory = !!selectedRunId && !history.snapshot?.task && !!history.lastKnown?.task;
   const historicalTask = history.snapshot?.task ?? (history.lastKnown?.task ? { ...history.lastKnown.task, source: { ...history.lastKnown.task.source, state: 'stale' as const } } : null);
@@ -138,6 +141,13 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           <TaskDetailsView agentId={agent.id} active={tab === 'usage'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
             {selectedRunId ? <p className="task-notice">Per-run usage is unavailable from the current Gateway contract. Conversation totals are not shown as usage for this recorded run. Return to Live / latest task to view conversation Usage.</p> : <ConversationUsage snapshot={details.usage} loading={details.loading || details.sessionsLoading} selected={details.selected !== null} error={details.usageError} />}
           </TaskDetailsView>
+        </div>
+        <div role="tabpanel" id={`${tabsId}-approvals-panel`} aria-labelledby={`${tabsId}-approvals-tab`} hidden={tab !== 'approvals'}>
+          {tab === 'approvals' && <TaskDetailsView agentId={agent.id} active state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
+            {selectedRunId ? <><p>Approvals are available for the live conversation only. Recorded runs cannot read or resolve approvals.</p><button type="button" onClick={() => setRunSelection(null)}>Return to live conversation</button></>
+              : newConversationDraft ? <p>A new conversation draft is selected. Return to Conversation and resume the existing live conversation before reviewing its approvals.</p>
+                : <ConversationApprovals target={details.selected} active />}
+          </TaskDetailsView>}
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
         <p className="detail-subvalue">Office roster summary</p>

@@ -18,6 +18,10 @@ const messages: Partial<Record<ClientErrorCode, string>> = {
   'workspace-changed': 'This workspace selection changed. Refresh the directory.',
   'usage-denied': 'Usage access was denied. Other panels remain unlocked.',
   'stop-denied': 'Stop was denied by OpenClaw. Only the owning device may be allowed to stop this run; task reads remain available.',
+  'approvals-denied': 'Approval review was denied by OpenClaw. Other task panels remain unlocked.',
+  'approval-unavailable': 'This approval is no longer available to this conversation audience.',
+  'approval-changed': 'This approval changed. Inspect the current record; the attempted decision will not be replayed.',
+  'approval-outcome-unknown': 'Approval outcome is unknown. Inspect the record to reconcile; this decision will not be replayed.',
   'timed-out': 'The request timed out. Try again.',
 };
 // Browser-only error copy must not expand the server's rejection vocabulary.
@@ -26,6 +30,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'session-changed', 'invalid-target', 'invalid-request', 'rate-limited', 'outcome-unknown',
   'command-not-supported', 'file-unavailable', 'file-too-large', 'preview-unsupported',
   'workspace-changed', 'unavailable', 'invalid-source', 'usage-denied', 'stop-denied',
+  'approvals-denied', 'approval-unavailable', 'approval-changed', 'approval-outcome-unknown',
 ]);
 export class ControlApiError extends Error {
   constructor(public readonly code: ClientErrorCode = 'unavailable') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

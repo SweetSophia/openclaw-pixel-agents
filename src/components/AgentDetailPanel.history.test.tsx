@@ -5,7 +5,7 @@ import { AgentDetailPanel } from './AgentDetailPanel';
 import { parseControlTarget } from '../../shared/control';
 import type { AgentState } from '../../shared/types';
 const f = vi.hoisted(() => ({ request: vi.fn(), state: 'unlocked', generation: 1, sourceState: 'ready' }));
-vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: f.sourceState, canRead: f.sourceState === 'ready', canSend: f.sourceState === 'ready' }, refreshStatus: vi.fn(), lock: vi.fn() }) }));
+vi.mock('../control/ControlAccess', () => ({ useConversationDrafts: () => undefined, useControlAccess: () => ({ ...f, status: { configured: true, state: f.sourceState, canRead: f.sourceState === 'ready', canSend: f.sourceState === 'ready' }, refreshStatus: vi.fn(), lock: vi.fn() }) }));
 // Keep the actual panel/hook/API selection path while observing the composer mount boundary.
 vi.mock('./AgentConversation', () => ({ AgentConversation: ({ active }: { active: boolean }) => { const [draft, setDraft] = useState(''); return <textarea aria-label="Fixture draft" data-active={active} value={draft} onChange={event => setDraft(event.target.value)} />; } }));
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'idle', model: 'fixture', sessionKey: 'agent:cylena:test', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
