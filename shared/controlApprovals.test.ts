@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { parseApprovalReadRequest, parseApprovalResolveRequest, parseApprovalInspectRequest, parseApprovalPage, parseApprovalResult, parseControlApproval, isApprovalId } from './controlApprovals';
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:main', sessionId: 'session-1' };
 describe('private approval contract', () => {
+  it('never interprets expiry or owner cancellation as an applied reviewer decision', () => {
+    for (const status of ['expired', 'cancelled']) {
+      const approval = { id: 'full-id', kind: 'exec', title: 'Run command', text: 'synthetic command', details: [], status,
+        createdAtMs: 1, expiresAtMs: 20, resolvedAtMs: 20, allowedDecisions: [] };
+      expect(parseApprovalResult({ target, source: { state: 'current', observedAt: 20 }, approval, applied: false })).not.toBeNull();
+      expect(parseApprovalResult({ target, source: { state: 'current', observedAt: 20 }, approval, applied: true })).toBeNull();
+    }
+  });
   it('accepts only explicit one-time decisions and exact target fields', () => {
     expect(parseApprovalResolveRequest({ target, id: 'full-approval-id', kind: 'exec', decision: 'allow-once', observationId: 'opaque-inspection' })).not.toBeNull();
     for (const extra of [{ decision: 'allow-always' }, { reviewer: {} }, { grantExpiresInDays: 1 }, { kind: 'other' }])

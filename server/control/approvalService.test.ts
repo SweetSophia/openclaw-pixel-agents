@@ -6,7 +6,9 @@ import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './g
 import type { TaskService } from './taskService';
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:main', sessionId: 'session-1', lifecycleRevision: 'revision-1' };
 const expiry = Date.now() + 600000;
-const native = (changes = {}) => ({ id: 'exact-full-id', status: 'pending', createdAtMs: 1, expiresAtMs: expiry,
+const native = (changes: Record<string, unknown> = {}) => ({ id: 'exact-full-id', urlPath: '/approval/exact-full-id', status: 'pending', createdAtMs: 1, expiresAtMs: expiry,
+  ...(changes.status === 'allowed' ? { decision: 'allow-once', reason: 'user' } : changes.status === 'denied' ? { decision: 'deny', reason: 'user' }
+    : changes.status === 'expired' ? { reason: 'timeout' } : changes.status === 'cancelled' ? { reason: 'run-aborted' } : {}),
   presentation: { kind: 'exec', commandText: 'synthetic command', allowedDecisions: ['allow-once', 'allow-always', 'deny'] }, ...changes });
 const services: ReturnType<typeof createApprovalService>[] = [];
 afterEach(() => { for (const service of services.splice(0)) service.close(); vi.useRealTimers(); });
@@ -16,7 +18,7 @@ function fixture() {
     if (method === 'sessions.messages.subscribe') return { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: items, truncated: false } };
     if (method === 'approval.get') return { approval: native() };
     if (method === 'approval.resolve') return { applied: true, approval: native({ status: 'denied', resolvedAtMs: 20 }) };
-    return {};
+    return { subscribed: false, key: _params?.key ?? target.sessionKey };
   });
   const gateway = { status: () => ({ configured: true, state: 'ready', canRead: true, canSend: false, canReviewApprovals: true }), request,
     onEvent: (callback: (event: GatewayEvent) => void) => { listeners.add(callback); return () => listeners.delete(callback); } } as unknown as ControlGateway;
@@ -25,6 +27,86 @@ function fixture() {
   return { service, gateway, tasks, request, listeners, setItems(value: unknown[]) { items = value; }, emit(event: GatewayEvent) { for (const listener of listeners) listener(event); } };
 }
 describe('private conversation approvals', () => {
+  it.each([
+    { decision: 'allow-always', reason: 'user' }, { decision: 'deny', reason: 'user' },
+    { decision: 'allow-once', reason: 'timeout' }, { decision: 'invalid', reason: 'user' },
+    { decision: undefined, reason: 'user' }, { decision: 'allow-once', reason: undefined },
+  ])('never accepts or replays a contradictory applied terminal verdict %j', async verdict => {
+    const host = fixture(); const inspected = await host.service.inspect({ target, id: 'exact-full-id' });
+    const original = host.request.getMockImplementation()!;
+    host.request.mockImplementation(async (...args) => args[0] === 'approval.resolve'
+      ? { applied: true, approval: native({ status: 'allowed', resolvedAtMs: 20, ...verdict }) } : original(...args));
+    const input = { target, id: 'exact-full-id', kind: 'exec' as const, decision: 'allow-once' as const, observationId: inspected.observationId! };
+    await expect(host.service.resolve(input)).rejects.toMatchObject({ code: 'approval-outcome-unknown' });
+    await expect(host.service.resolve(input)).rejects.toMatchObject({ code: 'approval-outcome-unknown' });
+    expect(host.request.mock.calls.filter(call => call[0] === 'approval.resolve')).toHaveLength(1);
+  });
+  it.each([
+    { status: 'allowed', decision: 'deny', reason: 'user' }, { status: 'allowed', decision: 'allow-once', reason: 'timeout' },
+    { status: 'denied', decision: 'allow-once', reason: 'user' }, { status: 'denied', decision: 'deny', reason: 'timeout' },
+    { status: 'expired', decision: 'deny', reason: 'timeout' }, { status: 'expired', reason: 'user' },
+    { status: 'cancelled', reason: 'user' }, { status: 'pending', decision: 'deny' },
+  ])('rejects malformed native terminal discriminators before projection %j', verdict => {
+    expect(projectApproval(native({ resolvedAtMs: 20, ...verdict }))).toBeNull();
+  });
+  it('retries exact observer cleanup after admission failure and blocks new observers until acknowledgment', async () => {
+    vi.useFakeTimers(); const host = fixture(); const original = host.request.getMockImplementation()!;
+    let cleanupAttempts = 0;
+    host.request.mockImplementation(async (...args) => {
+      if (args[0] !== 'sessions.messages.unsubscribe') return original(...args);
+      if (++cleanupAttempts === 1) throw Error('Too many pending task requests');
+      return { subscribed: false, key: args[1]!.key };
+    });
+    await host.service.read(target);
+    await expect(host.service.read(target)).rejects.toMatchObject({ code: 'rate-limited' });
+    expect(host.request.mock.calls.filter(call => call[0] === 'sessions.messages.subscribe')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    const cleanups = host.request.mock.calls.filter(call => call[0] === 'sessions.messages.unsubscribe');
+    expect(cleanups).toHaveLength(2); expect(cleanups[0][1]).toEqual(cleanups[1][1]);
+    await expect(host.service.read(target)).resolves.toMatchObject({ items: [expect.objectContaining({ id: 'exact-full-id' })] });
+  });
+  it('does not return a discovery page if its source is invalidated during cleanup acknowledgment', async () => {
+    const host = fixture(); const original = host.request.getMockImplementation()!;
+    host.request.mockImplementation(async (...args) => {
+      if (args[0] !== 'sessions.messages.unsubscribe') return original(...args);
+      host.emit({ event: 'source.invalidated', payload: null }); return { subscribed: false, key: target.sessionKey };
+    });
+    await expect(host.service.read(target)).rejects.toMatchObject({ code: 'unavailable' });
+  });
+  it('retains unacknowledged cleanup after office close until the exact observer is released', async () => {
+    vi.useFakeTimers(); const host = fixture(); const original = host.request.getMockImplementation()!; let attempts = 0;
+    host.request.mockImplementation(async (...args) => args[0] === 'sessions.messages.unsubscribe'
+      ? ++attempts === 1 ? {} : { subscribed: false, key: args[1]!.key } : original(...args));
+    await host.service.read(target); host.service.close();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.request.mock.calls.filter(call => call[0] === 'sessions.messages.unsubscribe')).toHaveLength(2);
+    expect(host.listeners.size).toBe(0);
+    expect(host.request.mock.calls.filter(call => call[0] === 'sessions.messages.subscribe')).toHaveLength(1);
+  });
+  it.each([
+    { status: 'allowed', decision: 'allow-once', reason: 'user' }, { status: 'allowed', decision: 'allow-always', reason: 'user' },
+    { status: 'denied', decision: 'deny', reason: 'user' }, { status: 'denied', decision: 'deny', reason: 'malformed-verdict' },
+    { status: 'denied', decision: 'deny', reason: 'no-route' }, { status: 'denied', decision: 'deny', reason: 'storage-corrupt' },
+    { status: 'expired', reason: 'timeout' }, { status: 'cancelled', reason: 'run-aborted' }, { status: 'cancelled', reason: 'gateway-restart' },
+  ])('accepts valid native terminal discriminators without exposing the raw verdict %j', verdict => {
+    const projected = projectApproval(native({ resolvedAtMs: 20, ...verdict }));
+    expect(projected?.status).toBe(verdict.status);
+    expect(projected).not.toHaveProperty('decision'); expect(projected).not.toHaveProperty('reason');
+  });
+  it('keeps outstanding observers bounded through persistent cleanup failure and discards only the ended generation', async () => {
+    vi.useFakeTimers(); const host = fixture(); const original = host.request.getMockImplementation()!;
+    host.request.mockImplementation(async (...args) => args[0] === 'sessions.messages.unsubscribe' ? Promise.reject(Error('temporary native failure')) : original(...args));
+    await host.service.read(target);
+    for (let i = 0; i < 20; i++) await expect(host.service.read(target)).rejects.toMatchObject({ code: 'rate-limited' });
+    expect(host.request.mock.calls.filter(call => call[0] === 'sessions.messages.subscribe')).toHaveLength(1);
+    const oldId = host.request.mock.calls.find(call => call[0] === 'sessions.messages.subscribe')![1]!.subscriptionId;
+    host.emit({ event: 'source.invalidated', payload: null }); host.request.mockClear();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.request).not.toHaveBeenCalled();
+    host.request.mockImplementation(async (...args) => args[0] === 'sessions.messages.unsubscribe' ? { subscribed: false, key: args[1]!.key } : original(...args));
+    await host.service.read(target);
+    expect(host.request.mock.calls.find(call => call[0] === 'sessions.messages.unsubscribe')![1]!.subscriptionId).not.toBe(oldId);
+  });
   it('bounds new operations to ten per minute and retains all 1000 attempted native identities without eviction', async () => {
     vi.useFakeTimers(); vi.setSystemTime(1000000); const host = fixture();
     let selected = 'id-0';
@@ -33,7 +115,7 @@ describe('private conversation approvals', () => {
       if (method === 'sessions.messages.subscribe') return { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [record], truncated: false } };
       if (method === 'approval.get') return { approval: record };
       if (method === 'approval.resolve') return { applied: true, approval: native({ id: String(params!.id), status: 'denied', resolvedAtMs: Date.now() }) };
-      return {};
+      return { subscribed: false, key: target.sessionKey };
     });
     const decide = async () => {
       const inspected = await host.service.inspect({ target, id: selected });
@@ -76,7 +158,7 @@ describe('private conversation approvals', () => {
   });
   it('unsubscribes exact in-flight observer after HTTP abort and rejects any data', async () => {
     const host = fixture(); let release!: (value: unknown) => void;
-    host.request.mockImplementation(async method => method === 'sessions.messages.subscribe' ? new Promise(resolve => { release = resolve; }) : {});
+    host.request.mockImplementation(async method => method === 'sessions.messages.subscribe' ? new Promise(resolve => { release = resolve; }) : { subscribed: false, key: target.sessionKey });
     const abort = new AbortController(); const read = host.service.read(target, abort.signal);
     await vi.waitFor(() => expect(release).toBeDefined()); abort.abort();
     release({ subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [], truncated: false } });
@@ -149,7 +231,7 @@ describe('private conversation approvals', () => {
       if (method === 'sessions.messages.subscribe') return { subscribed: true, key: params!.key, agentId: target.agentId, approvalReplay: { sessionKey: params!.key, updatedAtMs: 10, approvals: [native()], truncated: false } };
       if (method === 'approval.get') return { approval: native() };
       if (method === 'approval.resolve') { host.emit({ event: 'source.invalidated', payload: null }); throw Error('lost'); }
-      return {};
+      return { subscribed: false, key: params!.key };
     });
     const first = await host.service.inspect({ target, id: 'exact-full-id' });
     await expect(host.service.resolve({ target, id: 'exact-full-id', kind: 'exec', decision: 'deny', observationId: first.observationId! })).rejects.toMatchObject({ code: 'approval-outcome-unknown' });
@@ -159,7 +241,7 @@ describe('private conversation approvals', () => {
   });
   it.each([true, Array.from({ length: 1001 }, (_, i) => native({ id: `id-${i}` })), [native(), native()]])('fails closed on truncated, overflowing or duplicate replay', async bad => {
     const host = fixture();
-    host.request.mockImplementation(async method => method === 'sessions.messages.subscribe' ? { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: Array.isArray(bad) ? bad : [native()], truncated: bad === true } } : {});
+    host.request.mockImplementation(async method => method === 'sessions.messages.subscribe' ? { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: Array.isArray(bad) ? bad : [native()], truncated: bad === true } } : { subscribed: false, key: target.sessionKey });
     await expect(host.service.read(target)).rejects.toMatchObject({ code: 'invalid-source' });
     expect(host.request.mock.calls.filter(call => call[0] === 'sessions.messages.unsubscribe')).toHaveLength(1);
   });
@@ -178,7 +260,7 @@ describe('private conversation approvals', () => {
         for (let i = 0; i < 101; i++) host.emit({ event: 'session.approval', payload: { sessionKey: target.sessionKey, phase: 'pending', updatedAtMs: 11, approval: native() } });
         return { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [], truncated: false } };
       }
-      return {};
+      return { subscribed: false, key: target.sessionKey };
     });
     await expect(host.service.read(target)).rejects.toMatchObject({ code: 'invalid-source' });
     const sub = host.request.mock.calls.find(call => call[0] === 'sessions.messages.subscribe')!;
@@ -229,7 +311,7 @@ describe('private conversation approvals', () => {
     request.mockImplementation(async method => method === 'sessions.messages.subscribe'
       ? { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [native()], truncated: false } }
       : method === 'approval.get' ? { approval: native() }
-        : method === 'approval.resolve' ? { applied: false, approval: native({ status: 'denied', resolvedAtMs: 20 }) } : {});
+        : method === 'approval.resolve' ? { applied: false, approval: native({ status: 'denied', resolvedAtMs: 20 }) } : { subscribed: false, key: target.sessionKey });
     const inspected = await service.inspect({ target, id: 'exact-full-id' });
     const result = await service.resolve({ target, id: 'exact-full-id', kind: 'exec', decision: 'allow-once', observationId: inspected.observationId! });
     expect(result).toMatchObject({ applied: false, approval: { status: 'denied' } });
@@ -243,7 +325,7 @@ describe('private conversation approvals', () => {
     const expired = native({ expiresAtMs: Date.now() - 1 });
     request.mockImplementation(async method => method === 'sessions.messages.subscribe'
       ? { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [expired], truncated: false } }
-      : { approval: expired });
+      : method === 'sessions.messages.unsubscribe' ? { subscribed: false, key: target.sessionKey } : { approval: expired });
     const inspected = await service.inspect({ target, id: 'exact-full-id' });
     await expect(service.resolve({ target, id: 'exact-full-id', kind: 'exec', decision: 'deny', observationId: inspected.observationId! })).rejects.toMatchObject({ code: 'approval-unavailable' });
     expect(request.mock.calls.some(call => call[0] === 'approval.resolve')).toBe(false);
@@ -254,7 +336,7 @@ describe('private conversation approvals', () => {
       if (method === 'sessions.messages.subscribe') return { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [native()], truncated: false } };
       if (method === 'approval.get') return { approval: native() };
       if (method === 'approval.resolve') throw Error('transport dropped');
-      return {};
+      return { subscribed: false, key: target.sessionKey };
     });
     const inspected = await service.inspect({ target, id: 'exact-full-id' });
     const input = { target, id: 'exact-full-id', kind: 'exec' as const, decision: 'deny' as const, observationId: inspected.observationId! };
@@ -271,7 +353,7 @@ describe('private conversation approvals', () => {
         host.emit({ event: 'session.approval', payload: { sessionKey: target.sessionKey, updatedAtMs: 10, phase: 'pending', approval: native() } });
         return { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [native()], truncated: false } };
       }
-      return {};
+      return { subscribed: false, key: target.sessionKey };
     });
     expect((await host.service.read(target)).items).toEqual([]);
   });

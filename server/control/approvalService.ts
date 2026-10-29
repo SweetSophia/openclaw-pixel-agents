@@ -17,6 +17,8 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
   let closed = false; let generation = 0; let activeOperations = 0;
   const observations = new Map<string, { approval: ControlApproval; expires: number; observationId?: string; inspectionExpires?: number }>();
   const controllers = new Set<AbortController>(); const resolving = new Set<string>();
+  const observers = new Map<string, { subscription: { key: string; agentId: string; subscriptionId: string }; epoch: number; ready: boolean }>();
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined; let cleanupFlight: Promise<void> | undefined;
   // Never evict an attempted native identity, including unknown outcomes across reconnects/audiences.
   // This is bounded process-local protection, not durable exactly-once delivery.
   const attempted = new Set<string>(); const decisionTimes: number[] = [];
@@ -38,8 +40,36 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
     while (observations.size > APPROVAL_LIMITS.observations) observations.delete(observations.keys().next().value!);
   }
   const off = gateway.onEvent(event => {
-    if (event.event === 'source.invalidated') { generation++; observations.clear(); for (const controller of controllers) controller.abort(); }
+    if (event.event === 'source.invalidated') {
+      generation++; observations.clear(); observers.clear(); clearTimeout(cleanupTimer); cleanupTimer = undefined; cleanupFlight = undefined;
+      for (const controller of controllers) controller.abort();
+      if (closed) off();
+    }
   });
+  function scheduleCleanup(): void {
+    if (cleanupTimer || ![...observers.values()].some(observer => observer.ready)) return;
+    cleanupTimer = setTimeout(() => { cleanupTimer = undefined; void releaseObservers(); }, 250); cleanupTimer.unref?.();
+  }
+  function releaseObservers(): Promise<void> {
+    if (cleanupFlight) return cleanupFlight;
+    const epoch = generation;
+    const flight = (async () => {
+      for (const [id, observer] of observers) {
+        if (epoch !== generation || !gateway.status().canRead) return;
+        if (!observer.ready || observer.epoch !== epoch) continue;
+        try {
+          const response = controlRecord(await gateway.request('sessions.messages.unsubscribe', observer.subscription));
+          if (!response || controlByteSize(response) > CONTROL_LIMITS.responseBytes || response.subscribed !== false || response.key !== observer.subscription.key) return;
+          if (observers.get(id) === observer) observers.delete(id);
+        } catch { return; } // Keep the exact identity for admission-safe cleanup retry, never a decision retry.
+      }
+    })().finally(() => {
+      if (cleanupFlight === flight) cleanupFlight = undefined;
+      if (epoch === generation) scheduleCleanup();
+      if (closed && !observers.size) off();
+    });
+    cleanupFlight = flight; return flight;
+  }
   // Own cancellation for all native work, not just the temporary subscription.
   async function operation<T>(signal: AbortSignal | undefined, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
     authority();
@@ -75,11 +105,13 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
         ...(typeof row.sourceSessionKey === 'string' ? { sourceSessionKey: row.sourceSessionKey } : {}) }, phase: row.phase });
     });
     const subscription = { key: target.sessionKey, agentId: target.agentId, subscriptionId: `pixel-approvals-${randomUUID()}` };
-    let attempted = false;
+    let observer: ReturnType<typeof observers.get>;
     try {
       current(epoch, controller.signal);
       await tasks.verifyTarget(target, controller.signal); current(epoch, controller.signal);
-      attempted = true;
+      // Reserve ownership before dispatch: even a lost subscribe response needs exact cleanup.
+      if (observers.size >= APPROVAL_LIMITS.concurrent || [...observers.values()].some(item => item.ready)) throw new ControlError('rate-limited');
+      observer = { subscription, epoch, ready: false }; observers.set(subscription.subscriptionId, observer);
       const response = controlRecord(await gateway.request('sessions.messages.subscribe', { ...subscription, includeApprovals: true }, controller.signal));
       const replay = controlRecord(response?.approvalReplay);
       if (!response || controlByteSize(response) > CONTROL_LIMITS.responseBytes || response.subscribed !== true || response.key !== target.sessionKey || response.agentId !== target.agentId
@@ -113,8 +145,9 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
       throw error;
     } finally {
       stop(); controllers.delete(controller); signal?.removeEventListener('abort', cancel);
-      // Cancellation may lose a successful subscribe response. Release this exact observer even then.
-      if (attempted && gateway.status().canRead) void gateway.request('sessions.messages.unsubscribe', subscription).catch(() => {});
+      // Keep failed cleanup owned and bound to this connection; block new subscriptions until acknowledged.
+      if (observer && observers.get(subscription.subscriptionId) === observer) { observer.ready = true; await releaseObservers(); }
+      current(epoch, controller.signal);
     }
   }
   const read = (target: ControlTarget, signal?: AbortSignal) => operation(signal, active => discover(target, active));
@@ -179,7 +212,8 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
           const value = controlRecord(await gateway.request('approval.resolve', { id: input.id, kind: input.kind, decision: input.decision }, active));
           const resolved = projectApproval(value?.approval);
           if (!value || controlByteSize(value) > CONTROL_LIMITS.responseBytes || typeof value.applied !== 'boolean' || !resolved || resolved.id !== input.id || resolved.kind !== input.kind || resolved.status === 'pending'
-            || (value.applied && resolved.status !== (input.decision === 'deny' ? 'denied' : 'allowed'))) throw new ControlError('invalid-source');
+            || (value.applied && (resolved.status !== (input.decision === 'deny' ? 'denied' : 'allowed')
+              || controlRecord(value.approval)?.decision !== input.decision))) throw new ControlError('invalid-source');
           await tasks.verifyTarget(input.target, active); current(epoch, active);
           const result = { ...resolved, ...(approval.sourceSessionKey ? { sourceSessionKey: approval.sourceSessionKey } : {}) }; remember(input.target, result);
           return { target: structuredClone(input.target), source: { state: 'current' as const, observedAt: Date.now() }, approval: result, applied: value.applied };
@@ -190,5 +224,10 @@ export function createApprovalService(gateway: ControlGateway, tasks: TaskServic
       });
     } finally { resolving.delete(nativeIdentity); }
   }
-  return { read, inspect, resolve, close() { closed = true; generation++; off(); observations.clear(); for (const controller of controllers) controller.abort(); controllers.clear(); } };
+  return { read, inspect, resolve, close() {
+    if (closed) return;
+    closed = true; observations.clear(); for (const controller of controllers) controller.abort();
+    if (!observers.size) off();
+    else void releaseObservers();
+  } };
 }

@@ -2,6 +2,15 @@ import { CONTROL_LIMITS, controlByteSize, controlRecord } from '../../shared/con
 import { isApprovalId, isApprovalKind, parseControlApproval, type ControlApproval } from '../../shared/controlApprovals';
 
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
+// Validate native discriminators before stripping them from the office presentation.
+function nativeState(row: Record<string, unknown>): boolean {
+  if (row.status === 'pending') return row.decision === undefined && row.reason === undefined && row.resolvedAtMs === undefined;
+  if (row.status === 'allowed') return (row.decision === 'allow-once' || row.decision === 'allow-always') && row.reason === 'user';
+  if (row.status === 'denied') return row.decision === 'deny' && typeof row.reason === 'string'
+    && ['user', 'malformed-verdict', 'no-route', 'storage-corrupt'].includes(row.reason);
+  if (row.status === 'expired') return row.decision === undefined && row.reason === 'timeout';
+  return row.status === 'cancelled' && row.decision === undefined && (row.reason === 'run-aborted' || row.reason === 'gateway-restart');
+}
 function scopeDetails(value: unknown): string[] | null {
   if (value === undefined) return [];
   const row = controlRecord(value); if (!row) return null;
@@ -19,7 +28,7 @@ function scopeDetails(value: unknown): string[] | null {
 /** Pick only the native reviewer-safe presentation, never raw request/policy envelopes. */
 export function projectApproval(value: unknown): ControlApproval | null {
   const row = controlRecord(value); const presentation = controlRecord(row?.presentation);
-  if (!row || controlByteSize(row) > CONTROL_LIMITS.responseBytes || !presentation || !isApprovalId(row.id) || !isApprovalKind(presentation.kind)
+  if (!row || !nativeState(row) || controlByteSize(row) > CONTROL_LIMITS.responseBytes || !presentation || !isApprovalId(row.id) || !isApprovalKind(presentation.kind)
     || !Array.isArray(presentation.allowedDecisions) || presentation.allowedDecisions.length > 3 || !presentation.allowedDecisions.includes('deny')
     || !presentation.allowedDecisions.every(item => typeof item === 'string' && ['allow-once', 'allow-always', 'deny'].includes(item)) || new Set(presentation.allowedDecisions).size !== presentation.allowedDecisions.length) return null;
   const details = scopeDetails(presentation.scope); if (!details) return null;

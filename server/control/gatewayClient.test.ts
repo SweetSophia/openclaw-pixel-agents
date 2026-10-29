@@ -93,7 +93,7 @@ function pairedClient(url: string) {
 describe('scoped task Gateway client', () => {
   it('reads, inspects and resolves through signed approval scope and protected HTTP without sending standing grants', async () => {
     const target = { agentId: 'cylena', sessionKey: 'agent:cylena:approval-fixture', sessionId: 'approval-session' };
-    const pending = { id: 'exact-full-approval', status: 'pending', createdAtMs: 1, expiresAtMs: Date.now() + 60000,
+    const pending = { id: 'exact-full-approval', urlPath: '/approval/exact-full-approval', status: 'pending', createdAtMs: 1, expiresAtMs: Date.now() + 60000,
       presentation: { kind: 'exec', commandText: 'synthetic command', warningText: 'Synthetic warning', allowedDecisions: ['allow-once', 'deny'] } };
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
       auth: { role: 'operator', scopes: ['operator.read', 'operator.approvals'], deviceToken: 'fixture-approval-grant' },
@@ -101,7 +101,8 @@ describe('scoped task Gateway client', () => {
     }) : { type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe' ? { session: { ...target, key: target.sessionKey } }
       : frame.method === 'sessions.messages.subscribe' ? { subscribed: true, key: target.sessionKey, agentId: target.agentId, approvalReplay: { sessionKey: target.sessionKey, updatedAtMs: 10, approvals: [pending], truncated: false } }
         : frame.method === 'approval.get' ? { approval: pending }
-          : frame.method === 'approval.resolve' ? { applied: false, approval: { ...pending, status: 'denied', resolvedAtMs: 20 } } : {} })));
+          : frame.method === 'approval.resolve' ? { applied: false, approval: { ...pending, status: 'denied', decision: 'deny', reason: 'user', resolvedAtMs: 20 } }
+            : frame.method === 'sessions.messages.unsubscribe' ? { subscribed: false, key: target.sessionKey } : {} })));
     const directory = mkdtempSync(join(tmpdir(), 'pixel-approval-flow-'));
     const gateway = client(host.url, false, { directory, deviceOnly: false, approvalsEnabled: true }); await ready(gateway);
     expect(gateway.status()).toMatchObject({ canReviewApprovals: true, canSend: false, canStop: false });

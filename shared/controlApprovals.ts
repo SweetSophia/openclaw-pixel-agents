@@ -71,5 +71,5 @@ export function parseApprovalResult(value: unknown): ControlApprovalResult | nul
   const row = controlRecord(value); const target = exactTarget(row?.target); const observed = source(row?.source); const approval = parseControlApproval(row?.approval);
   return row && keys(row, ['target', 'source', 'approval', 'applied', 'observationId']) && controlByteSize(row) <= CONTROL_LIMITS.responseBytes && target && observed && approval && typeof row.applied === 'boolean'
     && (row.observationId === undefined || (bounded(row.observationId, 128, true) && approval.status === 'pending' && !row.applied && observed.state === 'current'))
-    && (!row.applied || approval.status !== 'pending') ? { target, source: observed, approval, applied: row.applied, ...(row.observationId === undefined ? {} : { observationId: row.observationId as string }) } : null;
+    && (!row.applied || approval.status === 'allowed' || approval.status === 'denied') ? { target, source: observed, approval, applied: row.applied, ...(row.observationId === undefined ? {} : { observationId: row.observationId as string }) } : null;
 }
