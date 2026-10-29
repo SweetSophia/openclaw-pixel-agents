@@ -20,7 +20,7 @@ function Confirmation({ approval, target, decision, onCancel, onConfirm }: { app
   useLayoutEffect(() => { cancel.current?.focus(); }, []);
   return <div role="dialog" aria-modal="true" aria-labelledby={heading} className="approval-confirmation" onKeyDown={event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); }
-    if (event.key === 'Tab') { event.preventDefault(); (document.activeElement === cancel.current ? confirm.current : cancel.current)?.focus(); }
+    if (event.key === 'Tab') { event.preventDefault(); event.stopPropagation(); (document.activeElement === cancel.current ? confirm.current : cancel.current)?.focus(); }
   }}>
     <h3 id={heading}>Confirm {decisionLabel(decision)}</h3>
     <p>Agent: {target.agentId}</p><p>Conversation: <span>{target.sessionKey}</span></p><p>Session: {target.sessionId}</p>

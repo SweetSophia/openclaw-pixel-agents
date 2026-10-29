@@ -36,7 +36,7 @@ it('uses real private access/hook/panel routes, isolates local errors, and unmou
   expect(within(screen.getByRole('tabpanel')).queryByRole('button', { name: 'Allow once' })).toBeNull();
 });
 
-it.each(['expiry', 'terminal', 'unknown', 'removed', 'tab', 'selection', 'escape'] as const)('restores stable approval context after %s without stealing navigation focus', async scenario => {
+it.each(['expiry', 'terminal', 'unknown', 'removed', 'tab', 'selection', 'escape', 'keyboard'] as const)('restores stable approval context after %s without stealing navigation focus', async scenario => {
   let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
   const approval = { id: 'focus-approval', kind: 'exec', title: 'Synthetic focus request', text: 'synthetic only', details: [], status: 'pending', createdAtMs: 1, expiresAtMs: now + 600000, allowedDecisions: ['allow-once', 'deny'] };
   const replacement = { ...selected, sessionId: 'session-2', sessionKey: 'agent:cylena:other', name: 'Other selected conversation' };
@@ -58,7 +58,16 @@ it.each(['expiry', 'terminal', 'unknown', 'removed', 'tab', 'selection', 'escape
   await screen.findByRole('option', { name: /Visible selected conversation/ }); fireEvent.click(screen.getByRole('tab', { name: 'Approvals' }));
   const deny = await screen.findByRole('button', { name: 'Deny' }); deny.focus(); fireEvent.click(deny);
   const dialog = await screen.findByRole('dialog', { name: 'Confirm deny' }); expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
-  if (scenario === 'escape') {
+  if (scenario === 'keyboard') {
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm deny' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' }); expect(confirm).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' }); expect(cancel).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true }); expect(confirm).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true }); expect(cancel).toHaveFocus();
+    expect(vi.mocked(fetch).mock.calls.some(([path]) => String(path).endsWith('/resolve'))).toBe(false);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' }); expect(close).not.toHaveBeenCalled(); expect(deny).toHaveFocus();
+  } else if (scenario === 'escape') {
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' }); expect(close).not.toHaveBeenCalled(); expect(deny).toHaveFocus();
   } else if (scenario === 'expiry') {
     now = approval.expiresAtMs + 1; view.rerender(<ControlAccessProvider><Harness /></ControlAccessProvider>);
