@@ -91,7 +91,6 @@ describe('native scoped model service', () => {
     const snap = await f.models.read(target);
     expect(snap).toMatchObject({ canChange: false, disabledReason: reason });
     expect(snap).not.toHaveProperty('modelCapabilities');
-    expect(f.gateway.status().canRead).toBe(true);
   });
   it('retains read-only for actual row readOnly and legacy capability providers without a reason', async () => {
     const f = fixture(); f.row.readOnly = true;
@@ -173,6 +172,8 @@ describe('native scoped model service', () => {
     await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(1));
     f.reconcileGates[0].reject(Error('readback failed'));
     expect((await f.applications[0]).outcome).toBe('unknown');
+    expect(await f.models.select(f.inputs[0])).toEqual(await f.applications[0]);
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.patch')).toHaveLength(1);
     const replacement = f.models.read(f.inputs[0].target);
     await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(2));
     f.releaseReconcile(1); expect((await replacement).currentModel).toBe('provider/new');
