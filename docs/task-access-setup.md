@@ -99,7 +99,7 @@ A Stop receipt labelled **requested** confirms admission, not completion. **Not 
 
 ## Conversation model selection
 
-Implemented source is in review; this feature is **not included in published npm 1.7.0**. Source qualification does not establish a protected merge, live acceptance, deployment or a new npm release. These instructions apply to a build containing the implementation.
+Model selection merged in [PR #334](https://github.com/SweetSophia/openclaw-pixel-agents/pull/334) as `7bd8809`; exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41105806956) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41105806958) passed. This feature is **not included in published npm 1.7.0**; no live acceptance, deployment or new npm publication is established. These instructions apply to a build containing the implementation.
 
 In the live **Conversation** view, **Live conversation model** shows source-observed model information, separate from the public office roster. Use **Refresh models**, choose a **Model preference**, then **Apply model preference** to inspect an immutable confirmation naming the agent, conversation/session, observed current model and requested preference. Picking or refreshing never writes. Cancel receives initial focus; Tab/Shift+Tab stay within confirmation, and Escape cancels it without closing the detail panel.
 
