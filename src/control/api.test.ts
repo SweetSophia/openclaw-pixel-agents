@@ -17,6 +17,10 @@ it('preserves a typed Stop ownership denial instead of converting it to an uncer
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{"code":"stop-denied"}', { status: 403 })));
   await expect(controlFetch('/api/control/agents/cylena/stop', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'stop-denied', message: expect.stringContaining('owning device') });
 });
+it.each([['model-denied', 403], ['model-busy', 409]] as const)('preserves method-local %s without claiming a generic outage', async (code, status) => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code }), { status })));
+  await expect(controlFetch('/api/control/agents/cylena/model', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code, message: expect.stringMatching(/model|work/i) });
+});
 it.each(['approval-changed', 'approval-unavailable', 'rate-limited'])('parses only closed proven-not-dispatched approval rejection %s', async code => {
   for (const [extra, expected] of [[{ approvalDisposition: 'not-dispatched' }, 'not-dispatched'], [{}, undefined], [{ approvalDisposition: 'attempted' }, undefined], [{ approvalDisposition: 'not-dispatched', unexpected: true }, undefined]] as const) {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code, error: 'Rejected before native dispatch.', ...extra }), { status: code === 'rate-limited' ? 429 : 409 })));

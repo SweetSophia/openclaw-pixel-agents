@@ -18,6 +18,8 @@ const messages: Partial<Record<ClientErrorCode, string>> = {
   'preview-unsupported': 'This file cannot be previewed safely. Download it instead.',
   'workspace-changed': 'This workspace selection changed. Refresh the directory.',
   'usage-denied': 'Usage access was denied. Other panels remain unlocked.',
+  'model-denied': 'Model selection was denied. Other task panels remain unlocked.',
+  'model-busy': 'Work is active or its activity is unknown. Refresh models after the conversation is idle.',
   'stop-denied': 'Stop was denied by OpenClaw. Only the owning device may be allowed to stop this run; task reads remain available.',
   'approvals-denied': 'Approval review was denied by OpenClaw. Other task panels remain unlocked.',
   'approval-unavailable': 'This approval is no longer available to this conversation audience.',
@@ -32,6 +34,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'command-not-supported', 'file-unavailable', 'file-too-large', 'preview-unsupported',
   'workspace-changed', 'unavailable', 'invalid-source', 'usage-denied', 'stop-denied',
   'approvals-denied', 'approval-unavailable', 'approval-changed', 'approval-outcome-unknown',
+  'model-denied', 'model-busy',
 ]);
 export class ControlApiError extends Error {
   constructor(public readonly code: ClientErrorCode = 'unavailable', public readonly approvalDisposition?: 'not-dispatched') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

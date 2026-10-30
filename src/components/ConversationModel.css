@@ -1,0 +1,46 @@
+.conversation-model {
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-color, #404762);
+  border-radius: 0.5rem;
+  min-width: 0;
+}
+.conversation-model p, .model-confirmation p {
+  overflow-wrap: anywhere;
+}
+.conversation-model label {
+  display: block;
+  margin-block: 0.75rem 0.25rem;
+}
+.conversation-model select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  color: inherit;
+  background: var(--bg-secondary, #202539);
+}
+.conversation-model button, .conversation-model select {
+  font: inherit;
+  min-height: 2.75rem;
+}
+.model-confirmation {
+  margin-block-start: 1rem;
+  padding: 1rem;
+  border: 2px solid var(--accent-color, #4ecca3);
+  border-radius: 0.5rem;
+}
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.model-actions button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.conversation-model :focus-visible {
+  outline: 2px solid var(--accent-color, #4ecca3);
+  outline-offset: 2px;
+}
