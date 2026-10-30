@@ -43,6 +43,24 @@ it('keeps local controls disabled and confirmation immutable until Cancel or ext
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
   await screen.findByText(/This conversation has active work/); expect(screen.getByRole('button', { name: 'Apply model preference' })).toBeDisabled();
 });
+it.each(['pointerdown', 'mousedown'])('suppresses only the disabled background model control %s default while confirmation is open', async type => {
+  render(<ConversationModel target={target} active />); await select();
+  const apply = screen.getByRole('button', { name: 'Apply model preference' });
+  const beforeConfirmation = new Event(type, { bubbles: true, cancelable: true }); fireEvent(apply, beforeConfirmation); expect(beforeConfirmation.defaultPrevented).toBe(false);
+  fireEvent.click(apply);
+  const dialog = screen.getByRole('dialog'); const facts = dialog.textContent; const reads = access.request.mock.calls.length;
+  for (const control of [apply, apply, screen.getByRole('button', { name: 'Refresh models' }), screen.getByRole('combobox', { name: 'Model preference' })]) {
+    const event = new Event(type, { bubbles: true, cancelable: true }); fireEvent(control, event);
+    expect(event.defaultPrevented).toBe(true); expect(control).toBeDisabled();
+  }
+  expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus(); expect(dialog.textContent).toBe(facts); expect(access.request).toHaveBeenCalledTimes(reads);
+  for (const target of [screen.getByRole('button', { name: 'Cancel' }), screen.getByRole('button', { name: 'Confirm model preference' }), within(dialog).getByText(/Work starting after the idle check/)]) {
+    const event = new Event(type, { bubbles: true, cancelable: true }); fireEvent(target, event); expect(event.defaultPrevented).toBe(false);
+  }
+  for (const type of ['wheel', 'touchstart', 'touchmove']) {
+    const event = new Event(type, { bubbles: true, cancelable: true }); fireEvent(dialog, event); expect(event.defaultPrevented).toBe(false);
+  }
+});
 it('explains connection or conversation policy without falsely attributing connection authority to manual selection', async () => {
   canChange = false; reason = 'permission'; render(<ConversationModel target={target} active />);
   await screen.findByText('Model changes are not permitted by the current connection or conversation policy.');

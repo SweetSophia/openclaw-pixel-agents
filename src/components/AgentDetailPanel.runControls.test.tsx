@@ -30,9 +30,19 @@ it('keeps re-entry clicks inside local model confirmation under the real panel f
   fireEvent.keyDown(cancel, { key: 'Tab' }); expect(confirm).toHaveFocus(); fireEvent.keyDown(confirm, { key: 'Tab', shiftKey: true }); expect(cancel).toHaveFocus();
   fireEvent.click(apply); expect(cancel).toHaveFocus();
   expect(apply).toBeDisabled(); expect(screen.getByRole('button', { name: 'Refresh models' })).toBeDisabled(); expect(screen.getByRole('combobox', { name: 'Model preference' })).toBeDisabled();
+  for (const control of [apply, apply, screen.getByRole('button', { name: 'Refresh models' }), screen.getByRole('combobox', { name: 'Model preference' })]) {
+    for (const type of ['pointerdown', 'mousedown']) {
+      const event = new Event(type, { bubbles: true, cancelable: true }); fireEvent(control, event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  }
+  expect(cancel).toHaveFocus(); fireEvent.keyDown(cancel, { key: 'Tab' }); expect(confirm).toHaveFocus();
   fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
   expect(close).not.toHaveBeenCalled(); expect(screen.queryByRole('dialog', { name: 'Confirm model preference' })).toBeNull(); expect(apply).toHaveFocus();
   expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/model'))).toHaveLength(0);
+  fireEvent.click(apply); expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  const agentTab = screen.getByRole('tab', { name: 'Agent' }); const navigation = new Event('pointerdown', { bubbles: true, cancelable: true }); fireEvent(agentTab, navigation); expect(navigation.defaultPrevented).toBe(false);
+  fireEvent.click(agentTab); expect(agentTab).toHaveAttribute('aria-selected', 'true'); expect(screen.queryByRole('dialog', { name: 'Confirm model preference' })).toBeNull(); expect(close).not.toHaveBeenCalled();
 });
 it('fences live model confirmation when refreshed selected-session activity becomes known busy', async () => {
   let busy = false;

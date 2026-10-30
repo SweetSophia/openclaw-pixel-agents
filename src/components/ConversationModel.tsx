@@ -36,6 +36,13 @@ export function ConversationModel({ target, active, readOnly = false, busy = fal
   const previous = useRef<string | null>(null);
   const confirmation = state.enabled && !readOnly && state.canApply && state.confirmation?.owner === state.owner ? state.confirmation : null;
   const currentConfirmation = useRef(confirmation); currentConfirmation.current = confirmation;
+  const preventBackgroundControlFocus = (event: React.SyntheticEvent<HTMLElement>) => {
+    if (!currentConfirmation.current || !(event.target instanceof Element)) return;
+    const control = event.target.closest('button:disabled, select:disabled');
+    // Disabled controls can still blur the local dialog through native pointer defaults.
+    // Capture that default locally without suppressing touch scrolling or parent navigation.
+    if (control && !control.closest('.model-confirmation')) event.preventDefault();
+  };
   useLayoutEffect(() => {
     const prior = previous.current; previous.current = confirmation?.owner ?? null;
     if (!prior || confirmation || prior !== state.owner || !active || readOnly || !state.enabled || document.visibilityState === 'hidden' || root.current?.closest('[hidden], [inert]')) return;
@@ -46,7 +53,8 @@ export function ConversationModel({ target, active, readOnly = false, busy = fal
   if (busy) return <p className="task-notice">Model changes are disabled while this conversation has active work. Inspect again after it becomes idle.</p>;
   if (state.disabledReason) return <p className="task-notice">{state.disabledReason}</p>;
   const snapshot = state.snapshot;
-  return <section ref={root} className="conversation-model" aria-label="Live conversation model">
+  return <section ref={root} className="conversation-model" aria-label="Live conversation model"
+    onPointerDownCapture={preventBackgroundControlFocus} onMouseDownCapture={preventBackgroundControlFocus}>
     <h3 ref={heading} tabIndex={-1}>Live conversation model</h3>
     <p>Source-observed model information, separate from the office roster. A saved preference is not proof of execution.</p>
     <button ref={refresh} type="button" disabled={!state.enabled || state.loading || state.pending || !!confirmation} onClick={() => { if (!currentConfirmation.current) void state.refresh(); }}>Refresh models</button>
