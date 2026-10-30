@@ -99,7 +99,7 @@ A Stop receipt labelled **requested** confirms admission, not completion. **Not 
 
 ## Private approval handling
 
-Approval handling is implemented on the source branch and remains in review. It is not included in published npm **1.7.0**; no approvals deployment or new package publication is established. The setup below applies to a build containing the approvals implementation, not the older published artifact.
+Approval handling merged in [PR #332](https://github.com/SweetSophia/openclaw-pixel-agents/pull/332) as `56181af`; exact post-merge `main` CI and CodeQL passed. It is not included in published npm **1.7.0**; no approvals deployment or new package publication is established. The setup below applies to a build containing the approvals implementation, not the older published artifact.
 
 Approvals reviews pending native requests visible to the selected **live conversation audience**. It is separate from message sending and Stop. Enable it only for office-key holders authorized to make those decisions:
 
