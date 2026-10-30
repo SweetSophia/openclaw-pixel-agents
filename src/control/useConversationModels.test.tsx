@@ -23,7 +23,7 @@ function response(path: string, init: RequestInit) {
   return { target: input.target, outcome: 'confirmed', snapshot: { ...snapshot, target: input.target, selectionId: 'after-apply', currentModel: input.model ?? 'p/default' } };
 }
 beforeEach(() => { access.request = vi.fn(async (path, init) => response(path, init)); access.state = 'unlocked'; access.generation++; access.canRead = true; snapshot = fresh(); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 async function ready(result: { current: ReturnType<typeof useConversationModels> }) { await waitFor(() => expect(result.current.snapshot?.currentModel).toBe('p/old')); }
 
 it('reads canonical targets, inspects without writing, and applies one immutable selection despite duplicate clicks', async () => {
@@ -71,7 +71,8 @@ it('invalidates immutable confirmation when draft or observation changes and whe
   snapshot = { ...snapshot, selectionId: 'observation-2', canChange: false, disabledReason: 'busy' };
   await act(() => result.current.refresh()); await act(() => result.current.confirm()); expect(applies()).toHaveLength(0); expect(result.current.confirmation).toBeNull();
   snapshot = fresh(); await act(() => result.current.refresh()); act(() => { result.current.choose('p/new'); result.current.prepare(); });
-  vi.spyOn(Date, 'now').mockReturnValue(snapshot.observedAt + 60001); await act(() => result.current.confirm()); expect(applies()).toHaveLength(0); expect(result.current.stale).toBe(true);
+  const expired = performance.now() + 60001; vi.spyOn(performance, 'now').mockReturnValue(expired);
+  await act(() => result.current.confirm()); expect(applies()).toHaveLength(0); expect(result.current.stale).toBe(true);
 });
 it('binds retained confirmation callbacks to their exact displayed immutable request', async () => {
   const { result } = renderHook(() => useConversationModels(target, true)); await ready(result);
@@ -154,4 +155,101 @@ it('keeps an admitted mutation alive while hidden and latches unknown across rem
   await ready(second.result); act(() => { second.result.current.choose('p/new'); second.result.current.prepare(); }); expect(second.result.current.confirmation).toBeNull();
   await act(() => second.result.current.refresh()); expect(second.result.current.uncertain).toBe(false);
   act(() => { second.result.current.choose('p/new'); second.result.current.prepare(); }); expect(second.result.current.confirmation?.selectionId).toBe('fresh-after-unknown'); expect(applies()).toHaveLength(1);
+});
+it.each(['resolve', 'reject'] as const)('settles a stalled admitted request at 30 seconds without abort/replay and ignores its late %s during a newer attempt', async late => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  let resolveOld!: (value: unknown) => void; let rejectOld!: (error: Error) => void; let resolveNew!: (value: unknown) => void;
+  access.request.mockImplementation((path, init) => {
+    if (path.endsWith('/models')) return Promise.resolve(response(path, init));
+    return applies().length === 1 ? new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; }) : new Promise(resolve => { resolveNew = resolve; });
+  });
+  const first = renderHook(() => useConversationModels(target, true)); await act(async () => {});
+  act(() => { first.result.current.choose(null); first.result.current.prepare(); });
+  let settled = false; act(() => { void first.result.current.confirm().then(() => { settled = true; }); });
+  expect(applies()).toHaveLength(1); expect(applies()[0][1].signal).toBeUndefined();
+  await act(() => vi.advanceTimersByTimeAsync(29999)); expect(first.result.current.pending).toBe(true); expect(settled).toBe(false);
+  await act(() => vi.advanceTimersByTimeAsync(1)); expect(first.result.current.pending).toBe(false); expect(settled).toBe(true);
+  expect(first.result.current.outcome).toBe('unknown'); expect(first.result.current.error).toMatchObject({ code: 'timed-out' }); expect(first.result.current.uncertain).toBe(true);
+  first.unmount(); const second = renderHook(() => useConversationModels(target, true)); await act(async () => {});
+  expect(second.result.current.pending).toBe(false); expect(second.result.current.uncertain).toBe(true);
+  await act(() => second.result.current.refresh()); act(() => { second.result.current.choose(null); second.result.current.prepare(); }); expect(second.result.current.confirmation).toBeNull();
+  snapshot = { ...fresh(), selectionId: 'new-after-timeout' }; await act(() => second.result.current.refresh()); expect(second.result.current.uncertain).toBe(false);
+  act(() => { second.result.current.choose(null); second.result.current.prepare(); }); act(() => { void second.result.current.confirm(); }); expect(second.result.current.pending).toBe(true);
+  await act(async () => {
+    if (late === 'resolve') resolveOld({ target, outcome: 'confirmed', snapshot: { ...snapshot, currentModel: 'p/obsolete', selectionId: 'obsolete-receipt' } });
+    else rejectOld(new Error('late transport rejection'));
+  });
+  expect(second.result.current.pending).toBe(true); expect(second.result.current.uncertain).toBe(true); expect(second.result.current.snapshot?.currentModel).toBe('p/old');
+  await act(async () => resolveNew({ target, outcome: 'confirmed', snapshot: { ...snapshot, currentModel: 'p/new', selectionId: 'new-receipt' } }));
+  expect(second.result.current.pending).toBe(false); expect(second.result.current.uncertain).toBe(false); expect(second.result.current.snapshot?.currentModel).toBe('p/new'); expect(applies()).toHaveLength(2);
+});
+it('clears the local settlement deadline on an earlier successful response', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const { result } = renderHook(() => useConversationModels(target, true)); await act(async () => {});
+  act(() => { result.current.choose(null); result.current.prepare(); }); await act(() => result.current.confirm());
+  const outcome = result.current.snapshot;
+  expect(vi.getTimerCount()).toBe(1); // Only the live observation's expiry boundary remains.
+  await act(() => vi.advanceTimersByTimeAsync(30000)); expect(result.current.pending).toBe(false); expect(result.current.uncertain).toBe(false); expect(result.current.outcome).toBe('confirmed'); expect(result.current.snapshot).toBe(outcome); expect(result.current.error).toBeNull();
+});
+it('does not accept a reply at the settlement deadline when timer delivery was delayed', async () => {
+  let monotonic = 0; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+  let resolve!: (value: unknown) => void; const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.endsWith('/model') ? new Promise(done => { resolve = done; }) : original(path, init));
+  const { result } = renderHook(() => useConversationModels(target, true)); await ready(result);
+  act(() => { result.current.choose(null); result.current.prepare(); }); act(() => { void result.current.confirm(); });
+  monotonic = 30000; await act(async () => resolve({ target, outcome: 'confirmed', snapshot: { ...snapshot, selectionId: 'too-late-receipt' } }));
+  expect(result.current.outcome).toBe('unknown'); expect(result.current.error).toMatchObject({ code: 'timed-out' }); expect(result.current.pending).toBe(false); expect(result.current.uncertain).toBe(true);
+});
+it('settles an admitted identity deadline across hidden unmount/remount without auto-refresh or abort', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  let visibility: DocumentVisibilityState = 'visible'; vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+  const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.endsWith('/model') ? new Promise(() => {}) : original(path, init));
+  const first = renderHook(() => useConversationModels(target, true)); await act(async () => {});
+  act(() => { first.result.current.choose(null); first.result.current.prepare(); }); act(() => { void first.result.current.confirm(); });
+  visibility = 'hidden'; act(() => document.dispatchEvent(new Event('visibilitychange'))); first.unmount();
+  visibility = 'visible'; const second = renderHook(() => useConversationModels(target, true)); await act(async () => {});
+  expect(second.result.current.pending).toBe(true); expect(access.request.mock.calls.filter(([path]) => path.endsWith('/models'))).toHaveLength(1);
+  await act(() => vi.advanceTimersByTimeAsync(30000));
+  expect(second.result.current.pending).toBe(false); expect(second.result.current.uncertain).toBe(true); expect(second.result.current.snapshot).toBeNull(); expect(applies()[0][1].signal).toBeUndefined();
+  snapshot = { ...fresh(), selectionId: 'after-remount-timeout' }; await act(() => second.result.current.refresh()); expect(second.result.current.uncertain).toBe(false); expect(applies()).toHaveLength(1);
+});
+it.each([-86400000, 86400000])('uses monotonic freshness despite a server/browser clock offset of %s ms and later wall-clock jumps', async offset => {
+  let monotonic = 100; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+  const serverTime = Date.now() + offset; snapshot = { ...fresh(), observedAt: serverTime };
+  const { result, rerender } = renderHook(() => useConversationModels(target, true)); await ready(result);
+  act(() => result.current.choose(null)); expect(result.current.canApply).toBe(true); expect(result.current.snapshot?.observedAt).toBe(serverTime);
+  vi.spyOn(Date, 'now').mockReturnValue(serverTime + 100000000); rerender(); expect(result.current.canApply).toBe(true);
+  vi.spyOn(Date, 'now').mockReturnValue(serverTime - 100000000); monotonic = 60099; rerender(); expect(result.current.canApply).toBe(true);
+  monotonic = 60100; rerender(); expect(result.current.canApply).toBe(false); expect(result.current.stale).toBe(true); expect(result.current.snapshot?.observedAt).toBe(serverTime);
+});
+it.each([59999, 60000])('charges %s ms response latency to the request-start budget and synchronously guards expiry even before timer delivery', async latency => {
+  let monotonic = 0; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+  let resolve!: (value: unknown) => void; access.request.mockImplementation(() => new Promise(done => { resolve = done; }));
+  const { result } = renderHook(() => useConversationModels(target, true)); monotonic = latency;
+  await act(async () => resolve(snapshot)); act(() => result.current.choose(null));
+  expect(result.current.canApply).toBe(latency < 60000); expect(result.current.stale).toBe(latency >= 60000);
+  act(() => result.current.prepare()); monotonic = 60000; act(() => { void result.current.confirm(); }); expect(applies()).toHaveLength(0);
+});
+it('requires a new monotonic read budget to acknowledge unknown, not agreement between wall clocks or an expired arrival', async () => {
+  let monotonic = 0; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+  access.request.mockImplementation(async (path, init) => path.endsWith('/model') ? { target, outcome: 'unknown' } : response(path, init));
+  const { result } = renderHook(() => useConversationModels(target, true)); await ready(result);
+  act(() => { result.current.choose(null); result.current.prepare(); }); await act(() => result.current.confirm());
+  snapshot = { ...fresh(), observedAt: Date.now() + 86400000, selectionId: 'fresh-clock-offset' };
+  await act(() => result.current.refresh()); expect(result.current.uncertain).toBe(false); expect(result.current.snapshot?.observedAt).toBe(snapshot.observedAt);
+  act(() => { result.current.choose(null); result.current.prepare(); }); await act(() => result.current.confirm()); expect(result.current.uncertain).toBe(true);
+  let resolve!: (value: unknown) => void; access.request.mockImplementation(() => new Promise(done => { resolve = done; }));
+  let refreshing!: Promise<void>; act(() => { refreshing = result.current.refresh(); }); monotonic = 60000;
+  await act(async () => { resolve({ ...snapshot, selectionId: 'expired-arrival' }); await refreshing; }); expect(result.current.uncertain).toBe(true); expect(result.current.stale).toBe(true);
+});
+it('gives a reconciled apply snapshot only the remaining monotonic budget from that apply request start', async () => {
+  let monotonic = 0; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+  let resolve!: (value: unknown) => void; const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.endsWith('/model') ? new Promise(done => { resolve = done; }) : original(path, init));
+  const { result, rerender } = renderHook(() => useConversationModels(target, true)); await ready(result);
+  monotonic = 40000; act(() => { result.current.choose(null); result.current.prepare(); }); act(() => { void result.current.confirm(); });
+  monotonic = 55000; await act(async () => resolve({ target, outcome: 'confirmed', snapshot: { ...snapshot, observedAt: Date.now() - 86400000, selectionId: 'reconciled-budget' } }));
+  act(() => result.current.choose(null)); expect(result.current.canApply).toBe(true);
+  monotonic = 99999; rerender(); expect(result.current.canApply).toBe(true); monotonic = 100000; rerender(); expect(result.current.canApply).toBe(false);
 });

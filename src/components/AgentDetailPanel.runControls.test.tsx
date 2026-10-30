@@ -10,6 +10,40 @@ vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ ...f, st
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'typing', model: 'fixture', sessionKey: 'agent:cylena:controls', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
 const selected = { agentId: 'cylena', sessionKey: agent.sessionKey, sessionId: 'session-1', activeLeafEntryId: 'leaf-1', name: 'Fixture conversation', isChild: false, hasActiveRun: true };
 afterEach(() => { cleanup(); f.request.mockReset(); f.drafts.clear(); });
+it('keeps re-entry clicks inside local model confirmation under the real panel focus owner', async () => {
+  f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    const source = { state: 'current', observedAt: Date.now() };
+    if (path.endsWith('/sessions')) return { sessions: [{ ...selected, hasActiveRun: false }], source };
+    const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input);
+    if (path.endsWith('/models')) return { target, selectionId: 'focus-observation', observedAt: Date.now(), currentModel: 'p/observed', choices: [], canChange: true, disabledReason: null };
+    if (path.endsWith('/history')) return { target, source, messages: [] };
+    if (path.endsWith('/runs')) return { target, source, runs: [], runsTruncated: false, limitReached: false, loadedRecords: 0, messagesTruncated: false, messages: [] };
+    return { target, source, hasActiveRun: false, runState: 'unknown', requestAssociation: 'unknown', requestState: 'unavailable', activity: [], children: [], childrenComplete: false, loadedRecords: 0 };
+  });
+  const close = vi.fn(); render(<AgentDetailPanel agent={agent} onClose={close} />);
+  await screen.findByRole('option', { name: /Fixture conversation/ }); fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
+  await screen.findByText('p/observed'); fireEvent.change(screen.getByRole('combobox', { name: 'Model preference' }), { target: { value: 'default' } });
+  const apply = screen.getByRole('button', { name: 'Apply model preference' }); apply.focus(); fireEvent.click(apply);
+  const cancel = screen.getByRole('button', { name: 'Cancel' }); expect(cancel).toHaveFocus();
+  const confirm = screen.getByRole('button', { name: 'Confirm model preference' });
+  fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true }); expect(confirm).toHaveFocus(); fireEvent.keyDown(confirm, { key: 'Tab' }); expect(cancel).toHaveFocus();
+  fireEvent.keyDown(cancel, { key: 'Tab' }); expect(confirm).toHaveFocus(); fireEvent.keyDown(confirm, { key: 'Tab', shiftKey: true }); expect(cancel).toHaveFocus();
+  fireEvent.click(apply); expect(cancel).toHaveFocus();
+  expect(apply).toBeDisabled(); expect(screen.getByRole('button', { name: 'Refresh models' })).toBeDisabled(); expect(screen.getByRole('combobox', { name: 'Model preference' })).toBeDisabled();
+  for (const control of [apply, apply, screen.getByRole('button', { name: 'Refresh models' }), screen.getByRole('combobox', { name: 'Model preference' })]) {
+    for (const type of ['pointerdown', 'mousedown']) {
+      const event = new Event(type, { bubbles: true, cancelable: true }); fireEvent(control, event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  }
+  expect(cancel).toHaveFocus(); fireEvent.keyDown(cancel, { key: 'Tab' }); expect(confirm).toHaveFocus();
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+  expect(close).not.toHaveBeenCalled(); expect(screen.queryByRole('dialog', { name: 'Confirm model preference' })).toBeNull(); expect(apply).toHaveFocus();
+  expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/model'))).toHaveLength(0);
+  fireEvent.click(apply); expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  const agentTab = screen.getByRole('tab', { name: 'Agent' }); const navigation = new Event('pointerdown', { bubbles: true, cancelable: true }); fireEvent(agentTab, navigation); expect(navigation.defaultPrevented).toBe(false);
+  fireEvent.click(agentTab); expect(agentTab).toHaveAttribute('aria-selected', 'true'); expect(screen.queryByRole('dialog', { name: 'Confirm model preference' })).toBeNull(); expect(close).not.toHaveBeenCalled();
+});
 it('fences live model confirmation when refreshed selected-session activity becomes known busy', async () => {
   let busy = false;
   f.request.mockImplementation(async (path: string, init?: RequestInit) => {
