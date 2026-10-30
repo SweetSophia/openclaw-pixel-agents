@@ -10,14 +10,36 @@ vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ ...f, st
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'typing', model: 'fixture', sessionKey: 'agent:cylena:controls', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
 const selected = { agentId: 'cylena', sessionKey: agent.sessionKey, sessionId: 'session-1', activeLeafEntryId: 'leaf-1', name: 'Fixture conversation', isChild: false, hasActiveRun: true };
 afterEach(() => { cleanup(); f.request.mockReset(); f.drafts.clear(); });
+it('fences live model confirmation when refreshed selected-session activity becomes known busy', async () => {
+  let busy = false;
+  f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    const source = { state: 'current', observedAt: Date.now() };
+    if (path.endsWith('/status')) return { configured: true, state: 'ready', canRead: true, canSend: true };
+    if (path.endsWith('/sessions')) return { sessions: [{ ...selected, hasActiveRun: busy }], source };
+    const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input);
+    if (path.endsWith('/models')) return { target, selectionId: 'busy-observation', observedAt: Date.now(), currentModel: 'p/observed', choices: [{ id: 'p/new', label: 'New', selectable: true, available: true }], canChange: true, disabledReason: null };
+    if (path.endsWith('/history')) return { target, source, messages: [] };
+    if (path.endsWith('/runs')) return { target, source, runs: [], runsTruncated: false, limitReached: false, loadedRecords: 0, messagesTruncated: false, messages: [] };
+    return { target, source, hasActiveRun: busy, runState: 'unknown', requestAssociation: 'unknown', requestState: 'unavailable', activity: [], children: [], childrenComplete: false, loadedRecords: 0 };
+  });
+  render(<AgentDetailPanel agent={agent} onClose={vi.fn()} />);
+  await screen.findByRole('option', { name: /Fixture conversation/ }); fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
+  await screen.findByText('p/observed'); fireEvent.change(screen.getByRole('combobox', { name: 'Model preference' }), { target: { value: 'model:p/new' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply model preference' })); expect(screen.getByRole('dialog', { name: 'Confirm model preference' })).toBeInTheDocument();
+  busy = true; fireEvent.click(screen.getByRole('button', { name: /^Refresh$/ }));
+  await screen.findByText(/Model changes are disabled while this conversation has active work/);
+  expect(screen.queryByRole('dialog', { name: 'Confirm model preference' })).toBeNull();
+  expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/model'))).toHaveLength(0);
+});
 it.each([false, true])('unmounts recorded-mode composer controls and restores live draft/intent (new conversation: %s)', async newConversation => {
   f.request.mockImplementation(async (path: string, init?: RequestInit) => {
-    if (path.endsWith('/sessions')) return { sessions: [selected], source: { state: 'current', observedAt: Date.now() } };
+    if (path.endsWith('/sessions')) return { sessions: [{ ...selected, hasActiveRun: false }], source: { state: 'current', observedAt: Date.now() } };
     const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input); const runId = input.runId ?? 'run-current';
     const task = { target, source: { state: 'current', observedAt: Date.now() }, hasActiveRun: true, activeRunIds: [runId], runId, runState: 'running', request: { id: `request-${runId}`, role: 'user', text: `Request ${runId}`, truncated: false, runId }, requestAssociation: 'run', requestState: 'found', activity: [], children: [], childrenComplete: false, loadedRecords: 4 };
     if (path.endsWith('/runs')) return { target, source: task.source, runs: [{ runId: 'run-old' }, { runId: 'run-current' }], runsTruncated: false, limitReached: false, loadedRecords: 4, messagesTruncated: false,
       ...(input.runId ? { selectedRunId: input.runId, task } : {}), messages: [] };
     if (path.endsWith('/history')) return { target, source: task.source, messages: [] };
+    if (path.endsWith('/models')) return { target, selectionId: 'models-1', observedAt: Date.now(), currentModel: 'p/observed', choices: [{ id: 'p/new', label: 'New', selectable: true, available: true }], canChange: true, disabledReason: null };
     if (path.endsWith('/send')) return { target, idempotencyKey: input.idempotencyKey, phase: 'accepted', runId: input.idempotencyKey };
     return task;
   });
@@ -27,20 +49,32 @@ it.each([false, true])('unmounts recorded-mode composer controls and restores li
   fireEvent.click(screen.getByRole('button', { name: 'Stop run' })); fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel Stop' }), { key: 'Escape' });
   expect(close).not.toHaveBeenCalled(); expect(screen.queryByRole('button', { name: 'Confirm Stop' })).toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
-  if (newConversation) fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+  await screen.findByText('p/observed');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Model preference' }), { target: { value: (screen.getByRole('option', { name: /New — p\/new/ }) as HTMLOptionElement).value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply model preference' }));
+  expect(screen.getByRole('dialog', { name: 'Confirm model preference' })).toBeInTheDocument();
+  if (newConversation) {
+    f.request.mockClear(); fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    expect(screen.queryByRole('dialog', { name: 'Confirm model preference' })).toBeNull();
+    expect(screen.getByText(/Model selection is available for the live conversation only/)).toBeInTheDocument();
+    expect(f.request.mock.calls.some(([path]) => /\/models?$/.test(String(path)))).toBe(false);
+  } else fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   const message = await screen.findByRole('textbox', { name: 'Message' });
   fireEvent.change(message, { target: { value: 'Keep the current steering draft' } }); fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), { target: { value: 'steer' } });
   fireEvent.change(screen.getByRole('combobox', { name: 'Task / run' }), { target: { value: 'run-old' } });
   await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Message', hidden: true })).toBeNull());
+  expect(screen.getByText('Model selection is available for the live conversation only, not recorded runs.')).toBeVisible();
   expect(document.querySelector('.conversation-send')).toBeNull();
   f.request.mockClear(); fireEvent.click(screen.getByRole('tab', { name: 'Task' })); await screen.findByText('Request run-old');
   expect(screen.getByRole('button', { name: 'Stop run' })).toHaveAttribute('aria-disabled', 'true'); fireEvent.click(screen.getByRole('button', { name: 'Stop run' }));
   expect(screen.queryByRole('button', { name: 'Confirm Stop' })).toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
-  expect(f.request.mock.calls.some(([path]) => /\/(history|send|stop)$/.test(String(path)))).toBe(false);
+  expect(f.request.mock.calls.some(([path]) => /\/(history|send|stop|models?)$/.test(String(path)))).toBe(false);
   fireEvent.change(screen.getByRole('combobox', { name: 'Task / run' }), { target: { value: '' } });
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep the current steering draft'); expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('steer');
   if (newConversation) expect(screen.getByText(/It will be created when you send/)).toBeInTheDocument();
+  if (newConversation) expect(screen.queryByRole('combobox', { name: 'Model preference' })).toBeNull();
+  else await screen.findByRole('combobox', { name: 'Model preference' });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Steer conversation' })).toHaveAttribute('aria-disabled', 'false')); fireEvent.click(screen.getByRole('button', { name: 'Steer conversation' }));
   await waitFor(() => expect(f.request.mock.calls.filter(([path]) => String(path).endsWith('/send'))).toHaveLength(1));
   expect(JSON.parse(String(f.request.mock.calls.find(([path]) => String(path).endsWith('/send'))![1].body)).intent).toBe('steer');

@@ -13,16 +13,18 @@ const WORKSPACE_METHODS = ['agents.workspace.list', 'agents.workspace.get'] as c
 const USAGE_METHODS = ['sessions.usage'] as const;
 const HISTORY_METHODS = ['audit.activity.list'] as const;
 const APPROVAL_METHODS = ['approval.get', 'approval.resolve'] as const;
-export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STOP_METHOD | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number] | typeof APPROVAL_METHODS[number];
+const MODEL_METHODS = ['models.list', 'sessions.patch'] as const;
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STOP_METHOD | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number] | typeof APPROVAL_METHODS[number] | typeof MODEL_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable' | 'model-denied' | 'model-busy') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
   request(method: ControlMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   onEvent(listener: (event: GatewayEvent) => void): () => void; close(): void;
   artifactConnection?(): { id: string; generation: number; gatewayUrl: string } | null;
+  modelCapabilities?(): { canRead: boolean; canChange: boolean };
 }
 interface Pending { method: ControlMethod; approval: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
@@ -40,6 +42,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
   let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined; let writeGranted = false;
   let negotiatedMethods: string[] = [];
   let stopGranted = false; let writeScopeGranted = false;
+  let modelAdminGranted = false;
   let approvalScopeGranted = false; let approvalsGranted = false;
   let connectionId: string | undefined;
   let memoryGrant: DeviceGrant | undefined;
@@ -99,7 +102,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
           connectId = randomUUID();
           ws.send(JSON.stringify({ type: 'req', id: connectId, method: 'connect', params: {
             minProtocol: 4, maxProtocol: 4, client: { id: 'cli', displayName: 'Pixel Agents task details', mode: 'backend', version: '1', platform },
-            role: 'operator', scopes, caps: [],
+            role: 'operator', scopes, caps: ['model-selection-policy'],
             auth: { token: config.token || undefined, password: config.password || undefined, deviceToken: !config.token && !config.password ? storedToken : undefined },
             device: { id: identity.deviceId, publicKey: createPublicKey(identity.publicKeyPem).export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64url'),
               signature: sign(null, Buffer.from(payload), identity.privateKeyPem).toString('base64url'), signedAt: challenge.ts, nonce: challenge.nonce },
@@ -131,6 +134,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
           || !Array.isArray(features.events)) { fail('unsupported'); return; }
         if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !grants.includes('operator.read')) { fail('auth-error'); return; }
         writeScopeGranted = config.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write');
+        modelAdminGranted = grants.includes('operator.admin');
         writeGranted = writeScopeGranted && WRITE_METHODS.every(method => methods.includes(method));
         stopGranted = writeScopeGranted && methods.includes(STOP_METHOD);
         approvalScopeGranted = config.approvalsEnabled && scopes.includes('operator.approvals') && grants.includes('operator.approvals');
@@ -153,6 +157,11 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
+        if ((MODEL_METHODS as readonly string[]).includes(item.method)) {
+          item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'model-denied'
+            : error?.code === 'INVALID_REQUEST' ? item.method === 'sessions.patch' ? 'session-changed' : 'unsupported' : 'unavailable'));
+          return;
+        }
         if (item.approval) {
           item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'approvals-denied'
             : error?.code === 'INVALID_REQUEST' ? details?.reason === 'APPROVAL_NOT_FOUND' ? 'approval-unavailable' : 'unsupported' : 'unavailable')); return;
@@ -184,8 +193,13 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       ...(state === 'ready' && !stopGranted ? { stopDisabledReason: writeScopeGranted ? 'unsupported' as const : 'scope-required' as const } : {}) }),
     artifactConnection: () => state === 'ready' && socket?.readyState === WebSocket.OPEN && connectionId && config.url
       ? { id: connectionId, generation, gatewayUrl: config.url } : null,
+    modelCapabilities: () => ({ canRead: state === 'ready' && negotiatedMethods.includes('models.list'),
+      canChange: state === 'ready' && writeScopeGranted && !modelAdminGranted && negotiatedMethods.includes('models.list') && negotiatedMethods.includes('sessions.patch') }),
     request(method, params, signal) {
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
+      const model = (MODEL_METHODS as readonly string[]).includes(method);
+      if (method === 'sessions.patch' && (!writeScopeGranted || modelAdminGranted)) return Promise.reject(new GatewayRequestError('model-denied'));
+      if (model && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
       if (method === STOP_METHOD && !writeScopeGranted) return Promise.reject(new GatewayRequestError('scope-required'));
       if (method === STOP_METHOD && !stopGranted) return Promise.reject(new GatewayRequestError('unsupported'));
       const approval = (APPROVAL_METHODS as readonly string[]).includes(method) || (method === 'sessions.messages.subscribe' && params.includeApprovals === true);
@@ -199,7 +213,7 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       // OpenClaw's read-scoped compatibility usage method is deliberately unadvertised.
       // Keep this one allowlisted probe optional and normalize an unsupported contract.
       const allowed = (READ_METHODS as readonly string[]).includes(method)
-        || artifact || workspace || usage || history || (approval && approvalsGranted) || (method === STOP_METHOD && stopGranted)
+        || artifact || workspace || usage || history || model || (approval && approvalsGranted) || (method === STOP_METHOD && stopGranted)
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
       if (!allowed) return Promise.reject(new GatewayRequestError('scope-required'));

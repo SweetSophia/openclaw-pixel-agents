@@ -1,6 +1,7 @@
 import React, { useId } from 'react';
 import { CONTROL_LIMITS, type ControlTarget } from '../../shared/control';
 import { useConversation } from '../control/useConversation';
+import { ConversationModel } from './ConversationModel';
 import './AgentConversation.css';
 interface Props { target: ControlTarget | null; agentId: string; active: boolean; busy?: boolean; readOnly?: boolean; onCreated?(target: ControlTarget): void }
 export function AgentConversation(props: Props) {
@@ -13,6 +14,7 @@ function LiveConversation({ target, agentId, active, busy, onCreated }: Props) {
   const send = () => { if (!blocked) void state.send(); };
   const labels = { sending: 'Sending…', accepted: 'Accepted — waiting for transcript persistence', persisted: 'Persisted in the conversation', unknown: 'Outcome unknown — your recovery draft is kept', rejected: 'Not accepted — your draft is kept' };
   return <section className="agent-conversation" aria-label="Conversation messages">
+    <ConversationModel target={target} active={active} readOnly={state.isNew} busy={busy} />
     <div className="conversation-actions"><button type="button" onClick={state.newConversation}>New conversation</button><button type="button" aria-disabled={state.loading} onClick={() => { if (!state.loading) void state.refresh(); }}>Refresh conversation</button></div>
     {state.isNew && <p className="task-notice">New conversation with {agentId}. It will be created when you send.</p>}
     {state.isNew && target && <button type="button" onClick={state.returnToConversation}>Return to selected conversation</button>}
