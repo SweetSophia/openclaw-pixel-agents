@@ -6,7 +6,7 @@ import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './g
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 's1', lifecycleRevision: 'l1', branchId: 'b1' };
 const closers: (() => void)[] = [];
-afterEach(() => { closers.splice(0).reverse().forEach(close => close()); vi.restoreAllMocks(); });
+afterEach(() => { closers.splice(0).reverse().forEach(close => close()); vi.useRealTimers(); vi.restoreAllMocks(); });
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: Error) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 function fixture() {
   const listeners = new Set<(event: GatewayEvent) => void>(); const owners = new Set(['cylena']);
@@ -38,7 +38,174 @@ function fixture() {
   const emit = (event = 'sessions.changed') => listeners.forEach(listener => listener({ event, payload: { sessionKey: target.sessionKey, agentId: target.agentId } }));
   return { row, catalog, caps, receipt, calls, gateway, tasks, models, emit, owners };
 }
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+async function saturatedReconciliation(count = 1) {
+  const f = fixture(); let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const rows = new Map<string, Record<string, unknown>>();
+  const patches = new Map<string, ReturnType<typeof deferred<unknown>>>();
+  const publicGates = Array.from({ length: 4 }, () => deferred<unknown>());
+  const reconcileGates: ReturnType<typeof deferred<unknown>>[] = [];
+  let holding = false; let publicStarted = 0; let activeCatalogs = 0; let peakCatalogs = 0;
+  f.gateway.request = vi.fn(async (method, params) => {
+    if (method === 'sessions.describe') return { session: structuredClone(rows.get(String(params.key))) };
+    if (method === 'sessions.patch') {
+      const gate = deferred<unknown>(); patches.set(String(params.key), gate); return gate.promise;
+    }
+    if (method === 'models.list') {
+      if (!holding) return structuredClone(f.catalog);
+      activeCatalogs++; peakCatalogs = Math.max(peakCatalogs, activeCatalogs);
+      const gate = publicStarted < 4 ? publicGates[publicStarted++] : deferred<unknown>();
+      if (!publicGates.includes(gate)) reconcileGates.push(gate);
+      try { return await gate.promise; } finally { activeCatalogs--; }
+    }
+    return {};
+  });
+  const inputs: { target: typeof target; selectionId: string; model: string }[] = [];
+  const outcomes: Awaited<ReturnType<typeof f.models.select>>[] = [];
+  const applications: ReturnType<typeof f.models.select>[] = [];
+  for (let i = 0; i < count; i++) {
+    if (i === 10) now += 60001;
+    const selectedTarget = { ...target, sessionKey: `agent:cylena:queued-${i}`, sessionId: `queued-${i}` };
+    rows.set(selectedTarget.sessionKey, { ...f.row, key: selectedTarget.sessionKey, sessionId: selectedTarget.sessionId });
+    const snap = await f.models.read(selectedTarget);
+    const input = { target: selectedTarget, selectionId: snap.selectionId, model: 'provider/new' }; inputs.push(input);
+    const result = f.models.select(input); applications.push(result); void result.then(value => { outcomes[i] = value; });
+    await vi.waitFor(() => expect(patches.has(selectedTarget.sessionKey)).toBe(true));
+  }
+  holding = true;
+  const publicReads = Array.from({ length: 4 }, () => f.models.read(inputs[0].target));
+  const publicResults = Promise.allSettled(publicReads);
+  await vi.waitFor(() => expect(publicStarted).toBe(4));
+  function reply(index: number) {
+    const selected = inputs[index].target; rows.get(selected.sessionKey)!.model = 'new';
+    patches.get(selected.sessionKey)!.resolve({ ...f.receipt, key: selected.sessionKey,
+      entry: { ...(f.receipt.entry as Record<string, unknown>), sessionId: selected.sessionId } });
+  }
+  return { ...f, inputs, outcomes, applications, publicReads, publicResults, publicGates, reconcileGates, reply,
+    peakCatalogs: () => peakCatalogs, releasePublic: (index: number) => publicGates[index].resolve(structuredClone(f.catalog)),
+    releaseReconcile: (index: number) => reconcileGates[index].resolve(structuredClone(f.catalog)) };
+}
 describe('native scoped model service', () => {
+  it.each(['unsupported', 'permission'] as const)('preserves the server-only capability reason %s in the existing disabled reason field', async reason => {
+    const f = fixture(); f.gateway.modelCapabilities = () => ({ canRead: true, canChange: false, disabledReason: reason });
+    const snap = await f.models.read(target);
+    expect(snap).toMatchObject({ canChange: false, disabledReason: reason });
+    expect(snap).not.toHaveProperty('modelCapabilities');
+    expect(f.gateway.status().canRead).toBe(true);
+  });
+  it('retains read-only for actual row readOnly and legacy capability providers without a reason', async () => {
+    const f = fixture(); f.row.readOnly = true;
+    expect((await f.models.read(target)).disabledReason).toBe('read-only');
+    delete f.row.readOnly; f.caps.canChange = false;
+    expect((await f.models.read(target)).disabledReason).toBe('read-only');
+  });
+  it('waits for a public read slot and prioritizes independent reconciliation without starting a fifth read or replaying', async () => {
+    const f = await saturatedReconciliation();
+    const duplicate = f.models.select(f.inputs[0]);
+    const before = vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.describe').length;
+    f.reply(0); await turn();
+    expect(f.outcomes[0]).toBeUndefined();
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.describe')).toHaveLength(before);
+    const competitor = f.publicReads[0].then(() => f.models.read(f.inputs[0].target));
+    const competitorDenied = expect(competitor).rejects.toMatchObject({ code: 'rate-limited' });
+    f.releasePublic(0);
+    await competitorDenied;
+    await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(1));
+    await expect(f.models.read(f.inputs[0].target)).rejects.toMatchObject({ code: 'rate-limited' });
+    f.releaseReconcile(0);
+    expect(await f.applications[0]).toMatchObject({ outcome: 'confirmed', snapshot: { currentModel: 'provider/new' } });
+    expect(await duplicate).toEqual(f.outcomes[0]);
+    expect(await f.models.select(f.inputs[0])).toEqual(f.outcomes[0]);
+    expect(f.peakCatalogs()).toBe(4);
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.patch')).toHaveLength(1);
+    for (let i = 1; i < 4; i++) f.releasePublic(i); await f.publicResults;
+  });
+  it('expires a queued reconciliation at ten seconds and retains its unknown operation without leaked timers', async () => {
+    vi.useFakeTimers(); const f = await saturatedReconciliation(); f.reply(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.outcomes[0]).toBeUndefined(); expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(9999); expect(f.outcomes[0]).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await f.applications[0]).toEqual({ target: f.inputs[0].target, outcome: 'unknown' });
+    expect(vi.getTimerCount()).toBe(0);
+    for (let i = 0; i < 4; i++) f.releasePublic(i); await f.publicResults;
+    expect(f.reconcileGates).toHaveLength(0);
+    expect(await f.models.select(f.inputs[0])).toEqual(f.outcomes[0]);
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.patch')).toHaveLength(1);
+  });
+  it('queues no more than ten independent reconciliations and reserves released slots for them in order', async () => {
+    vi.useFakeTimers(); const f = await saturatedReconciliation(11);
+    for (let i = 0; i < 11; i++) f.reply(i); await vi.advanceTimersByTimeAsync(0);
+    expect(f.outcomes.slice(0, 10).filter(Boolean)).toHaveLength(0);
+    expect(f.outcomes[10]).toEqual({ target: f.inputs[10].target, outcome: 'unknown' });
+    expect(vi.getTimerCount()).toBe(10);
+    f.releasePublic(0);
+    for (let i = 0; i < 10; i++) {
+      await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(i + 1));
+      const describes = vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.describe');
+      const describe = describes[describes.length - 1];
+      expect(describe?.[1].key).toBe(f.inputs[i].target.sessionKey);
+      await expect(f.models.read(f.inputs[10].target)).rejects.toMatchObject({ code: 'rate-limited' });
+      f.releaseReconcile(i); expect((await f.applications[i]).outcome).toBe('confirmed');
+    }
+    for (let i = 1; i < 4; i++) f.releasePublic(i); await f.publicResults;
+    expect(vi.getTimerCount()).toBe(0); expect(f.peakCatalogs()).toBe(4);
+    expect(await f.models.select(f.inputs[10])).toEqual(f.outcomes[10]);
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.patch')).toHaveLength(11);
+  });
+  it.each(['source.invalidated', 'sessions.changed', 'source.ready', 'close'])('rejects queued and aborts admitted reads on %s without resuming stale verification', async event => {
+    vi.useFakeTimers(); const f = await saturatedReconciliation(); f.reply(0); await vi.advanceTimersByTimeAsync(0);
+    const readCalls = () => vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.describe' || call[0] === 'models.list').length;
+    const before = readCalls();
+    expect(vi.getTimerCount()).toBe(1);
+    if (event === 'close') f.models.close(); else f.emit(event);
+    expect(await f.applications[0]).toEqual({ target: f.inputs[0].target, outcome: 'unknown' });
+    expect((await f.publicResults).every(result => result.status === 'rejected')).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    for (let i = 0; i < 4; i++) f.releasePublic(i); await vi.advanceTimersByTimeAsync(0);
+    expect(f.reconcileGates).toHaveLength(0); expect(readCalls()).toBe(before);
+    if (event !== 'close') expect(await f.models.select(f.inputs[0])).toEqual(f.outcomes[0]);
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.patch')).toHaveLength(1);
+  });
+  it('releases a failing public read slot for priority reconciliation and releases a failed internal read slot', async () => {
+    const f = await saturatedReconciliation(); f.reply(0); await turn();
+    f.publicGates[0].reject(Error('external read failed'));
+    await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(1));
+    f.reconcileGates[0].reject(Error('readback failed'));
+    expect((await f.applications[0]).outcome).toBe('unknown');
+    const replacement = f.models.read(f.inputs[0].target);
+    await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(2));
+    f.releaseReconcile(1); expect((await replacement).currentModel).toBe('provider/new');
+    for (let i = 1; i < 4; i++) f.releasePublic(i); await f.publicResults;
+    expect(f.peakCatalogs()).toBe(4);
+  });
+  it('aborts an admitted internal read, removes its abort listener, and releases slots before a late source reply', async () => {
+    const f = await saturatedReconciliation(); const original = f.gateway.request;
+    let internalSignal: AbortSignal | undefined;
+    const listeners: { added: unknown[]; removed: unknown[] } = { added: [], removed: [] };
+    f.gateway.request = vi.fn((method, params, signal) => {
+      if (method === 'models.list' && signal) {
+        internalSignal = signal;
+        const add = signal.addEventListener.bind(signal); const remove = signal.removeEventListener.bind(signal);
+        vi.spyOn(signal, 'addEventListener').mockImplementation((type, listener, options) => { if (type === 'abort') listeners.added.push(listener); add(type, listener, options); });
+        vi.spyOn(signal, 'removeEventListener').mockImplementation((type, listener, options) => { if (type === 'abort') listeners.removed.push(listener); remove(type, listener, options); });
+      }
+      return original(method, params, signal);
+    });
+    f.reply(0); await turn(); f.releasePublic(0);
+    await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(1));
+    f.emit('source.invalidated');
+    expect((await f.applications[0]).outcome).toBe('unknown'); await f.publicResults;
+    expect(internalSignal?.aborted).toBe(true); expect(listeners.added).toHaveLength(1);
+    expect(listeners.removed).toContain(listeners.added[0]);
+    const fresh = f.models.read(f.inputs[0].target);
+    await vi.waitFor(() => expect(f.reconcileGates).toHaveLength(2));
+    f.releaseReconcile(1); expect((await fresh).currentModel).toBe('provider/new');
+    const before = vi.mocked(f.gateway.request).mock.calls.length;
+    for (let i = 1; i < 4; i++) f.releasePublic(i); f.releaseReconcile(0); await turn();
+    expect(f.gateway.request).toHaveBeenCalledTimes(before);
+    expect(await f.models.select(f.inputs[0])).toEqual(f.outcomes[0]);
+  });
   it('reads configured native choices with only canonical framing independently of send', async () => {
     const f = fixture(); const snap = await f.models.read(target);
     expect(snap).toMatchObject({ target, currentModel: 'provider/old', choices: [
@@ -158,6 +325,19 @@ describe('native scoped model service', () => {
     const f = fixture(); const original = f.gateway.request; f.gateway.request = vi.fn((method, params, signal) => method === 'sessions.patch' ? Promise.reject(new GatewayRequestError('unavailable')) : original(method, params, signal));
     for (let i = 0; i < 10; i++) { const snap = await f.models.read(target); expect((await f.models.select({ target, selectionId: snap.selectionId, model: null })).outcome).toBe('unknown'); }
     const snap = await f.models.read(target); await expect(f.models.select({ target, selectionId: snap.selectionId, model: null })).rejects.toMatchObject({ code: 'rate-limited' });
+  });
+  it('retains the ten-apply window until 59999 ms and releases it at 60000 ms independently of fresh observations', async () => {
+    const f = fixture(); let now = Date.now(); vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const original = f.gateway.request;
+    f.gateway.request = vi.fn((method, params, signal) => method === 'sessions.patch' ? Promise.reject(Error('lost')) : original(method, params, signal));
+    for (let i = 0; i < 10; i++) {
+      const snap = await f.models.read(target); await f.models.select({ target, selectionId: snap.selectionId, model: null });
+    }
+    now += 59999; const blocked = await f.models.read(target);
+    await expect(f.models.select({ target, selectionId: blocked.selectionId, model: null })).rejects.toMatchObject({ code: 'rate-limited' });
+    now++; const fresh = await f.models.read(target);
+    expect((await f.models.select({ target, selectionId: fresh.selectionId, model: null })).outcome).toBe('unknown');
+    expect(vi.mocked(f.gateway.request).mock.calls.filter(call => call[0] === 'sessions.patch')).toHaveLength(11);
   });
   it('binds the whole immutable payload, including target metadata permitted by the closed contract', async () => {
     const f = fixture(); const snap = await f.models.read(target); const input = { target, selectionId: snap.selectionId, model: 'provider/new' };

@@ -24,7 +24,7 @@ export interface ControlGateway {
   request(method: ControlMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   onEvent(listener: (event: GatewayEvent) => void): () => void; close(): void;
   artifactConnection?(): { id: string; generation: number; gatewayUrl: string } | null;
-  modelCapabilities?(): { canRead: boolean; canChange: boolean };
+  modelCapabilities?(): { canRead: boolean; canChange: boolean; disabledReason?: 'unsupported' | 'permission' | null };
 }
 interface Pending { method: ControlMethod; approval: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
@@ -193,8 +193,12 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       ...(state === 'ready' && !stopGranted ? { stopDisabledReason: writeScopeGranted ? 'unsupported' as const : 'scope-required' as const } : {}) }),
     artifactConnection: () => state === 'ready' && socket?.readyState === WebSocket.OPEN && connectionId && config.url
       ? { id: connectionId, generation, gatewayUrl: config.url } : null,
-    modelCapabilities: () => ({ canRead: state === 'ready' && negotiatedMethods.includes('models.list'),
-      canChange: state === 'ready' && writeScopeGranted && !modelAdminGranted && negotiatedMethods.includes('models.list') && negotiatedMethods.includes('sessions.patch') }),
+    modelCapabilities: () => {
+      const unsupported = !negotiatedMethods.includes('models.list') || !negotiatedMethods.includes('sessions.patch');
+      return { canRead: state === 'ready' && negotiatedMethods.includes('models.list'),
+        canChange: state === 'ready' && writeScopeGranted && !modelAdminGranted && !unsupported,
+        disabledReason: unsupported ? 'unsupported' : !writeScopeGranted || modelAdminGranted ? 'permission' : null };
+    },
     request(method, params, signal) {
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
       const model = (MODEL_METHODS as readonly string[]).includes(method);

@@ -2,7 +2,8 @@ import { CONTROL_LIMITS, controlByteSize, controlRecord, parseControlTarget, typ
 
 export const CONTROL_MODEL_LIMITS = {
   choices: 500, modelId: 512, label: 128, selectionId: 128, observations: 100,
-  lifetime: 60000, concurrentReads: 4, appliesPerMinute: 10, attempts: 1000,
+  lifetime: 60000, concurrentReads: 4, appliesPerMinute: 10, applyRateWindow: 60000, attempts: 1000,
+  reconciliationWaiters: 10, reconciliationAdmissionWait: 10000,
 } as const;
 export interface ControlModelChoice { id: string; label: string; selectable: boolean; available: boolean | null }
 export type ControlModelDisabledReason = 'busy' | 'activity-unknown' | 'read-only' | 'permission' | 'selection-unknown' | 'unsupported' | null;

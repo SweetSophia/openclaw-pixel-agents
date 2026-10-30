@@ -15,17 +15,22 @@ export interface ModelService {
 }
 interface Observation { snapshot: ControlModelSnapshot; epoch: number; binding?: string }
 interface Operation { binding: string; promise: Promise<ControlModelOutcome> }
+interface ReadWaiter {
+  epoch: number; timer: ReturnType<typeof setTimeout>;
+  resolve(controller: AbortController): void; reject(error: ControlError): void;
+}
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
-    const abort = () => reject(new ControlError('unavailable'));
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const abort = () => { cleanup(); reject(new ControlError('unavailable')); };
     if (signal.aborted) {
       void promise.catch(() => {});
       reject(new ControlError('unavailable'));
       return;
     }
     signal.addEventListener('abort', abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
+    promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
   });
 }
 
@@ -73,6 +78,7 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
   const pending = new Map<string, Operation>();
   const activeTargets = new Set<string>();
   const readers = new Set<AbortController>();
+  const readWaiters: ReadWaiter[] = [];
   let epoch = 0;
   let closed = false;
   let recentApplies: number[] = [];
@@ -89,7 +95,9 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
     if (observedEpoch !== epoch) throw new ControlError('session-changed');
   }
   function disabled(row: Record<string, unknown>): ControlModelDisabledReason {
-    if (!gateway.modelCapabilities?.().canChange || row.readOnly === true) return 'read-only';
+    if (row.readOnly === true) return 'read-only';
+    const capability = gateway.modelCapabilities?.();
+    if (!capability?.canChange) return capability?.disabledReason ?? 'read-only';
     if (row.sendPolicy === 'deny') return 'permission';
     if (row.hasActiveRun === true) return 'busy';
     if (row.hasActiveRun !== false) return 'activity-unknown';
@@ -100,23 +108,59 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
     for (const [id, item] of observations) if (Date.now() - item.snapshot.observedAt >= CONTROL_MODEL_LIMITS.lifetime) observations.delete(id);
     while (observations.size >= CONTROL_MODEL_LIMITS.observations) observations.delete(observations.keys().next().value!);
   }
+  function reserveRead(): AbortController {
+    const controller = new AbortController();
+    readers.add(controller);
+    return controller;
+  }
+  function drainReads(): void {
+    while (readWaiters.length && readers.size < CONTROL_MODEL_LIMITS.concurrentReads) {
+      const waiter = readWaiters.shift()!;
+      clearTimeout(waiter.timer);
+      try {
+        fence(waiter.epoch);
+        // Reserve before resolving so a new public read cannot take this slot.
+        waiter.resolve(reserveRead());
+      } catch (error) { waiter.reject(error as ControlError); }
+    }
+  }
+  function cancelReads(): void {
+    for (const waiter of readWaiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new ControlError('unavailable'));
+    }
+    for (const controller of readers) controller.abort();
+  }
+  function admitRead(observedEpoch: number, internal: boolean): Promise<AbortController> {
+    fence(observedEpoch);
+    if (readers.size < CONTROL_MODEL_LIMITS.concurrentReads && !readWaiters.length) return Promise.resolve(reserveRead());
+    if (!internal || readWaiters.length >= CONTROL_MODEL_LIMITS.reconciliationWaiters) return Promise.reject(new ControlError('rate-limited'));
+    return new Promise((resolve, reject) => {
+      const waiter: ReadWaiter = { epoch: observedEpoch, resolve, reject, timer: setTimeout(() => {
+        const index = readWaiters.indexOf(waiter);
+        if (index >= 0) readWaiters.splice(index, 1);
+        reject(new ControlError('unavailable'));
+      }, CONTROL_MODEL_LIMITS.reconciliationAdmissionWait) };
+      readWaiters.push(waiter);
+    });
+  }
   async function catalog(target: ControlTarget, signal?: AbortSignal): Promise<ControlModelChoice[]> {
     return catalogChoices(await gateway.request('models.list', {
       agentId: target.agentId, sessionKey: target.sessionKey, view: 'configured', includeDetails: true,
     }, signal));
   }
-  async function read(value: unknown, signal?: AbortSignal): Promise<ControlModelSnapshot> {
+  async function readSnapshot(value: unknown, signal?: AbortSignal, reconciliationEpoch?: number): Promise<ControlModelSnapshot> {
     const target = parseModelTarget(value);
     if (!target) throw new ControlError('invalid-request');
     authority();
     if (signal?.aborted) throw new ControlError('unavailable');
-    if (readers.size >= CONTROL_MODEL_LIMITS.concurrentReads) throw new ControlError('rate-limited');
-    const controller = new AbortController();
+    const observedEpoch = reconciliationEpoch ?? epoch;
+    const controller = await admitRead(observedEpoch, reconciliationEpoch !== undefined);
     const abort = () => controller.abort();
-    readers.add(controller);
     signal?.addEventListener('abort', abort, { once: true });
-    const observedEpoch = epoch;
+    if (signal?.aborted) controller.abort();
     try {
+      fence(observedEpoch, controller.signal);
       await abortable(tasks.verifyTarget(target, controller.signal), controller.signal);
       fence(observedEpoch, controller.signal);
       const choices = await abortable(catalog(target, controller.signal), controller.signal);
@@ -133,6 +177,7 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
     } finally {
       readers.delete(controller);
       signal?.removeEventListener('abort', abort);
+      drainReads();
     }
   }
   function observed(input: ControlModelSelection, item: Observation): void {
@@ -163,7 +208,7 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
       const row = await tasks.verifyTarget(input.target);
       observed(input, item);
       preflightRow(row, item);
-      recentApplies = recentApplies.filter(at => Date.now() - at < 60000);
+      recentApplies = recentApplies.filter(at => Date.now() - at < CONTROL_MODEL_LIMITS.applyRateWindow);
       if (recentApplies.length >= CONTROL_MODEL_LIMITS.appliesPerMinute || attempts.size >= CONTROL_MODEL_LIMITS.attempts) throw new ControlError('rate-limited');
       // Commit the immutable attempted identity before handing any bytes to the Gateway.
       attempts.set(input.selectionId, operation);
@@ -177,7 +222,7 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
         fence(item.epoch);
         const committed = committedModel(receipt, input);
         if (!committed) return unknown;
-        const snapshot = await read(input.target);
+        const snapshot = await readSnapshot(input.target, undefined, item.epoch);
         fence(item.epoch);
         if (snapshot.currentModel !== committed) return unknown;
         return { target: input.target, outcome: 'confirmed', snapshot };
@@ -188,11 +233,11 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
     if (event.event === 'source.invalidated' || event.event === 'sessions.changed' || event.event === 'source.ready') {
       epoch++;
       observations.clear();
-      for (const controller of readers) controller.abort();
+      cancelReads();
     }
   });
   return {
-    read,
+    read(value, signal) { return readSnapshot(value, signal); },
     select(value) {
       const parsed = parseControlModelSelection(value);
       if (!parsed) return Promise.reject(new ControlError('invalid-request'));
@@ -216,7 +261,7 @@ export function createModelService(gateway: ControlGateway, tasks: TaskService):
       epoch++;
       observations.clear();
       unsubscribe();
-      for (const controller of readers) controller.abort();
+      cancelReads();
     },
   };
 }

@@ -132,9 +132,27 @@ describe('scoped task Gateway client', () => {
     }) : { type: 'res', id: frame.id, ok: true, payload: { models: [] } })));
     const gateway = client(host.url, true); await ready(gateway);
     expect(host.frames[0].params.caps).toContain('model-selection-policy');
-    expect(gateway.modelCapabilities?.()).toEqual({ canRead: true, canChange: true });
+    expect(gateway.modelCapabilities?.()).toEqual({ canRead: true, canChange: true, disabledReason: null });
     expect(gateway.status().canSend).toBe(false);
     await expect(gateway.request('models.list', { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', view: 'configured', includeDetails: true })).resolves.toEqual({ models: [] });
+  });
+  it.each([
+    { variant: 'missing-catalog', optIn: true, scopes: ['operator.read', 'operator.write'], omitted: 'models.list', canRead: false, canChange: false, reason: 'unsupported', canSend: true },
+    { variant: 'missing-patch', optIn: true, scopes: ['operator.read', 'operator.write'], omitted: 'sessions.patch', canRead: true, canChange: false, reason: 'unsupported', canSend: true },
+    { variant: 'write-opt-out', optIn: false, scopes: ['operator.read', 'operator.write'], omitted: '', canRead: true, canChange: false, reason: 'permission', canSend: false },
+    { variant: 'write-ungranted', optIn: true, scopes: ['operator.read'], omitted: '', canRead: true, canChange: false, reason: 'permission', canSend: false },
+    { variant: 'unexpected-admin', optIn: true, scopes: ['operator.read', 'operator.write', 'operator.admin'], omitted: '', canRead: true, canChange: false, reason: 'permission', canSend: true },
+    { variant: 'model-writable', optIn: true, scopes: ['operator.read', 'operator.write'], omitted: '', canRead: true, canChange: true, reason: null, canSend: true },
+  ])('reports server-only model reason for $variant without changing unrelated private readiness', async c => {
+    const methods = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.send', 'sessions.create', 'models.list', 'sessions.patch'].filter(method => method !== c.omitted);
+    const host = await fixture((frame, socket) => socket.write(encode(hello(frame.id, {
+      auth: { role: 'operator', scopes: c.scopes }, features: { methods, events: [] },
+    }))));
+    const gateway = client(host.url, c.optIn); await ready(gateway);
+    expect(gateway.modelCapabilities?.()).toEqual({ canRead: c.canRead, canChange: c.canChange, disabledReason: c.reason });
+    expect(gateway.status()).toMatchObject({ state: 'ready', canRead: true, canSend: c.canSend });
+    expect(gateway.status()).not.toHaveProperty('disabledReason');
+    expect(host.frames[0].params.scopes).not.toContain('operator.admin');
   });
   it.each(['FORBIDDEN', 'INVALID_REQUEST'])('keeps model %s denial local to models', async code => {
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
@@ -150,7 +168,7 @@ describe('scoped task Gateway client', () => {
       features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'models.list', 'sessions.patch'], events: [] },
     }))));
     const gateway = client(host.url, true); await ready(gateway);
-    expect(gateway.modelCapabilities?.()).toEqual({ canRead: true, canChange: false });
+    expect(gateway.modelCapabilities?.()).toEqual({ canRead: true, canChange: false, disabledReason: 'permission' });
     await expect(gateway.request('sessions.patch', { key: 'agent:cylena:fixture', model: null })).rejects.toMatchObject({ code: 'model-denied' });
     expect(host.frames).toHaveLength(1);
   });
