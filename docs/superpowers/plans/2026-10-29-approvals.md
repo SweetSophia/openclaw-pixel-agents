@@ -33,11 +33,11 @@
 
 **Interfaces:** Consume existing `ControlGateway`, `TaskService.verifyTarget`, protected route middleware and `ControlTarget`. Produce `ControlApproval`, `ControlApprovalPage`, `ControlApprovalResult`, closed read/inspect/resolve request parsers (including an opaque inspected-observation identity), `ApprovalService.read/inspect/resolve/close`, `ControlStatus.canReviewApprovals` with honest denial reason, and protected `/api/control/agents/:id/approvals/{list,inspect,resolve}` POST routes. Config produces `approvalsEnabled: boolean`. Resolve consumes the exact inspected observation identity and verifies unchanged presentation.
 
-- [ ] Write failing contract/projection/config/negotiation/service/route tests using legacy fixtures as evidence, not asserted truth. Cover all spec bounds, strict fields, bidi/unicode-safe IDs, cross-target identity, invalidation, replay/event ordering, exact observer cleanup, unsupported scope/method/binding, expiry/concurrent first-answer, changed presentation, duplicate/no-replay uncertainty, rate limits and close/abort.
-- [ ] Run `npm test -- shared/controlApprovals.test.ts server/control/approvalService.test.ts server/control/approvalRoutes.test.ts server/control/config.test.ts server/control/gatewayClient.test.ts`; capture meaningful RED before production edits.
-- [ ] Implement minimal scoped boundary on current main. Reuse canonical target parsing and existing auth/transport. Native methods/scopes must match installed primary source. Keep configuration docs for Task 3. Add no generic RPC or arbitrary native response forwarding.
-- [ ] Rerun focused tests, `npm run typecheck`, `npm test`, `npm run build`; require pass and clean diff.
-- [ ] Verify GitHub CLI identity is `SweetSophia`; commit as `feat: add scoped native approval boundary`.
+- [x] Write failing contract/projection/config/negotiation/service/route tests using legacy fixtures as evidence, not asserted truth. Cover all spec bounds, strict fields, bidi/unicode-safe IDs, cross-target identity, invalidation, replay/event ordering, exact observer cleanup, unsupported scope/method/binding, expiry/concurrent first-answer, changed presentation, duplicate/no-replay uncertainty, rate limits and close/abort.
+- [x] Run `npm test -- shared/controlApprovals.test.ts server/control/approvalService.test.ts server/control/approvalRoutes.test.ts server/control/config.test.ts server/control/gatewayClient.test.ts`; capture meaningful RED before production edits.
+- [x] Implement minimal scoped boundary on current main. Reuse canonical target parsing and existing auth/transport. Native methods/scopes must match installed primary source. Keep configuration docs for Task 3. Add no generic RPC or arbitrary native response forwarding.
+- [x] Rerun focused tests, `npm run typecheck`, `npm test`, `npm run build`; require pass and clean diff.
+- [x] Verify GitHub CLI identity is `SweetSophia`; commit as `feat: add scoped native approval boundary`.
 
 ### Task 2: Accessible live-only approval review
 
@@ -45,10 +45,10 @@
 
 **Interfaces:** Consume Task 1 capability, parsers, opaque inspected-observation identity and protected routes. Produce `useApprovals(target, active)` and `ConversationApprovals({target,active,readOnly})` integrated into the live conversation surface. Serialize only canonical target fields, never full session-row objects.
 
-- [ ] Write failing real-hook/panel tests for all lifecycle cleanup, last-known timestamp preservation, explicit setup failures, historical suppression, pending/details/terminal display, immutable target/id/kind/decision/content confirmation, expiry, replacement before passive effects, Cancel-first focus/Escape restoration, duplicate same-task clicks, native first-answer/unknown result, explicit read reconciliation and no automatic retry.
-- [ ] Run `npm test -- src/control/useApprovals.test.tsx src/components/ConversationApprovals.test.tsx src/components/ConversationApprovals.integration.test.tsx src/components/AgentDetailPanel.runControls.test.tsx`; capture RED.
-- [ ] Implement minimal UI with existing access/focus patterns; preserve run history, Stop/Steer, late-send adoption and private draft behavior. Do not expose raw policy, private channels or standing decisions.
-- [ ] Rerun focused tests, typecheck and full suite; require pass and clean diff; commit as `feat: review live conversation approvals`.
+- [x] Write failing real-hook/panel tests for all lifecycle cleanup, last-known timestamp preservation, explicit setup failures, historical suppression, pending/details/terminal display, immutable target/id/kind/decision/content confirmation, expiry, replacement before passive effects, Cancel-first focus/Escape restoration, duplicate same-task clicks, native first-answer/unknown result, explicit read reconciliation and no automatic retry.
+- [x] Run `npm test -- src/control/useApprovals.test.tsx src/components/ConversationApprovals.test.tsx src/components/ConversationApprovals.integration.test.tsx src/components/AgentDetailPanel.runControls.test.tsx`; capture RED.
+- [x] Implement minimal UI with existing access/focus patterns; preserve run history, Stop/Steer, late-send adoption and private draft behavior. Do not expose raw policy, private channels or standing decisions.
+- [x] Rerun focused tests, typecheck and full suite; require pass and clean diff; commit as `feat: review live conversation approvals`.
 
 ### Task 3: Setup documentation and release qualification
 
@@ -58,8 +58,12 @@
 
 - [x] Document separate approvals authority, explicit operator pairing, supported decisions, sanitized audience/child attribution, stale/expiry/first-answer/unknown semantics, process-local no-replay limitation and historical read-only UI.
 - [x] Run `npm run typecheck`, `npm test`, `npm run test:coverage`, `npm run build`, `npm run test:package`, `npm audit --omit=dev --audit-level=high`, `npm audit --audit-level=moderate`, `git diff --check`, and documented Docker API/SPA startup probes. Do not weaken any gate.
-- [x] Using agent-browser skill in an isolated synthetic fixture, test desktop/phone/short-window confirmation, history suppression, focus/Escape, stale/expiry/unknown/first-answer states, console/network and scoped accessibility. No real Gateway/control credentials. Inspect screenshots, close owned browser/server/container. The reviewed `c37c7b1` Tab-containment fix passed 20 hard native-browser assertions, including complete forward/reverse cycles, Escape restoration and settled 320×900/320×480 native-hit geometry. Earlier contrary traces remain preserved; owned resources are closed.
-- [ ] Commit as `docs: document private approval handling`; complete task and final whole-branch reviews, fixes, push/Ready PR, current-head bot validity assessment, full 15-minute window, green protections, merge and exact post-merge main CI/CodeQL under existing roadmap authorization.
+- [x] Using agent-browser skill in an isolated synthetic fixture, test desktop/phone/short-window confirmation, history suppression, focus/Escape, stale/expiry/unknown/first-answer states, console/network and scoped accessibility. No real Gateway/control credentials. Inspect screenshots, close owned browser/server/container. Final `c1a3822` passed 20 hard native-browser keyboard/phone-geometry assertions plus 35 recovery, 64 latch and 112 private-state assertions. Earlier contrary traces remain preserved; owned resources are closed. These synthetic checks do not establish live approval acceptance or whole-application accessibility.
+- [x] Commit as `docs: document private approval handling`; complete task and final whole-branch reviews, fixes, push/Ready PR, current-head bot validity assessment, full 15-minute window, green protections, merge and exact post-merge main CI/CodeQL under existing roadmap authorization.
+
+## Delivery closeout
+
+[PR #332](https://github.com/SweetSophia/openclaw-pixel-agents/pull/332) merged the independently reviewed final head `c1a3822` as `56181af2463edc4dc6272ffe8653b3eca70c9885` at 2026-10-29 23:58:19 UTC. The full review window elapsed and protected checks passed; final feedback and bot-review limits are recorded in the PR. Exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/40976651227) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/40976651099) passed. The merged source matches the qualified source tree; a fresh merged-tree run also passed all 1,723 tests. No live approval/task, permission change, deployment or npm publication was performed.
 
 ## Self-Review
 
