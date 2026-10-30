@@ -21,9 +21,11 @@ import { parseControlStopRequest } from '../../shared/controlRun';
 import type { RunControlService } from './runControlService';
 import { parseApprovalReadRequest, parseApprovalInspectRequest, parseApprovalResolveRequest } from '../../shared/controlApprovals';
 import { ApprovalNotDispatchedError, type ApprovalService } from './approvalService';
+import { parseControlModelReadRequest, parseControlModelSelection } from '../../shared/controlModels';
+import type { ModelService } from './modelService';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService }): Router {
-  const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls, approvals } = options; const router = Router();
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService; models?: ModelService }): Router {
+  const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls, approvals, models } = options; const router = Router();
   const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
@@ -38,9 +40,9 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
       if (res.headersSent) { res.destroy(); return; }
       res.removeHeader('X-Pixel-Control-File'); res.removeHeader('X-Pixel-Preview-Truncated'); res.removeHeader('Content-Disposition');
       const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
-      const status = code === 'scope-required' || code === 'pairing-required' || code === 'usage-denied' || code === 'stop-denied' || code === 'approvals-denied' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
+      const status = code === 'scope-required' || code === 'pairing-required' || code === 'usage-denied' || code === 'stop-denied' || code === 'approvals-denied' || code === 'model-denied' ? 403 : code === 'invalid-request' || code === 'command-not-supported' ? 400
         : code === 'invalid-target' || code === 'file-unavailable' || code === 'approval-unavailable' ? 404 : code === 'file-too-large' ? 413 : code === 'preview-unsupported' ? 415
-          : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' || code === 'approval-changed' || code === 'approval-outcome-unknown' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
+          : code === 'session-changed' || code === 'outcome-unknown' || code === 'workspace-changed' || code === 'approval-changed' || code === 'approval-outcome-unknown' || code === 'model-busy' ? 409 : code === 'unsupported' ? 501 : code === 'rate-limited' ? 429 : 503;
       res.type('json').status(status).json({ code, error: code === 'workspace-changed' ? 'This workspace selection changed. Refresh the directory.' : code === 'session-changed' ? 'This conversation changed. Select it again.' : 'The private request could not be completed.',
         ...(error instanceof ApprovalNotDispatchedError ? { approvalDisposition: error.approvalDisposition } : {}) });
     }).finally(() => { res.off('close', close); req.off('aborted', close); });
@@ -49,6 +51,21 @@ export function createControlRouter(options: { gateway: ControlGateway; tasks: T
     const cursor = req.query.cursor;
     if (cursor !== undefined && (typeof cursor !== 'string' || !cursor || cursor.length > 2048)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid conversation cursor.' }); return; }
     run(req, res, signal => tasks.listSessions(String(req.params.id), cursor, signal));
+  });
+  router.post('/agents/:id/models', (req, res) => {
+    const input = parseControlModelReadRequest(req.body);
+    if (!input || input.target.agentId !== String(req.params.id)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid model selection.' }); return; }
+    run(req, res, signal => { if (!models) throw new ControlError('unsupported'); return models.read(input.target, signal); });
+  });
+  router.post('/agents/:id/model', (req, res) => {
+    const input = parseControlModelSelection(req.body);
+    if (!input || input.target.agentId !== String(req.params.id)) { res.status(400).json({ code: 'invalid-request', error: 'Invalid model selection.' }); return; }
+    run(req, res, () => {
+      if (!config.sendEnabled) throw new ControlError('model-denied');
+      if (!models) throw new ControlError('unsupported');
+      // HTTP cancellation never cancels or replays an admitted native mutation.
+      return models.select(input);
+    });
   });
   for (const action of ['list', 'inspect', 'resolve'] as const) router.post(`/agents/:id/approvals/${action}`, (req, res) => {
     const input = action === 'list' ? parseApprovalReadRequest(req.body) : action === 'inspect' ? parseApprovalInspectRequest(req.body) : parseApprovalResolveRequest(req.body);

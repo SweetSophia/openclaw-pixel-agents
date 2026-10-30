@@ -91,6 +91,69 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it('runs literal native model catalog and preference receipts through signed transport, real services and protected HTTP', async () => {
+    const target = { agentId: 'cylena', sessionKey: 'agent:cylena:model-fixture', sessionId: 'model-session', lifecycleRevision: 'l1' };
+    let selected = 'old';
+    const host = await fixture((frame, socket) => {
+      if (frame.method === 'connect') { socket.write(encode(hello(frame.id, {
+        auth: { role: 'operator', scopes: ['operator.read', 'operator.write'] },
+        features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'models.list', 'sessions.patch'], events: [] },
+      }))); return; }
+      if (frame.method === 'sessions.patch') selected = 'new';
+      socket.write(encode({ type: 'res', id: frame.id, ok: true, payload: frame.method === 'sessions.describe'
+        ? { session: { key: target.sessionKey, agentId: 'cylena', sessionId: 'model-session', lifecycleRevision: 'l1', hasActiveRun: false, modelProvider: 'p', model: selected } }
+        : frame.method === 'models.list' ? { models: [{ provider: 'p', id: 'old', name: 'Old', manualSelectionAllowed: true, available: true }, { provider: 'p', id: 'new', name: 'New', manualSelectionAllowed: true, available: true }] }
+          : frame.method === 'sessions.patch' ? { ok: true, key: target.sessionKey, path: '/private/synthetic-native-store',
+            entry: { sessionId: 'model-session', lifecycleRevision: 'l1', providerOverride: 'p', modelOverride: 'new', modelOverrideSource: 'user', modelOverrideRouteResolution: 'resolved' },
+            resolved: { modelProvider: 'p', model: 'new' } } : {} }));
+    });
+    const gateway = client(host.url, true); await ready(gateway);
+    const tasks = createTaskService(gateway, () => new Set(['cylena']));
+    const { createModelService } = await import('./modelService'); const models = createModelService(gateway, tasks);
+    cleanups.push(() => { models.close(); tasks.close(); });
+    const config = loadControlConfig({ OPENCLAW_GATEWAY_URL: host.url, PIXEL_CONTROL_TOKEN: 'fixture-key', CONTROL_SEND_ENABLED: 'true' }, '/tmp/model-flow-fixture');
+    const app = express(); app.use(express.json()); app.use('/api/control', createControlRouter({ gateway, tasks, config, models }));
+    const read = await request(app).post('/api/control/agents/cylena/models').auth('fixture-key', { type: 'bearer' }).send({ target });
+    expect(read.status).toBe(200); expect(read.body).toMatchObject({ currentModel: 'p/old', canChange: true });
+    const selection = { target, selectionId: read.body.selectionId, model: 'p/new' };
+    const result = await request(app).post('/api/control/agents/cylena/model').auth('fixture-key', { type: 'bearer' }).send(selection);
+    expect(result.status).toBe(200); expect(result.body).toMatchObject({ outcome: 'confirmed', snapshot: { currentModel: 'p/new' } });
+    expect(result.headers['cache-control']).toBe('no-store'); expect(JSON.stringify(result.body)).not.toMatch(/private|providerOverride|modelOverride/);
+    expect(host.frames.filter(frame => frame.method === 'models.list').every(frame => JSON.stringify(frame.params) === JSON.stringify({ agentId: 'cylena', sessionKey: target.sessionKey, view: 'configured', includeDetails: true }))).toBe(true);
+    expect(host.frames.filter(frame => frame.method === 'sessions.patch').map(frame => frame.params)).toEqual([{ key: target.sessionKey, agentId: 'cylena', expectedSessionId: 'model-session', expectedLifecycleRevision: 'l1', model: 'p/new' }]);
+    expect(gateway.status().canSend).toBe(false);
+    expect((await request(app).post('/api/control/agents/cylena/model').auth('fixture-key', { type: 'bearer' }).send(selection)).body).toEqual(result.body);
+    expect(host.frames.filter(frame => frame.method === 'sessions.patch')).toHaveLength(1);
+  });
+  it('advertises model policy and negotiates model writes independently of send/create', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.write'] },
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'models.list', 'sessions.patch'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: { models: [] } })));
+    const gateway = client(host.url, true); await ready(gateway);
+    expect(host.frames[0].params.caps).toContain('model-selection-policy');
+    expect(gateway.modelCapabilities?.()).toEqual({ canRead: true, canChange: true });
+    expect(gateway.status().canSend).toBe(false);
+    await expect(gateway.request('models.list', { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', view: 'configured', includeDetails: true })).resolves.toEqual({ models: [] });
+  });
+  it.each(['FORBIDDEN', 'INVALID_REQUEST'])('keeps model %s denial local to models', async code => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'models.list'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: false, error: { code, message: 'private source details' } })));
+    const gateway = client(host.url); await ready(gateway);
+    await expect(gateway.request('models.list', {})).rejects.toMatchObject({ code: code === 'FORBIDDEN' ? 'model-denied' : 'unsupported' });
+    expect(gateway.status().canRead).toBe(true);
+  });
+  it('refuses session model patch on unexpectedly admin-granted connections', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(hello(frame.id, {
+      auth: { role: 'operator', scopes: ['operator.read', 'operator.write', 'operator.admin'] },
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'models.list', 'sessions.patch'], events: [] },
+    }))));
+    const gateway = client(host.url, true); await ready(gateway);
+    expect(gateway.modelCapabilities?.()).toEqual({ canRead: true, canChange: false });
+    await expect(gateway.request('sessions.patch', { key: 'agent:cylena:fixture', model: null })).rejects.toMatchObject({ code: 'model-denied' });
+    expect(host.frames).toHaveLength(1);
+  });
   it('reads, inspects and resolves through signed approval scope and protected HTTP without sending standing grants', async () => {
     const target = { agentId: 'cylena', sessionKey: 'agent:cylena:approval-fixture', sessionId: 'approval-session' };
     const pending = { id: 'exact-full-approval', urlPath: '/approval/exact-full-approval', status: 'pending', createdAtMs: 1, expiresAtMs: Date.now() + 60000,
