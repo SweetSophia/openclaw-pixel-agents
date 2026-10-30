@@ -61,7 +61,8 @@ export function parseControlModelSnapshot(value: unknown): ControlModelSnapshot 
   const row = controlRecord(value); const target = parseModelTarget(row?.target);
   if (!row || !target || !keys(row, ['target', 'selectionId', 'observedAt', 'currentModel', 'choices', 'canChange', 'disabledReason'])
     || controlByteSize(row) > CONTROL_LIMITS.responseBytes || !safeText(row.selectionId, CONTROL_MODEL_LIMITS.selectionId)
-    || !Number.isSafeInteger(row.observedAt) || (row.observedAt as number) < 0 || !(row.currentModel === null || isControlModelId(row.currentModel))
+    || !Number.isSafeInteger(row.observedAt) || (row.observedAt as number) < 0 || !Number.isFinite(new Date(row.observedAt as number).getTime())
+    || !(row.currentModel === null || isControlModelId(row.currentModel))
     || typeof row.canChange !== 'boolean' || ![null, 'busy', 'activity-unknown', 'read-only', 'permission', 'selection-unknown', 'unsupported'].includes(row.disabledReason as string | null)
     || row.canChange !== (row.disabledReason === null) || (row.canChange && row.currentModel === null)
     || !Array.isArray(row.choices) || row.choices.length > CONTROL_MODEL_LIMITS.choices) return null;

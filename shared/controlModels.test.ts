@@ -36,6 +36,12 @@ describe('closed private model contract', () => {
     expect(parseControlModelOutcome({ target, outcome: 'confirmed', snapshot: { ...snapshot, target: { ...target, sessionId: 'other' } } })).toBeNull();
     expect(parseControlModelOutcome({ target, outcome: 'unknown' })).toEqual({ target, outcome: 'unknown' });
   });
+  it('accepts only observed timestamps representable by JavaScript Date', () => {
+    expect(parseControlModelSnapshot({ ...snapshot, observedAt: 8_640_000_000_000_000 })?.observedAt).toBe(8_640_000_000_000_000);
+    for (const observedAt of [8_640_000_000_000_001, Number.MAX_SAFE_INTEGER]) {
+      expect(parseControlModelSnapshot({ ...snapshot, observedAt })).toBeNull();
+    }
+  });
   it('never accepts an actionable snapshot without an observed current selection', () => {
     expect(parseControlModelSnapshot({ ...snapshot, currentModel: null })).toBeNull();
     expect(parseControlModelSnapshot({ ...snapshot, currentModel: null, canChange: false, disabledReason: 'selection-unknown' })).not.toBeNull();
