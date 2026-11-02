@@ -55,7 +55,7 @@
 
   Run `git diff --check`, `npm ci`, `npm run typecheck`, `npm test`, `npm run test:coverage`, `npm run build`, `npm run test:package`, `npm audit --omit=dev --audit-level=high` and `npm audit --audit-level=moderate`. The package smoke uses disposable synthetic data and must not contact a real Gateway or publish. Record exact commands/results; distinguish a prose/link pass, synthetic startup and real-user acceptance. A failure remains visible and must be assessed, not silently excluded. Confirm only the intended documentation and planning files changed.
 
-- [ ] **Step 5: Review and hand off.**
+- [x] **Step 5: Review and hand off.**
 
   Obtain a focused whole-diff review of the docs against the approved spec and actual launcher/reference contract. Before any commit or GitHub write, verify `gh api user --jq .login` is exactly `SweetSophia`. Keep the change on the docs branch; report local verification and any residual limitations. No main merge, deployment, new release or unrelated feature delivery is implied by this documentation task.
 
@@ -71,4 +71,4 @@ Fresh local checks on Node 26.4.0 / npm 12.1.0 passed: `npm ci`, typecheck, all 
 
 An additional disposable probe parsed both documented configuration examples, exercised the real built launcher with a relative env-file path from a folder containing spaces, and checked production SPA/status/default-layout responses and on-demand storage in a temporary home. It verified documented environment precedence using an isolated port/origin; the CLI was deliberately unavailable and no real Gateway settings were inherited. The probe stopped its own child and removed its temporary state. Initial helper-only assumptions about `parseEnv` object prototypes and storage creation at startup were corrected and their failure evidence retained; no runtime fix was made or live agent/private-access acceptance claimed.
 
-Independent whole-diff review and the final local handoff remain the last task gate. No GitHub push, main merge, deployment or npm publication has occurred for this documentation task. The guided installer and configurable roster remain separate follow-ups.
+Independent whole-diff review of `d652338..7bdd534` found no Critical, Important or Minor issues. The reviewer independently checked the documentation assertions, launcher help/setup and whitespace, and inspected the recorded broader evidence. Only this completion record changed after that review. The docs branch is retained for the user's integration choice; no GitHub push, main merge, deployment or npm publication has occurred for this documentation task. The guided installer and configurable roster remain separate follow-ups. Synthetic launcher qualification does not establish real OpenClaw collection or Gateway/private-access acceptance.
