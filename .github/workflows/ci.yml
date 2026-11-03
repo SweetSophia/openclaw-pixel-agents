@@ -120,6 +120,15 @@ jobs:
             http://127.0.0.1:3001/api/status
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3001/
 
+      - name: Set up Node.js for configured-roster smoke
+        # The shared local/CI roster probe uses Node built-ins on the runner.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.22.2
+
+      - name: Smoke test configured Docker rosters
+        run: node scripts/smoke-docker-roster.mjs openclaw-pixel-agents:ci
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'

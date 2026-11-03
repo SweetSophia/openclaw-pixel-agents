@@ -137,6 +137,8 @@ synthetic production browser: custom portraits, mouse/touch selection (including
 layout keys and preferences through removal/save/restart/re-addition. Use only
 disposable data and synthetic endpoints; see [roster configuration](docs/configuration.md#custom-agent-rosters).
 
+After building the Docker image above, run `node scripts/smoke-docker-roster.mjs openclaw-pixel-agents:ci` for the same custom-roster check as CI. It uses a read-only synthetic roster directory, an anonymous data volume and dynamically assigned loopback port; verifies file replacement/restart without rebuilding and invalid-config failure; and removes only its own containers/volumes/temp files. No host office data or Gateway credentials are used.
+
 ## Code Style
 
 - **Strict TypeScript** for browser/server code; the native CLI and shared roster runtime use Node-compatible JavaScript, with `.d.cts` declarations for the roster contract.
