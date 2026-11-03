@@ -244,6 +244,7 @@ export const App: React.FC = () => {
           )}
           <PixelOffice
             agents={roomAgents}
+          registeredAgentIds={agents.map(agent => agent.id)}
             editorMode={editorMode}
             deleteMode={deleteMode}
             activeLayout={activeLayout}

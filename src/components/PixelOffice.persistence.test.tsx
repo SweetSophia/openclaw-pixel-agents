@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import type { LayoutDoc } from '../hooks/useLayoutStore';
 import { resetSharedSocketForTesting } from '../socket';
+import { GameEngine } from '../game/GameEngine';
+import type { AgentState } from '../../shared/types';
 
 // Real App, stores, PixelOffice, engine/controller. Only REST/Socket.IO,
 // canvas, asset requests, audio and RAF browser boundaries are replaced.
@@ -15,6 +17,7 @@ vi.mock('../audio/SoundFX', () => ({ sfx: {
 describe('informational preview preserves App layout writes', () => {
   let persisted: LayoutDoc;
   let writes: LayoutDoc[];
+  let agents: AgentState[];
   beforeEach(() => {
     persisted = { id: 'default', name: 'Default', width: 24, height: 16, updatedAt: 1000, seats: {}, furniture: [
       { id: 'table', type: 'DESK', x: 5, y: 5, rotation: 0 },
@@ -23,6 +26,7 @@ describe('informational preview preserves App layout writes', () => {
       { id: 'moving', type: 'PC', x: 10, y: 10, rotation: 0 },
     ] };
     writes = [];
+    agents = [];
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)); vi.stubGlobal('cancelAnimationFrame', vi.fn());
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(new Proxy({}, { get: () => () => {} }) as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 768, height: 512 } as DOMRect);
@@ -37,12 +41,23 @@ describe('informational preview preserves App layout writes', () => {
       if (url === '/api/layouts/default') return Response.json(persisted);
       if (url === '/api/layouts') return Response.json({ layouts: [persisted] });
       if (url === '/api/furniture-catalog') return Response.json({ types: ['COFFEE', 'WHITEBOARD'] });
-      if (url === '/api/agents') return Response.json({ agents: [] });
+      if (url === '/api/agents') return Response.json({ agents });
       return Response.json({});
     }));
   });
   afterEach(() => { cleanup(); resetSharedSocketForTesting(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   const point = (x: number, y: number) => ({ clientX: (x + 0.5) * 32, clientY: (y + 0.5) * 32, button: 0 });
+  it('passes full disabled/other-room identity through the real App into seat lookup', async () => {
+    persisted = { ...persisted, furniture: [], seats: { shodan: { x: 9, y: 4 } } };
+    const common = { activity: 'sleeping' as const, model: 'test', active: false, lastActivity: 0, sessionKey: '', tags: [] };
+    agents = [{ ...common, id: 'main', name: 'Coordinator', pixelEnabled: true, roomId: 'office' }, { ...common, id: 'shodan', name: 'Custom Shodan', pixelEnabled: false, roomId: 'lab' }];
+    const membership = vi.spyOn(GameEngine.prototype, 'setRegisteredAgentIds');
+    render(<App />);
+    await waitFor(() => expect(membership.mock.calls.some(([ids]) => ids.has('main') && ids.has('shodan'))).toBe(true));
+    const engine = membership.mock.contexts[membership.mock.contexts.length - 1] as GameEngine;
+    expect(engine.assignSeat('main')).not.toEqual({ x: 9, y: 4 });
+    expect(persisted.seats).toEqual({ shodan: { x: 9, y: 4 } }); expect(writes).toEqual([]);
+  });
   it('accepts and saves overlapped placement and movement with unchanged wall decor and draw order, then reloads', async () => {
     const view = render(<App />); fireEvent.click(screen.getByRole('button', { name: '✏️ Editor' }));
     fireEvent.click(screen.getByRole('button', { name: '📦 Furniture' }));

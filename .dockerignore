@@ -32,6 +32,7 @@ coverage/
 data/
 
 # Agent / IDE workspace state
+.superpowers/
 .vscode/
 .idea/
 .codegraph/
@@ -40,6 +41,13 @@ data/
 .ua/
 .cortexkit/
 .tmp-pr*/
+
+# Operator configuration bundles must not enter the build context.
+office.env
+collector.env
+agents.json
+pixel-agents-config/
+.openclaw-pixel-agents-config/
 
 # Docker metadata
 Dockerfile

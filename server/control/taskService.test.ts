@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GatewayRequestError, type ControlGateway, type GatewayEvent } from './gatewayClient';
 import { createTaskService } from './taskService';
+import { createAgentRegistry } from '../agentRoster';
 
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1', lifecycleRevision: 'lifecycle-1' };
 function fixture(registeredIds = ['cylena']) {
@@ -27,6 +28,19 @@ function fixture(registeredIds = ['cylena']) {
 }
 afterEach(() => vi.useRealTimers());
 describe('verified task reads', () => {
+  it('bounds configured custom IDs by the actual registry and canonical ownership', async () => {
+    const registry = createAgentRegistry({ version: 1, agents: [{ id: 'researcher', name: 'Research Assistant' }] }, new Map());
+    const f = fixture([...registry.keys()]);
+    try {
+      f.rpc.mockClear(); // Ignore the service's normal startup subscription.
+      await expect(f.tasks.listSessions('cylena')).rejects.toMatchObject({ code: 'invalid-target' });
+      expect(f.rpc).not.toHaveBeenCalled();
+      // The source's old cylena identity does not become owned by a custom ID.
+      expect((await f.tasks.listSessions('researcher')).sessions).toEqual([]);
+      f.setRow({ agentId: 'researcher', key: 'agent:researcher:fixture' });
+      expect((await f.tasks.listSessions('researcher')).sessions).toHaveLength(1);
+    } finally { f.tasks.close(); }
+  });
   it('bypasses successful cache reuse for fresh canonical run verification', async () => {
     const f = fixture(); const original = f.history.getMockImplementation()!;
     expect((await f.tasks.getTask(target)).runId).toBe('run-1');

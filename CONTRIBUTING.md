@@ -128,9 +128,20 @@ See [the release guide](docs/releases.md) for the `NPM_TOKEN` secret and stable 
 
 For guided-configuration changes, also test `node bin/openclaw-pixel-agents.mjs configure` in a real terminal, for local and remote modes and with optional private access. Explicitly choose disposable private paths for both the output directory and `DATA_DIR` instead of saving into your real home defaults. Confirm preview precedes any files, tokens stay hidden, default-no/EOF/Ctrl+C create nothing, existing destinations are refused, and saved files are private. Use synthetic endpoints and paths; the wizard must not execute OpenClaw or contact a Gateway. Run `npm run test:package` after building to exercise installed modules, generated config startup and matching ingest tokens with scripts disabled. Repeat the real-terminal check against the installed tarball; automated prompt tests are not terminal qualification. No real task or live pairing is needed.
 
+For roster changes, run the shared parser/loader, registry HTTP, configuration,
+literal-seat and real `PixelOffice` integration tests. The package smoke must
+exercise custom IDs/names and configuration-only restarts against an installed
+tarball. Check real terminal default/custom and cancellation flows, then a
+synthetic production browser: custom portraits, mouse/touch selection (including
+`sub-worker`), room/disabled membership and legacy/custom seats. Preserve raw
+layout keys and preferences through removal/save/restart/re-addition. Use only
+disposable data and synthetic endpoints; see [roster configuration](docs/configuration.md#custom-agent-rosters).
+
+After building the Docker image above, run `node scripts/smoke-docker-roster.mjs openclaw-pixel-agents:ci` for the same custom-roster check as CI. It uses a read-only synthetic roster directory, an anonymous data volume and dynamically assigned loopback port; verifies file replacement/restart without rebuilding and invalid-config failure; and removes only its own containers/volumes/temp files. No host office data or Gateway credentials are used.
+
 ## Code Style
 
-- **TypeScript** throughout (strict mode)
+- **Strict TypeScript** for browser/server code; the native CLI and shared roster runtime use Node-compatible JavaScript, with `.d.cts` declarations for the roster contract.
 - **React functional components** with hooks
 - **Canvas 2D** for all game rendering (no DOM-based sprites)
 - **Comments**: Explain the *why*, not the *what*

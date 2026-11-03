@@ -20,6 +20,7 @@ import {
 } from './SpriteLoader';
 import { buildObstacleMap, bfsPathfind, reachableFloor, type Point } from './Pathfinder';
 import { resolveSeatPosition } from './seatPosition';
+import { resolveConfiguredSeats } from './seatIdentity';
 import { furnitureDrawOrder, sceneDrawOrder, type FurnitureSceneEntry } from './sceneDepth';
 import { sfx } from '../audio/SoundFX';
 import type { PlacedFurniture } from '../../shared/types';
@@ -213,6 +214,8 @@ export class GameEngine {
   private sceneFootprints = new Map<string, { sprite: ReadonlyLoadedFurnitureItem | undefined; width: number; height: number; loaded: boolean }>();
   private seats: Map<string, { x: number; y: number }> = new Map();
   private configuredSeats = new Map<string, Point>();
+  private literalLayoutSeats: Record<string, Point> = {};
+  private registeredAgentIds = new Set<string>();
 
   // Pathfinding
   private obstacleGrid: boolean[][] | null = null;
@@ -1479,7 +1482,7 @@ export class GameEngine {
       descartes: '#17a2b8', sysauxilia: '#6c757d', chi: '#ff6b9d',
       cylena: '#a78bfa', miku: '#39ff14',
     };
-    const color = char.isSubAgent ? '#4ecca3' : (colors[char.id] || '#e94560');
+    const color = char.isSubAgent ? '#4ecca3' : (Object.prototype.hasOwnProperty.call(colors, char.id) ? colors[char.id] : '#e94560');
     const bodyW = tileSize * (char.isSubAgent ? 0.35 : 0.5);
     const bodyH = tileSize * (char.isSubAgent ? 0.5 : 0.7);
     ctx.fillStyle = color;
@@ -1641,7 +1644,7 @@ export class GameEngine {
     const { gridX, gridY } = result;
     const charId = this.findCharacterAt(gridX, gridY);
 
-    if (charId && !charId.startsWith('sub-')) {
+    if (charId && !this.isSubAgent(charId)) {
       // Click on agent → select them
       this.selectedAgentId = charId;
       this.selectionPulse = 0;
@@ -1680,7 +1683,7 @@ export class GameEngine {
   private handleTouchGridTap(gridX: number, gridY: number): void {
     const charId = this.findCharacterAt(gridX, gridY);
 
-    if (charId && !charId.startsWith('sub-')) {
+    if (charId && !this.isSubAgent(charId)) {
       this.selectedAgentId = charId;
       this.selectionPulse = 0;
       sfx.click();
@@ -1904,7 +1907,8 @@ export class GameEngine {
   }
 
   addCharacter(data: CharacterData) {
-    const paletteIndex = AGENT_PALETTES[data.id as keyof typeof AGENT_PALETTES] ?? Math.floor(Math.random() * 6);
+    const paletteIndex = Object.prototype.hasOwnProperty.call(AGENT_PALETTES, data.id)
+      ? AGENT_PALETTES[data.id as keyof typeof AGENT_PALETTES] : Math.floor(Math.random() * 6);
     this.characters.set(data.id, {
       ...data, targetX: data.x, targetY: data.y,
       animFrame: 0, animTimer: 0, direction: 'down', paletteIndex,
@@ -2063,6 +2067,7 @@ export class GameEngine {
   }
 
   getCharacterIds(): string[] { return Array.from(this.characters.keys()); }
+  isSubAgent(id: string): boolean { return this.characters.get(id)?.isSubAgent === true; }
 
   // Issue #164: previous loop iterated y = 3, 6, 9, 12 (`gridHeight - 2`
   // caps the top at 14 for a 16-tall grid), leaving rows 13-15
@@ -2172,6 +2177,20 @@ export class GameEngine {
   setSelectedFurnitureType(type: string | null) { this.editor.setSelectedFurnitureType(type); }
   setSelectedFurnitureId(id: string | null) { this.editor.setSelectedFurnitureId(id); }
 
+  setRegisteredAgentIds(ids: ReadonlySet<string>): void {
+    if (ids.size === this.registeredAgentIds.size && [...ids].every(id => this.registeredAgentIds.has(id))) return;
+    this.registeredAgentIds = new Set(ids);
+    this.refreshConfiguredSeats();
+  }
+
+  private refreshConfiguredSeats(): void {
+    this.configuredSeats = resolveConfiguredSeats(this.literalLayoutSeats, this.registeredAgentIds);
+    this.seats.clear();
+    this.sceneFurniture = null;
+    this.obstacleDirty = true;
+    this.scheduleObstacleRebuild();
+  }
+
   setLayout(furniture: PlacedFurniture[], seats?: Record<string, { x: number; y: number }>) {
     this.editor.clearPreview();
     this.placedFurniture = furniture.map(item => ({ ...item }));
@@ -2181,8 +2200,8 @@ export class GameEngine {
     // Schedule deferred rebuild to avoid blocking during rapid updates
     this.scheduleObstacleRebuild();
     if (seats) {
-      this.seats.clear();
-      this.configuredSeats = new Map(Object.entries(seats).map(([id, point]) => [id, { ...point }]));
+      this.literalLayoutSeats = Object.fromEntries(Object.entries(seats).map(([id, point]) => [id, { ...point }]));
+      this.refreshConfiguredSeats();
     }
   }
 

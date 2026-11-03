@@ -242,6 +242,31 @@ describe('GameEngine room changes retain configured seats', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps a real legacy fallback through layout reload and obstacle rebuild', () => {
+    engine.setRegisteredAgentIds(new Set(['main']));
+    engine.setLayout([{ id: 'desk', type: 'DESK', x: 9, y: 4, rotation: 90 }], { shodan: { x: 9, y: 4 } });
+    const resolved = engine.assignSeat('main');
+    expect(resolved).not.toEqual({ x: 9, y: 4 });
+    engine.addCharacter({ id: 'main', name: 'Coordinator', ...resolved, state: 'typing' });
+    engine.setLayout([{ id: 'desk', type: 'DESK', x: 9, y: 4, rotation: 90 }], { shodan: { x: 9, y: 4 } });
+    expect(engine.assignSeat('main')).toEqual(resolved);
+    engine.updateCharacter('main', { state: 'reading' });
+    expect(engine.assignSeat('main')).toEqual(resolved);
+  });
+
+  it.each(['toString', 'valueOf'])('uses a numeric palette and safe placeholder color for %s', id => {
+    const internal = engine as unknown as TestGameEngine & { renderPlaceholderCharacter(character: SubAgentCharacter, x: number, y: number, tileSize: number): void };
+    engine.addCharacter({ id, name: 'Custom', x: 5, y: 5, state: 'typing' });
+    const char = internal.characters.get(id)!;
+    expect(typeof char.paletteIndex).toBe('number');
+    const { canvas, recorded } = makeCanvasWithStubbedContext();
+    engine.stop(); engine = new GameEngine(canvas, GRID);
+    engine.addCharacter({ id, name: 'Custom', x: 5, y: 5, state: 'typing' });
+    const target = engine as unknown as typeof internal;
+    target.renderPlaceholderCharacter(target.characters.get(id)!, 0, 0, GRID.tileSize);
+    expect(recorded.fills[0].style).toBe('#e94560');
+  });
+
   it('spawns demo Shodan with the live identity, configured seat, and main sprite', async () => {
     // Keep the successful asset cache separate from later failure-path tests.
     engine.stop();

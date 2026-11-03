@@ -49,12 +49,12 @@ describe("layout mutation lifecycle", () => {
     expect(existsSync(join(dataDir, "layouts", `${layout.id}.json`))).toBe(false);
   });
 
-  it("serves legacy Shodan seats for main without rewriting or revising the layout, then saves canonical seats", async () => {
+  it("serves and saves literal Shodan seats without rewriting or revising on GET", async () => {
     const legacy = {
       id: "legacy-seats", name: "Legacy seats", width: 24, height: 16,
       furniture: [], seats: { shodan: { x: 9, y: 4 }, miku: { x: 20, y: 10 } }, updatedAt: 1,
     };
-    const canonicalSeats = { main: { x: 9, y: 4 }, miku: { x: 20, y: 10 } };
+    const canonicalSeats = { shodan: { x: 9, y: 4 }, miku: { x: 20, y: 10 } };
     const path = join(dataDir, "layouts", "legacy-seats.json");
     const original = JSON.stringify(legacy);
     mkdirSync(join(dataDir, "layouts"), { recursive: true });

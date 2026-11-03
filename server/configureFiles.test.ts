@@ -30,6 +30,25 @@ it('creates a private bundle with exact file contents and refuses a second write
   expect(() => writeConfigurationBundle({ ...f, files: { 'office.env': 'CHANGED=true\n' } })).toThrow(/exist/i);
   expect(fs.readFileSync(join(f.directory, 'office.env'), 'utf8')).toBe('PORT=3001\n');
 });
+it.each([1, 2, 3])('cleans an ordinary write failure at position %i in a complete roster bundle', async failAt => {
+  const f = fixture(); const actual = (await vi.importActual<typeof import('node:fs')>('node:fs')).writeFileSync;
+  const files = { ...f.files, 'agents.json': '{"version":1,"agents":[{"id":"worker","name":"Worker"}]}\n' };
+  let calls = 0;
+  vi.mocked(fs.writeFileSync).mockImplementation((...args) => {
+    actual(...args);
+    if (++calls === failAt) throw Object.assign(Error('synthetic-sensitive-body'), { code: 'ENOSPC' });
+  });
+  expect(() => writeConfigurationBundle({ ...f, files })).toThrow(/ENOSPC/);
+  expect(fs.readdirSync(f.root)).toEqual([]);
+});
+it('writes the fixed roster filename privately without admitting arbitrary JSON files', () => {
+  const f = fixture();
+  const files = { ...f.files, 'agents.json': '{"version":1,"agents":[{"id":"worker","name":"Worker"}]}\n' };
+  writeConfigurationBundle({ ...f, files });
+  expect(fs.readFileSync(join(f.directory, 'agents.json'), 'utf8')).toBe(files['agents.json']);
+  if (process.platform !== 'win32') expect(fs.statSync(join(f.directory, 'agents.json')).mode & 0o777).toBe(0o600);
+  expect(() => writeConfigurationBundle({ directory: join(f.root, 'other'), files: { 'office.env': '', 'arbitrary.json': '{}' } })).toThrow(/Invalid/);
+});
 it.each(['file', 'empty-directory', 'nonempty-directory'])('never replaces an existing %s destination', kind => {
   const f = fixture();
   if (kind === 'file') fs.writeFileSync(f.directory, 'keep');

@@ -72,7 +72,7 @@ describe('PixelOffice room changes with the real GameEngine', () => {
       const [room, setRoom] = useState('office');
       return <>
         <RoomSwitcher activeRoomId={room} onRoomChange={setRoom} agents={agents} />
-        <PixelOffice {...callbacks} agents={agents.filter(agent => agent.roomId === room)}
+        <PixelOffice {...callbacks} agents={agents.filter(agent => agent.roomId === room)} registeredAgentIds={agents.map(agent => agent.id)}
           activeLayout={activeLayout} editorMode={false} deleteMode={false} selectedFurnitureType={null} />
       </>;
     }

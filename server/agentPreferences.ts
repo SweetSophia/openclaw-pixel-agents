@@ -2,6 +2,18 @@ import type { PersistedPrefs } from './validation';
 
 export type PreferenceSaveResult = { saved: true } | { saved: false; error: unknown };
 
+/** Roster membership is not a request to erase an absent agent's preferences. */
+export function serializeAgentPreferences(
+  registry: ReadonlyMap<string, PersistedPrefs>,
+  retained: ReadonlyMap<string, PersistedPrefs>,
+): string {
+  const prefs: Record<string, PersistedPrefs> = Object.create(null);
+  for (const [id, agent] of [...retained, ...registry]) {
+    prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
+  }
+  return JSON.stringify(prefs, null, 2);
+}
+
 /** Keep registry and published state consistent with the preference file's replacement boundary. */
 export function updateAgentPreferences(
   known: PersistedPrefs,

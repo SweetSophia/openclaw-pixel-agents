@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import { afterEach, expect, it } from 'vitest';
+import { loadAgentRoster } from './agentRoster';
 // @ts-expect-error Standalone packaged JavaScript CLI.
 import { runConfigure } from '../bin/configure.mjs';
 
@@ -19,6 +20,7 @@ function boundedAsk(reply: (question: string) => string | Promise<string>) {
   let count = 0;
   return async (question: string) => {
     if (++count > 40) throw Error('Fixture question limit');
+    if (question.startsWith('Use the built-in agent roster')) return ''; // Existing non-roster fixtures accept its default.
     return localAnswer(question, await reply(question));
   };
 }
@@ -28,6 +30,7 @@ function fixture() {
   return { root, output, questions, async run(answers: Array<string | Error>) {
     return runConfigure({ home: root, output: (text: string) => output.push(text), ask: async (text: string) => {
       questions.push(text);
+      if (text.startsWith('Use the built-in agent roster')) return ''; // New roster-specific fixtures below drive it explicitly.
       const answer = answers.shift();
       if (answer instanceof Error || answer === undefined) throw Error('synthetic EOF');
       return localAnswer(text, answer);
@@ -44,10 +47,13 @@ it('saves local defaults only after presenting a redacted preview and affirmativ
   expect(office.CORS_ORIGIN).toBe('http://localhost:3002');
   expect(office.DATA_SOURCE).toBe('cli');
   expect(office.PIXEL_CONTROL_TOKEN).toBeUndefined();
+  expect(loadAgentRoster(office.AGENT_ROSTER_PATH).agents).toHaveLength(8);
   expect(f.output.join('\n')).toContain('Preview');
   expect(f.output.join('\n')).toContain('Saved');
   expect(f.questions[f.questions.length - 1]).toMatch(/save.*\[y\/N\]/i);
   expect(f.output.join('\n')).toContain(process.platform === 'win32' ? "''" : "'\"'\"'");
+  const editInstruction = f.output.find(line => line.startsWith('Edit '));
+  expect(editInstruction).toContain(`\n${join(directory, 'agents.json')}\n`);
 });
 it('writes matching remote files with private access disabled for mutations and never prints their secrets', async () => {
   const f = fixture();
@@ -65,7 +71,19 @@ it('writes matching remote files with private access disabled for mutations and 
   expect(text).not.toContain(office.PIXEL_CONTROL_TOKEN);
   expect(text).not.toContain(office.INGEST_API_TOKEN);
   expect(text).toContain('--dry-run'); expect(text).toContain('operator.read');
+  expect(text).toContain(`\n${join(dir, 'office.env')}\n`);
   expect(text).not.toMatch(/connected successfully|connection verified/i);
+});
+it('prints apostrophe-containing prose paths verbatim while retaining shell-escaped startup arguments', async () => {
+  const f = fixture(); const directory = join(f.root, "O'Brien office");
+  await f.run(['', '', '', directory, '', '', 'yes', '', 'yes']);
+  const edit = f.output.find(line => line.startsWith('Edit '));
+  const access = f.output.find(line => line.startsWith('Private access still'));
+  expect(edit).toContain(`\n${join(directory, 'agents.json')}\n`);
+  expect(access).toContain(`\n${join(directory, 'office.env')}\n`);
+  expect(edit).not.toContain(process.platform === 'win32' ? "O''Brien" : "O'\"'\"'Brien");
+  expect(access).not.toContain(process.platform === 'win32' ? "O''Brien" : "O'\"'\"'Brien");
+  expect(f.output.join('\n')).toContain(process.platform === 'win32' ? "O''Brien office" : "O'\"'\"'Brien office");
 });
 it.each(['', 'no'])('defaults save confirmation to no (%j)', async confirmation => {
   const f = fixture(); await f.run(['', '', '', '', '', '', '', confirmation]);
@@ -106,7 +124,7 @@ it('presents the preview before attempting any filesystem mutation', async () =>
 it('defaults saved secrets outside a source checkout, in a new private home directory', async () => {
   const f = fixture(); const home = join(f.root, 'home'); const checkout = join(f.root, 'checkout');
   mkdirSync(home); mkdirSync(checkout);
-  const answers = ['remote', '', '', '', '', 'https://collector.example', 'C:\\Program Files\\OpenClaw\\openclaw.exe', 'yes', 'wss://gateway.example', 'yes'];
+  const answers = ['remote', '', '', '', '', 'https://collector.example', 'C:\\Program Files\\OpenClaw\\openclaw.exe', '', 'yes', 'wss://gateway.example', 'yes'];
   const moduleUrl = new URL('../bin/configure.mjs', import.meta.url).href;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `const {runConfigure}=await import(${JSON.stringify(moduleUrl)}); const answers=${JSON.stringify(answers)}; await runConfigure({home:${JSON.stringify(home)},output:()=>{},ask:async()=>{if(!answers.length)throw Error('Input exhausted');return answers.shift();}});`], { cwd: checkout, encoding: 'utf8', timeout: 5000 });
   expect(result.status, result.stderr).toBe(0);
@@ -222,17 +240,97 @@ it('retains an explicitly typed default-shaped state path through multiple desti
   expect(confirmations).toBe(3);
   expect(parseEnv(readFileSync(join(f.root, 'office-3', 'office.env'), 'utf8')).DATA_DIR).toBe(state);
 });
-it('explains an unrepresentable suggested data path before requiring an explicit one', async ({ skip }) => {
+it('retries an unrepresentable derived roster path at the destination prompt before DATA_DIR', async ({ skip }) => {
   // This real-filesystem fixture uses a double quote, which Windows filenames forbid.
   if (process.platform === 'win32') { skip(); return; }
-  const f = fixture(); let explained = false; let questions = 0;
+  const f = fixture(); let explained = false; let questions = 0; let destinations = 0;
   await runConfigure({ home: f.root, output: (text: string) => f.output.push(text), ask: async (question: string) => {
     if (++questions > 20) throw Error('Fixture question limit');
-    if (question.startsWith('New configuration directory')) return `O'Brien's "office"`;
-    if (question.startsWith('Stable absolute office DATA_DIR')) { explained = /cannot.*environment file/i.test(f.output.join('\n')); return join(f.root, 'state'); }
+    if (question.startsWith('New configuration directory')) return ++destinations === 1 ? `O'Brien's "office"` : 'safe-office';
+    if (question.startsWith('Stable absolute office DATA_DIR')) { expect(destinations).toBe(2); explained = /quotes|environment/i.test(f.output.join('\n')); return join(f.root, 'state'); }
     if (question.startsWith('Local OpenClaw')) return process.platform === 'win32' ? process.execPath : '';
     if (question.startsWith('Save these new files?')) return 'yes';
     return '';
   } });
   expect(explained).toBe(true);
+});
+
+it('guides custom ID/name entry with bounded count/duplicate retries and a literal preview', async () => {
+  const f = fixture(); const counts = ['0', '51', '2']; const secondIds = ['sub-worker', 'bad/id', 'researcher']; let questions = 0;
+  await runConfigure({ home: f.root, output: (text: string) => f.output.push(text), ask: async (question: string) => {
+    if (++questions > 30) throw Error('Fixture question limit');
+    if (question.startsWith('Local OpenClaw')) return process.platform === 'win32' ? process.execPath : '';
+    if (question.startsWith('Use the built-in agent roster')) return 'no';
+    if (question.startsWith('Number of agents')) return counts.shift()!;
+    if (question.startsWith('Agent 1 ID')) return 'sub-worker';
+    if (question.startsWith('Agent 1 display name')) return ' 研究 Assistant ';
+    if (question.startsWith('Agent 2 ID')) return secondIds.shift()!;
+    if (question.startsWith('Agent 2 display name')) return '<b>Research</b>';
+    if (question.startsWith('Save these new files?')) { expect(readdirSync(f.root)).toEqual([]); expect(f.output.join('\n')).toContain('sub-worker'); return 'yes'; }
+    return '';
+  } });
+  const directory = join(f.root, '.openclaw-pixel-agents-config');
+  expect(JSON.parse(readFileSync(join(directory, 'agents.json'), 'utf8'))).toEqual({ version: 1, agents: [{ id: 'sub-worker', name: '研究 Assistant' }, { id: 'researcher', name: '<b>Research</b>' }] });
+  expect(loadAgentRoster(join(directory, 'agents.json')).agents).toEqual([{ id: 'sub-worker', name: '研究 Assistant' }, { id: 'researcher', name: '<b>Research</b>' }]);
+  expect(parseEnv(readFileSync(join(directory, 'office.env'), 'utf8')).AGENT_ROSTER_PATH).toBe(join(directory, 'agents.json'));
+  expect(f.output.join('\n')).toMatch(/restart/i); expect(f.output.join('\n')).not.toMatch(/discovered|connection verified/i);
+});
+it.each(['Use the built-in agent roster', 'Number of agents', 'Agent 1 ID', 'Agent 1 display name'])('creates nothing when input ends at %s', async stage => {
+  const f = fixture(); let questions = 0;
+  await expect(runConfigure({ home: f.root, output: () => {}, ask: async (question: string) => {
+    if (++questions > 20) throw Error('Fixture question limit');
+    if (question.startsWith(stage)) throw Error('synthetic EOF');
+    if (question.startsWith('Local OpenClaw')) return process.platform === 'win32' ? process.execPath : '';
+    if (question.startsWith('Use the built-in agent roster')) return 'no';
+    if (question.startsWith('Number of agents')) return '1';
+    if (question.startsWith('Agent 1 ID')) return 'worker';
+    if (question.startsWith('Save these new files?')) return 'yes';
+    return '';
+  } })).rejects.toThrow(/cancel/i);
+  expect(readdirSync(f.root)).toEqual([]);
+});
+it('retains a custom roster and recomputes its path through a save-time collision', async () => {
+  const f = fixture(); let destinations = 0; let saves = 0; let idPrompts = 0; let questions = 0;
+  await runConfigure({ home: f.root, output: () => {}, ask: async (question: string) => {
+    if (++questions > 30) throw Error('Fixture question limit');
+    if (question.startsWith('New configuration directory')) return ++destinations === 1 ? 'raced-office' : 'final-office';
+    if (question.startsWith('Local OpenClaw')) return process.platform === 'win32' ? process.execPath : '';
+    if (question.startsWith('Use the built-in agent roster')) return 'no';
+    if (question.startsWith('Number of agents')) return '1';
+    if (question.startsWith('Agent 1 ID')) { idPrompts++; return 'worker'; }
+    if (question.startsWith('Agent 1 display name')) return 'Worker';
+    if (question.startsWith('Save these new files?')) { if (++saves === 1) mkdirSync(join(f.root, 'raced-office')); return 'yes'; }
+    return '';
+  } });
+  expect(idPrompts).toBe(1); expect(saves).toBe(2);
+  const dir = join(f.root, 'final-office');
+  expect(parseEnv(readFileSync(join(dir, 'office.env'), 'utf8')).AGENT_ROSTER_PATH).toBe(join(dir, 'agents.json'));
+  expect(JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents).toEqual([{ id: 'worker', name: 'Worker' }]);
+  expect(readdirSync(join(f.root, 'raced-office'))).toEqual([]);
+});
+it('retries control-bearing names without putting rejected text in the preview', async () => {
+  const f = fixture(); const names = ['rejected-marker\u001b[31m', 'rejected-marker\u2028name', 'Worker']; let namePrompts = 0;
+  await runConfigure({ home: f.root, output: (text: string) => f.output.push(text), ask: async (question: string) => {
+    if (question.startsWith('Local OpenClaw')) return process.platform === 'win32' ? process.execPath : '';
+    if (question.startsWith('Use the built-in agent roster')) return 'no';
+    if (question.startsWith('Agent 1 ID')) return 'worker';
+    if (question.startsWith('Agent 1 display name')) { if (++namePrompts > 3) throw Error('Fixture question limit'); return names.shift()!; }
+    if (question.startsWith('Save these new files?')) return 'yes';
+    return '';
+  } });
+  expect(namePrompts).toBe(3); expect(f.output.join('\n')).not.toMatch(/rejected-marker|\u001b|\u2028/);
+});
+it('accepts fifty explicitly entered IDs with default names', async () => {
+  const f = fixture(); let idCount = 0; let questions = 0;
+  await runConfigure({ home: f.root, output: () => {}, ask: async (question: string) => {
+    if (++questions > 120) throw Error('Fixture question limit');
+    if (question.startsWith('Local OpenClaw')) return process.platform === 'win32' ? process.execPath : '';
+    if (question.startsWith('Use the built-in agent roster')) return 'no';
+    if (question.startsWith('Number of agents')) return '50';
+    if (/^Agent \d+ ID/.test(question)) return `worker-${++idCount}`;
+    if (question.startsWith('Save these new files?')) return 'yes';
+    return '';
+  } });
+  const roster = loadAgentRoster(join(f.root, '.openclaw-pixel-agents-config', 'agents.json'));
+  expect(roster.agents).toHaveLength(50); expect(roster.agents[49]).toEqual({ id: 'worker-50', name: 'worker-50' });
 });

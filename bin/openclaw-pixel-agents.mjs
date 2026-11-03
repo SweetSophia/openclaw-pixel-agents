@@ -31,6 +31,8 @@ DATA_DIR defaults to ~/.openclaw-pixel-agents, outside the installed package.
 --generate-key prints a fresh task access key without changing configuration.
 setup prints configuration, roster and private-access instructions without changing files.
 configure interactively previews and saves a NEW private local/remote configuration bundle.
+It includes an editable agents.json; AGENT_ROSTER_PATH selects a custom roster at startup.
+Roster ID/name changes require an office restart, not a rebuild.
 It never overwrites existing configuration, starts services or pairs Gateway devices.
 
 Setup: https://github.com/SweetSophia/openclaw-pixel-agents#readme`);

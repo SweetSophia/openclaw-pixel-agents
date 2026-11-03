@@ -115,3 +115,21 @@ must be reported honestly rather than bypassed.
 Approval contract evidence is the installed OpenClaw 2026.10.3 native schemas and handlers, not live permission or mutation acceptance. Published npm **1.7.0** predates approvals as well as run history and Stop/Steer; this delivery does not publish a new package or roll out a runtime.
 
 Model selection uses native per-conversation semantics with the existing non-admin read/write grant and write opt-in. Known-busy/unknown activity blocks dispatch; work racing the idle check may still switch or restart. Explicit configured-default reset differs from pinning the same model, and a confirmed preference is not execution proof. Unknown outcomes never automatically replay; bounded process-local guards do not survive server restart. Published npm **1.7.0** also predates this implementation.
+
+## Installation and configurable rosters follow-up
+
+The approved [roster design](superpowers/specs/2026-11-03-configurable-agent-rosters-design.md)
+and [implementation plan](superpowers/plans/2026-11-03-configurable-agent-rosters.md)
+add guided defaults/custom IDs and public names, an editable `agents.json`, and
+startup-only `AGENT_ROSTER_PATH`. This is unreleased branch work, not a recorded
+merge, live rollout or npm publication. Published **1.7.0** does not include it.
+
+Local qualification on 2026-11-03 exercised the actual installed tarball's API
+and socket snapshots, configuration-only restarts, retained appearances and
+fail-closed invalid files. Linux PTY flows passed against source and the installed
+CLI. A real Docker image passed the reproducible read-only roster-mount probe;
+isolated, sandboxed Chrome exercised custom-agent selection, appearance saving,
+literal Unicode/HTML-looking names and desktop/narrow-screen layouts. These
+synthetic checks used no real Gateway credentials or tasks. They do not establish
+native Windows support, large-roster performance or live Gateway acceptance.
+Whole-branch review and protected PR checks remain separate delivery gates.

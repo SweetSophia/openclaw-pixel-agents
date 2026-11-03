@@ -2,9 +2,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlGateway, GatewayEvent } from './gatewayClient';
 import { createWorkspaceService } from './workspaceService';
+import { createAgentRegistry } from '../agentRoster';
 
-function fixture() {
-  const listeners = new Set<(event: GatewayEvent) => void>(); const registered = new Set(['cylena']);
+function fixture(registeredIds = ['cylena']) {
+  const listeners = new Set<(event: GatewayEvent) => void>(); const registered = new Set(registeredIds);
   let entry = { path: 'notes/report.txt', name: 'report.txt', kind: 'file', size: 5, updatedAtMs: 100 };
   let file = { ...entry, mimeType: 'text/plain', encoding: 'utf8', content: 'hello' };
   let listAgent = 'cylena'; let hook: (() => void) | undefined; let state = 'ready';
@@ -23,6 +24,17 @@ function fixture() {
     duringGet: (fn: () => void) => { hook = fn; }, disconnect: () => { for (const listener of listeners) listener({ event: 'source.invalidated', payload: null }); }, setState: (value: string) => { state = value; } };
 }
 describe('native workspace ownership and content', () => {
+  it('uses configured custom identities without widening workspace ownership', async () => {
+    const registry = createAgentRegistry({ version: 1, agents: [{ id: 'researcher', name: 'Research Assistant' }] }, new Map());
+    const f = fixture([...registry.keys()]);
+    try {
+      await expect(f.service.list('cylena', { path: 'notes', offset: 0 })).rejects.toMatchObject({ code: 'invalid-target' });
+      expect(f.request).not.toHaveBeenCalled();
+      await expect(f.service.list('researcher', { path: 'notes', offset: 0 })).rejects.toMatchObject({ code: 'invalid-source' });
+      f.setAgent('researcher');
+      expect((await f.service.list('researcher', { path: 'notes', offset: 0 })).agentId).toBe('researcher');
+    } finally { f.service.close(); }
+  });
   it('lists metadata without reading content or exposing host paths', async () => {
     const f = fixture(); const page = await f.list();
     expect(page).toMatchObject({ agentId: 'cylena', path: 'notes', entries: [{ name: 'report.txt' }], source: { state: 'current' } });
