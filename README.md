@@ -26,6 +26,8 @@ openclaw-pixel-agents --version
 
 ### Configure the office
 
+**Interactive alternative (unreleased source feature; not in npm 1.7.0):** builds containing the wizard provide `openclaw-pixel-agents configure`. It guides local OpenClaw or a remote collector, optionally prepares private Task/Gateway access, previews settings with secrets hidden, then asks before creating a new private configuration folder. It never overwrites an existing folder, starts services or pairs devices. See [guided configuration](docs/configuration.md#guided-configuration). The manual steps below work with the published package today.
+
 Create a file named **`pixel-agents.env`** in a folder you control, using a text editor, and save these settings:
 
 ```dotenv

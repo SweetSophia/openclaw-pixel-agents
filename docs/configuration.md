@@ -34,6 +34,40 @@ Install the prebuilt app using the [recommended quickstart](../README.md#quick-s
 
 This setup enables the public office/roster, not private tasks or sending. Private access requires its [own key and explicit Gateway pairing](task-access-setup.md); it is optional. The [fixed-roster limitation](../README.md#use-your-own-roster) still applies, and production does not insert demo agents when live data is unavailable. Use a trusted network or your own access controls; CORS is not a per-user login. For explanations without changing files or starting the app, run `openclaw-pixel-agents setup`.
 
+## Guided configuration
+
+**Unreleased source feature:** npm 1.7.0 does not contain `configure`. A source merge does not publish a new package. The [manual quickstart](#minimal-local-configuration-npm) remains available in the published release.
+
+In a build containing the wizard, run this in an interactive terminal, from a private folder outside your repository:
+
+```sh
+openclaw-pixel-agents configure
+```
+
+From a source checkout use `node bin/openclaw-pixel-agents.mjs configure`. No build is needed to generate configuration; build before starting the source office. `configure --help` works without a terminal. `setup` still only prints instructions.
+
+Choose local OpenClaw or a remote collector, the listener port, exact browser origin, stable absolute `DATA_DIR`, and a **new** configuration directory whose parent already exists. Local mode uses runtime PATH or your absolute executable path. Remote mode asks for the dashboard URL reachable by the collector (HTTPS except loopback) and the absolute OpenClaw path **on the OpenClaw host**; that path is not checked on the dashboard machine. The collector URL can differ from the browser origin behind a proxy. The wizard does not install a proxy, certificates, OpenClaw or a service, check connectivity, or change the [fixed roster](../README.md#use-your-own-roster).
+
+Optional private access generates a separate office key and records the Gateway endpoint. It leaves sending, approvals and the direct-Tailnet HTTP exception disabled. The wizard never requests Gateway bootstrap credentials or approves devices; complete [manual pairing](task-access-setup.md#3-pair-the-office-with-openclaw) separately for `operator.read`. Retrieve `PIXEL_CONTROL_TOKEN` privately from the saved `office.env` to unlock task details. Do not generate a different key for the browser.
+
+Review the redacted preview and answer yes to save. The default answer is no; cancellation creates nothing. Local mode writes `office.env`; remote mode also writes `collector.env` with an ingest secret matching the office file. Keys are never printed. Existing destinations, including empty folders and symlinks, are refused rather than merged or replaced. To reconfigure, generate into a different folder, then deliberately migrate settings; existing credentials are not imported or rotated. Keep your current config until you have verified the replacement.
+
+The new directory uses POSIX mode `0700` and files use `0600`. On Windows these modes do not establish private ACLs: restrict access to your account before use. Keep the whole bundle outside Git and share neither file publicly. Use a private parent directory you control. A sudden interruption during saving may leave a partial new folder; inspect it and choose another destination on retry. Values with control characters or unsupported quote combinations are rejected rather than silently changed.
+
+Start explicitly using the saved path (default folder shown):
+
+```sh
+openclaw-pixel-agents --env-file ./pixel-agents-config/office.env
+```
+
+For remote collection, securely transfer `collector.env` to the OpenClaw host. From the source checkout or installed package directory **on that host**, run the following with the copied file's real path:
+
+```sh
+node --env-file /absolute/path/to/collector.env collector/push-pixel-agents.mjs --dry-run
+```
+
+For a global npm install the package directory is `openclaw-pixel-agents` under the path printed by `npm root --global`. Dry-run executes OpenClaw but does not transmit a token or snapshot; see [collector setup](../collector/README.md) for scheduling. Use Node's `--env-file`, not shell `source`, for generated files. Existing environment variables override file values, so review your service/shell environment before startup. CORS does not restrict the listener or provide login authentication; retain your network access controls.
+
 ## Environment variables
 
 | Variable | Default | Purpose |

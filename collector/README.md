@@ -11,6 +11,8 @@ The collector reads live OpenClaw sessions on the OpenClaw host and sends them t
 
 ## Configure the collector
 
+The [guided configuration command](../docs/configuration.md#guided-configuration) (unreleased; not in npm 1.7.0) can generate a matching dashboard `office.env` and remote `collector.env`. Securely copy the latter to this OpenClaw host and keep it private. From this checkout's root or the installed package directory, test it with `node --env-file /absolute/path/to/collector.env collector/push-pixel-agents.mjs --dry-run`. For a global npm install, the package is under `openclaw-pixel-agents` in `npm root --global`. Use Node's env-file loader for wizard-generated files, not shell `source`; environment variables already set still take precedence. The wizard does not install a timer or verify remote connectivity. The manual alternative follows.
+
 1. Create a private local configuration for the dry run:
 
    ```bash

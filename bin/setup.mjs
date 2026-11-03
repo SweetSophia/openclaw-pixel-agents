@@ -2,6 +2,12 @@ export const setupInstructions = `OpenClaw Pixel Agents setup
 Run this guide again: openclaw-pixel-agents setup
 From a source checkout's root: node bin/openclaw-pixel-agents.mjs setup
 
+Interactive alternative in builds containing configure:
+  openclaw-pixel-agents configure
+It previews and creates a NEW private configuration bundle for local or remote
+OpenClaw, with optional private-access guidance. It never overwrites an existing
+directory, starts services or pairs devices. This setup command remains read-only.
+
 1. Create a private configuration file, for example pixel-agents.env:
 
    PORT=3001
