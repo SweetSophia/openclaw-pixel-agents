@@ -2,6 +2,8 @@
 
 The collector reads live OpenClaw sessions on the OpenClaw host and sends them to a pixel-agents server running in `ingest` mode. CLI collection and HTTP delivery are each limited to 10 seconds. systemd begins terminating an unexpected overrun after 25 seconds and force-stops the complete control group within 5 more seconds.
 
+Use one scheduled collector service per office/token and avoid overlapping manual runs or multiple producers. The current ingest API applies snapshots in arrival order, not source-time order; delayed concurrent pushes can replace newer state. This behavior predates the configuration wizard and is tracked in [#342](https://github.com/SweetSophia/openclaw-pixel-agents/issues/342). The supplied timer targets one service, but independent manual processes need their own serialization.
+
 ## Requirements
 
 - A Node.js version allowed by the repository's `package.json#engines`
@@ -10,6 +12,8 @@ The collector reads live OpenClaw sessions on the OpenClaw host and sends them t
 - HTTPS access to the pixel-agents server; plain HTTP is accepted only for `localhost`, `127.0.0.0/8`, and `::1`. Ingest redirects are rejected, so configure the final server URL directly.
 
 ## Configure the collector
+
+The [guided configuration command](../docs/configuration.md#guided-configuration) (unreleased; not in npm 1.7.0) can generate a matching dashboard `office.env` and remote `collector.env`. Securely copy the latter to this OpenClaw host and keep it private. From this checkout's root or the installed package directory, test it with `node --env-file /absolute/path/to/collector.env collector/push-pixel-agents.mjs --dry-run`. For a global npm install, the package is under `openclaw-pixel-agents` in `npm root --global`. Use Node's env-file loader for wizard-generated files, not shell `source`; environment variables already set still take precedence. The wizard does not install a timer or verify remote connectivity. The manual alternative follows.
 
 1. Create a private local configuration for the dry run:
 

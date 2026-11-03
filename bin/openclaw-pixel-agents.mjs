@@ -11,13 +11,16 @@ try {
     'generate-key': { type: 'boolean' }, 'env-file': { type: 'string' },
   }, allowPositionals: true });
   const setup = positionals.length === 1 && positionals[0] === 'setup';
-  if (positionals.length && !setup) throw Error('Unknown command. Use openclaw-pixel-agents --help.');
+  const configure = positionals.length === 1 && positionals[0] === 'configure';
+  if (positionals.length && !setup && !configure) throw Error('Unknown command. Use openclaw-pixel-agents --help.');
   if (setup && (values['env-file'] !== undefined || values['generate-key'] || values.version)) throw Error('Run setup without startup, key or version options.');
+  if (configure && (values['env-file'] !== undefined || values['generate-key'] || values.version)) throw Error('Run configure without startup, key or version options.');
   if (values.help) {
     console.log(`OpenClaw Pixel Agents
 
 Usage: openclaw-pixel-agents [--env-file /path/to/.env]
        openclaw-pixel-agents setup
+       openclaw-pixel-agents configure
        openclaw-pixel-agents --generate-key
        openclaw-pixel-agents --version
 
@@ -27,10 +30,14 @@ DATA_DIR defaults to ~/.openclaw-pixel-agents, outside the installed package.
 --env-file loads private configuration; existing environment variables win.
 --generate-key prints a fresh task access key without changing configuration.
 setup prints configuration, roster and private-access instructions without changing files.
+configure interactively previews and saves a NEW private local/remote configuration bundle.
+It never overwrites existing configuration, starts services or pairs Gateway devices.
 
 Setup: https://github.com/SweetSophia/openclaw-pixel-agents#readme`);
   } else if (setup) {
     console.log(setupInstructions);
+  } else if (configure) {
+    await (await import('./configure.mjs')).configure();
   } else if (values.version) {
     console.log(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
   } else if (values['generate-key']) {

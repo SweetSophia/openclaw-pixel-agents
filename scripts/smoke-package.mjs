@@ -7,8 +7,8 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
-import { parseArgs } from 'node:util';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs, parseEnv } from 'node:util';
 
 // Install the actual tarball with production dependencies, outside the checkout.
 // All state, credentials and processes below belong to this disposable fixture.
@@ -51,14 +51,14 @@ try {
   const [packed] = entries;
   assert.equal(packed.name, pkg.name); assert.equal(packed.version, pkg.version);
   const files = new Set(packed.files.map(file => file.path));
-  for (const required of ['bin/openclaw-pixel-agents.mjs', 'bin/setup.mjs', 'scripts/install-notice.mjs', 'dist/client/index.html',
+  for (const required of ['bin/openclaw-pixel-agents.mjs', 'bin/setup.mjs', 'bin/configure.mjs', 'bin/configure-values.mjs', 'bin/configure-files.mjs', 'scripts/install-notice.mjs', 'dist/client/index.html',
     'dist/server/server/index.js', 'dist/server/shared/characterRecipes.js',
     'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', '.env.example',
     'collector/.env.collector.example', 'LICENSE', 'README.md']) assert(files.has(required), `Missing ${required}`);
   for (const path of files) {
     assert(!/(^|\/)(data|node_modules|coverage|\.git|\.superpowers|\.worktrees)(\/|$)/.test(path), `Runtime/private path packed: ${path}`);
     assert(!/\.(test|spec)\.|\.map$|(^|\/)\.env($|\.(?!example$|collector\.example$))/.test(path), `Development/private file packed: ${path}`);
-    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|bin\/(openclaw-pixel-agents|setup)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
+    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
   }
   const tarball = join(destination, packed.filename);
   command([npmCli, 'install', '--prefix', consumer, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', `${pkg.name}@file:${tarball}`]);
@@ -67,6 +67,10 @@ try {
   assert.equal(command([launcher, '--version'], consumer).trim(), pkg.version);
   assert.equal(command([npmCli, 'exec', '--offline', '--prefix', consumer, '--', 'openclaw-pixel-agents', '--version'], consumer).trim(), pkg.version);
   assert.match(command([launcher, '--help'], consumer), /--generate-key/);
+  assert.match(command([launcher, 'configure', '--help'], consumer), /preview/);
+  const noninteractive = spawnSync(process.execPath, [launcher, 'configure'], { cwd: consumer, env, encoding: 'utf8', timeout: 5000 });
+  assert.equal(noninteractive.status, 1); assert.match(noninteractive.stderr, /interactive terminal/);
+  assert(!existsSync(join(home, '.openclaw-pixel-agents-config')), 'Noninteractive configure created configuration');
   const setup = command([launcher, 'setup'], consumer);
   for (const text of ['CORS_ORIGIN', 'DATA_DIR', 'operator.read', '--generate-key', '--env-file']) assert(setup.includes(text));
   assert.match(command([npmCli, 'exec', '--offline', '--prefix', consumer, '--', 'openclaw-pixel-agents', 'setup'], consumer), /OpenClaw Pixel Agents setup/);
@@ -86,8 +90,18 @@ try {
   const lease = createServer(); lease.listen(0, '127.0.0.1'); await once(lease, 'listening');
   const port = lease.address().port; await new Promise((accept, reject) => lease.close(error => error ? reject(error) : accept()));
   const origin = `http://127.0.0.1:${port}`;
-  const config = join(fixture, 'office.env');
-  await writeFile(config, `PORT=${port}\nCORS_ORIGIN=${origin}\nDATA_SOURCE=ingest\nINGEST_API_TOKEN=synthetic-package-fixture\n`, { mode: 0o600 });
+  const { runConfigure } = await import(pathToFileURL(join(installed, 'bin/configure.mjs')).href);
+  const answers = ['remote', String(port), origin, '', '', origin, process.execPath, 'no', 'yes'];
+  const wizardOutput = [];
+  await runConfigure({ home, output: text => wizardOutput.push(text), ask: async () => {
+    assert(answers.length, 'Wizard asked an unexpected question'); return answers.shift();
+  } });
+  const config = join(home, '.openclaw-pixel-agents-config', 'office.env');
+  const generated = parseEnv(await readFile(config, 'utf8'));
+  const collector = parseEnv(await readFile(join(home, '.openclaw-pixel-agents-config', 'collector.env'), 'utf8'));
+  assert.match(generated.INGEST_API_TOKEN, /^[a-f0-9]{64}$/);
+  assert.equal(generated.INGEST_API_TOKEN, collector.PIXEL_INGEST_TOKEN);
+  assert(!wizardOutput.join('\n').includes(generated.INGEST_API_TOKEN), 'Wizard printed its ingest secret');
   const start = async () => {
     logs = '';
     child = spawn(process.execPath, [launcher, '--env-file', config], { cwd: consumer, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -101,7 +115,7 @@ try {
     throw new Error(`Packed server did not start: ${logs}`);
   };
   const ingest = async () => assert.equal((await fetch(`${origin}/api/ingest/agents`, { method: 'POST',
-    headers: { Authorization: 'Bearer synthetic-package-fixture', 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${generated.INGEST_API_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessions: [] }), signal: AbortSignal.timeout(5000) })).status, 200);
   await start();
   const page = await fetch(origin); assert.equal(page.status, 200); assert.match(await page.text(), /id="root"/);
@@ -117,9 +131,9 @@ try {
   await ingest(); await stop(); await start(); await ingest();
   const { agents } = await (await fetch(`${origin}/api/agents`)).json();
   assert.deepEqual(agents.find(agent => agent.id === 'main').recipe, recipe);
-  const prefs = JSON.parse(await readFile(join(home, '.openclaw-pixel-agents', 'agent-prefs.json'), 'utf8'));
+  const prefs = JSON.parse(await readFile(join(generated.DATA_DIR, 'agent-prefs.json'), 'utf8'));
   assert.deepEqual(prefs.main.recipe, recipe);
-  console.log(`Package verified: ${pkg.name}@${pkg.version}; ${files.size} files, script-disabled setup, enabled install notice, production startup, assets, key generation, ingest and restart persistence.`);
+  console.log(`Package verified: ${pkg.name}@${pkg.version}; ${files.size} files, script-disabled setup, enabled install notice, guided configuration, production startup, assets, key generation, ingest and restart persistence.`);
   if (values['pack-destination']) console.log(`Tested tarball: ${tarball}`);
 } finally {
   await stop();

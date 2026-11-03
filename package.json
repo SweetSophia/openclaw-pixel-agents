@@ -9,6 +9,9 @@
   "files": [
     "bin/openclaw-pixel-agents.mjs",
     "bin/setup.mjs",
+    "bin/configure.mjs",
+    "bin/configure-values.mjs",
+    "bin/configure-files.mjs",
     "dist/client/**",
     "dist/server/server/**/*.js",
     "dist/server/shared/**/*.js",

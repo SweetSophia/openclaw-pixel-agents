@@ -126,6 +126,8 @@ screenshots and committed fixtures. Never send a real task as an automated check
 
 See [the release guide](docs/releases.md) for the `NPM_TOKEN` secret and stable GitHub Release publication. A pull request never publishes to npm.
 
+For guided-configuration changes, also test `node bin/openclaw-pixel-agents.mjs configure` in a real terminal, for local and remote modes and with optional private access. Explicitly choose disposable private paths for both the output directory and `DATA_DIR` instead of saving into your real home defaults. Confirm preview precedes any files, tokens stay hidden, default-no/EOF/Ctrl+C create nothing, existing destinations are refused, and saved files are private. Use synthetic endpoints and paths; the wizard must not execute OpenClaw or contact a Gateway. Run `npm run test:package` after building to exercise installed modules, generated config startup and matching ingest tokens with scripts disabled. Repeat the real-terminal check against the installed tarball; automated prompt tests are not terminal qualification. No real task or live pairing is needed.
+
 ## Code Style
 
 - **TypeScript** throughout (strict mode)
