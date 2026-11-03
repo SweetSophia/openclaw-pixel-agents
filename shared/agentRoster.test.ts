@@ -52,7 +52,14 @@ describe('versioned agent roster documents', () => {
     expect(() => parseAgentRoster(document([{ id: '-bad', name: 'Agent' }]))).toThrow(/agents\[0\].id:.*1–64/);
     expect(() => parseAgentRoster(document([{ id: 'worker', name: '\ud800' }]))).toThrow(/agents\[0\].name:.*well-formed/);
     const entry = { get id() { throw Error('synthetic-private-marker'); }, name: 'Agent' };
+    expect(() => parseAgentRoster(document([entry]))).toThrow(/agents\[0\].id/);
     try { parseAgentRoster(document([entry])); } catch (error) { expect(String(error)).not.toContain('synthetic-private-marker'); }
+  });
+  it('explains ASCII identity requirements without echoing labels', () => {
+    expect(() => parseAgentId('研究')).toThrow(/ASCII/);
+  });
+  it('explains the line-separator restriction without echoing labels', () => {
+    expect(() => parseAgentName('A\u2028B')).toThrow(/line separators/);
   });
   it('returns the existing default roster without shared mutable entries', () => {
     const first = createDefaultAgentRoster();

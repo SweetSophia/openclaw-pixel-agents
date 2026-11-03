@@ -72,6 +72,7 @@ it('writes matching remote files with private access disabled for mutations and 
   expect(text).not.toContain(office.PIXEL_CONTROL_TOKEN);
   expect(text).not.toContain(office.INGEST_API_TOKEN);
   expect(text).toContain('--dry-run'); expect(text).toContain('operator.read');
+  expect(text).toContain("Retrieve PIXEL_CONTROL_TOKEN privately from '");
   expect(text).not.toMatch(/connected successfully|connection verified/i);
 });
 it.each(['', 'no'])('defaults save confirmation to no (%j)', async confirmation => {

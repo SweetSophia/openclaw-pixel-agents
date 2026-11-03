@@ -2,8 +2,8 @@
 
 const AGENT_ROSTER_LIMITS = Object.freeze({ maxAgents: 50, maxBytes: 65536, maxIdLength: 64, maxNameLength: 128 });
 const RESERVED_IDS = new Set(['__proto__', 'constructor', 'prototype']);
-const ID_REQUIREMENTS = `use 1–${AGENT_ROSTER_LIMITS.maxIdLength} letters/digits/_/-, starting with a letter or digit, and no reserved identities`;
-const NAME_REQUIREMENTS = `use 1–${AGENT_ROSTER_LIMITS.maxNameLength} well-formed Unicode code units without surrounding whitespace or control characters`;
+const ID_REQUIREMENTS = `use 1–${AGENT_ROSTER_LIMITS.maxIdLength} ASCII letters/digits/_/-, starting with a letter or digit, and no reserved identities`;
+const NAME_REQUIREMENTS = `use 1–${AGENT_ROSTER_LIMITS.maxNameLength} well-formed Unicode code units without surrounding whitespace, control characters or line separators`;
 const DEFAULT_AGENTS = [
   ['main', 'Shodan'], ['miku', 'Miku'], ['chi', 'Chi'], ['sysauxilia', 'Sysauxilia'],
   ['descartes', 'Descartes'], ['cyberlogis', 'Cyberlogis'], ['cylena', 'Cylena'], ['cybera', 'Cybera'],

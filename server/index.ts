@@ -298,11 +298,12 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const raw = readFileSync(PERSIST_PATH, "utf-8");
     const data = JSON.parse(raw);
     const map = new Map<string, PersistedPrefs>();
+    let invalidAgentIdCount = 0;
 
     for (const [k, v] of Object.entries(data)) {
       try { parseAgentId(k); }
       catch {
-        logger.warn({ subsystem: "prefs" }, "skipping persisted prefs with invalid agent ID");
+        invalidAgentIdCount++;
         continue;
       }
       const prefs = parsePersistedPrefs(v);
@@ -312,6 +313,7 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
         logger.warn({ agentId: k, subsystem: "prefs" }, "skipping invalid persisted prefs");
       }
     }
+    if (invalidAgentIdCount > 0) logger.warn({ subsystem: "prefs", invalidAgentIdCount }, "skipping persisted prefs with invalid agent IDs");
     return map;
   } catch (err) {
     logger.warn({ err, subsystem: "prefs" }, "failed to load persisted prefs");

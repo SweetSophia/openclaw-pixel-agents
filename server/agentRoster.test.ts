@@ -83,8 +83,11 @@ it.each([
 it('keeps the primary file diagnostic if descriptor cleanup also fails', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
   const f = fixture();
-  vi.mocked(fs.closeSync).mockImplementationOnce(fd => { actual.closeSync(fd); throw Error('synthetic-close-secret'); });
+  let closedDescriptor = -1;
+  vi.mocked(fs.closeSync).mockImplementationOnce(fd => { closedDescriptor = fd; actual.closeSync(fd); throw Error('synthetic-close-secret'); });
   expect(() => loadAgentRoster(f.root)).toThrow(/regular file/);
+  expect(closedDescriptor).toBeGreaterThanOrEqual(0);
+  expect(() => actual.fstatSync(closedDescriptor)).toThrow(/EBADF/);
 });
 it('still fails closed if closing an otherwise readable file fails', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');

@@ -80,13 +80,15 @@ it('does not retain invalid persisted keys or invalid preference records', async
   expect(Object.keys(prefs).sort()).toEqual(['main', 'researcher', 'retained']);
 });
 it('warns about rejected persisted identities without logging the untrusted key', () => {
-  writeFileSync(join(dataDir, 'agent-prefs.json'), JSON.stringify({ ['synthetic-hidden-key\u001b']: { pixelEnabled: false } }));
+  writeFileSync(join(dataDir, 'agent-prefs.json'), JSON.stringify({ ['synthetic-hidden-key\u001b']: { pixelEnabled: false }, 'another/invalid': { pixelEnabled: false } }));
   const module = fileURLToPath(new URL('./index.ts', import.meta.url));
   const result = spawnSync(process.execPath, ['--require', 'tsx/cjs', '-e', `const {io}=require(${JSON.stringify(module)});io.close();`],
     { env: { ...process.env, LOG_LEVEL: 'warn' }, encoding: 'utf8', timeout: 5000 });
   expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
   expect(result.stdout).toMatch(/invalid agent ID/);
   expect(result.stdout + result.stderr).not.toContain('synthetic-hidden-key');
+  const warnings = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+  expect(warnings).toEqual([expect.objectContaining({ subsystem: 'prefs', invalidAgentIdCount: 2 })]);
 });
 it('keeps a custom shodan seat through removal, unrelated layout save, restart and re-addition', async () => {
   setRoster([{ id: 'main', name: 'Coordinator' }, { id: 'shodan', name: 'Custom' }]);
