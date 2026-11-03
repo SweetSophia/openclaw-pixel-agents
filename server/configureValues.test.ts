@@ -24,7 +24,7 @@ it('builds a local office using stable defaults without enabling private access'
   expect(office.CORS_ORIGIN).toBe('http://localhost:3001');
   expect(office.DATA_SOURCE).toBe('cli');
   expect(office.DATA_DIR).toBe(join(context.home, '.openclaw-pixel-agents-config', 'data'));
-  expect(office.OPENCLAW_BIN).toBeUndefined();
+  expect(office.OPENCLAW_BIN).toBe(process.platform === 'win32' ? process.execPath : undefined);
   expect(loadControlConfig(office, context.home).enabled).toBe(false);
 });
 

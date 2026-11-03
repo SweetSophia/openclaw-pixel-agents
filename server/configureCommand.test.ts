@@ -222,7 +222,9 @@ it('retains an explicitly typed default-shaped state path through multiple desti
   expect(confirmations).toBe(3);
   expect(parseEnv(readFileSync(join(f.root, 'office-3', 'office.env'), 'utf8')).DATA_DIR).toBe(state);
 });
-it('explains an unrepresentable suggested data path before requiring an explicit one', async () => {
+it('explains an unrepresentable suggested data path before requiring an explicit one', async ({ skip }) => {
+  // This real-filesystem fixture uses a double quote, which Windows filenames forbid.
+  if (process.platform === 'win32') { skip(); return; }
   const f = fixture(); let explained = false; let questions = 0;
   await runConfigure({ home: f.root, output: (text: string) => f.output.push(text), ask: async (question: string) => {
     if (++questions > 20) throw Error('Fixture question limit');
