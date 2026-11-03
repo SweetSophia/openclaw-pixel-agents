@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,7 @@ function fixture() {
 it('saves local defaults only after presenting a redacted preview and affirmative confirmation', async () => {
   const f = fixture();
   await f.run(['', '3002', '', '', '', '', '', 'yes']);
-  const file = join(f.root, 'pixel-agents-config', 'office.env');
+  const file = join(f.root, '.openclaw-pixel-agents-config', 'office.env');
   const office = parseEnv(readFileSync(file, 'utf8'));
   expect(office.CORS_ORIGIN).toBe('http://localhost:3002');
   expect(office.DATA_SOURCE).toBe('cli');
@@ -41,7 +41,7 @@ it('saves local defaults only after presenting a redacted preview and affirmativ
 it('writes matching remote files with private access disabled for mutations and never prints their secrets', async () => {
   const f = fixture();
   await f.run(['remote', '', 'https://office.example', '', '', 'https://collector.example/base', '/opt/bin/openclaw', 'yes', 'wss://gateway.example', 'y']);
-  const dir = join(f.root, 'pixel-agents-config');
+  const dir = join(f.root, '.openclaw-pixel-agents-config');
   const office = parseEnv(readFileSync(join(dir, 'office.env'), 'utf8'));
   const collector = parseEnv(readFileSync(join(dir, 'collector.env'), 'utf8'));
   expect(office.CORS_ORIGIN).toBe('https://office.example');
@@ -89,7 +89,21 @@ it('presents the preview before attempting any filesystem mutation', async () =>
     if (index === 7) expect(f.output.join('\n')).toContain('Preview');
     return answers[index++];
   } });
-  expect(readdirSync(f.root)).toEqual(['pixel-agents-config']);
+  expect(readdirSync(f.root)).toEqual(['.openclaw-pixel-agents-config']);
+});
+it('defaults saved secrets outside a source checkout, in a new private home directory', async () => {
+  const f = fixture(); const home = join(f.root, 'home'); const checkout = join(f.root, 'checkout');
+  mkdirSync(home); mkdirSync(checkout);
+  const answers = ['remote', '', '', '', '', 'https://collector.example', 'C:\\Program Files\\OpenClaw\\openclaw.exe', 'yes', 'wss://gateway.example', 'yes'];
+  await runConfigure({ home, cwd: checkout, output: () => {}, ask: async () => {
+    if (!answers.length) throw Error('Test input exhausted');
+    return answers.shift();
+  } });
+  expect(readdirSync(checkout)).toEqual([]);
+  expect(readdirSync(home)).toEqual(['.openclaw-pixel-agents-config']);
+  const dir = join(home, '.openclaw-pixel-agents-config');
+  expect(parseEnv(readFileSync(join(dir, 'collector.env'), 'utf8')).OPENCLAW_BIN).toBe('C:\\Program Files\\OpenClaw\\openclaw.exe');
+  expect(parseEnv(readFileSync(join(dir, 'office.env'), 'utf8')).PIXEL_CONTROL_TOKEN).toMatch(/^[a-f0-9]{64}$/);
 });
 it.each([['configure'], ['configure', '--env-file', 'missing.env'], ['configure', '--generate-key'], ['configure', '--version'], ['configure', 'extra']].map(args => ({ args })))('fails safely without a terminal or with incompatible options: $args', ({ args }) => {
   const f = fixture();

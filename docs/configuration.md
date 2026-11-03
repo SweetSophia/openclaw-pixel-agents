@@ -46,7 +46,7 @@ openclaw-pixel-agents configure
 
 From a source checkout use `node bin/openclaw-pixel-agents.mjs configure`. No build is needed to generate configuration; build before starting the source office. `configure --help` works without a terminal. `setup` still only prints instructions.
 
-Choose local OpenClaw or a remote collector, the listener port, exact browser origin, stable absolute `DATA_DIR`, and a **new** configuration directory whose parent already exists. Local mode uses runtime PATH or your absolute executable path. Remote mode asks for the dashboard URL reachable by the collector (HTTPS except loopback) and the absolute OpenClaw path **on the OpenClaw host**; that path is not checked on the dashboard machine. The collector URL can differ from the browser origin behind a proxy. The wizard does not install a proxy, certificates, OpenClaw or a service, check connectivity, or change the [fixed roster](../README.md#use-your-own-roster).
+Choose local OpenClaw or a remote collector, the listener port, exact browser origin, stable absolute `DATA_DIR`, and a **new** configuration directory whose parent already exists. The default is `.openclaw-pixel-agents-config` under your home directory, outside an ordinary source checkout. Local mode uses runtime PATH or your absolute executable path. Remote mode asks for the dashboard URL reachable by the collector (HTTPS except loopback) and the absolute OpenClaw path **on the OpenClaw host**; POSIX, Windows drive and UNC forms are accepted independently of the dashboard OS, but actual execution is not checked. The collector URL can differ from the browser origin behind a proxy. The wizard does not install a proxy, certificates, OpenClaw or a service, check connectivity, or change the [fixed roster](../README.md#use-your-own-roster).
 
 Optional private access generates a separate office key and records the Gateway endpoint. It leaves sending, approvals and the direct-Tailnet HTTP exception disabled. The wizard never requests Gateway bootstrap credentials or approves devices; complete [manual pairing](task-access-setup.md#3-pair-the-office-with-openclaw) separately for `operator.read`. Retrieve `PIXEL_CONTROL_TOKEN` privately from the saved `office.env` to unlock task details. Do not generate a different key for the browser.
 
@@ -54,10 +54,10 @@ Review the redacted preview and answer yes to save. The default answer is no; ca
 
 The new directory uses POSIX mode `0700` and files use `0600`. On Windows these modes do not establish private ACLs: restrict access to your account before use. Keep the whole bundle outside Git and share neither file publicly. Use a private parent directory you control. A sudden interruption during saving may leave a partial new folder; inspect it and choose another destination on retry. Values with control characters or unsupported quote combinations are rejected rather than silently changed.
 
-Start explicitly using the saved path (default folder shown):
+Start explicitly using the absolute, quoted command printed by the wizard. POSIX default example below; on Windows use its printed PowerShell command:
 
 ```sh
-openclaw-pixel-agents --env-file ./pixel-agents-config/office.env
+openclaw-pixel-agents --env-file ~/.openclaw-pixel-agents-config/office.env
 ```
 
 For remote collection, securely transfer `collector.env` to the OpenClaw host. From the source checkout or installed package directory **on that host**, run the following with the copied file's real path:

@@ -13,7 +13,7 @@ const remote = { mode: 'remote', collectorUrl: 'https://ingest.example/office', 
 
 it('builds a local office using stable defaults without enabling private access', () => {
   const result = buildConfiguration({}, context);
-  expect(result.directory).toBe(join(context.cwd, 'pixel-agents-config'));
+  expect(result.directory).toBe(join(context.home, '.openclaw-pixel-agents-config'));
   expect(Object.keys(result.files)).toEqual(['office.env']);
   const office = parseEnv(result.files['office.env']);
   expect(office.PORT).toBe('3001');
@@ -71,6 +71,13 @@ it('requires remote host executable and Gateway paths explicitly without interpr
   expect(() => buildConfiguration({ dataDir: './data' }, context)).toThrow(/absolute/i);
   expect(() => buildConfiguration({ openclawBin: './openclaw' }, context)).toThrow(/absolute/i);
   expect(() => buildConfiguration({ mode: 'auto' }, context)).toThrow(/mode/i);
+});
+it.each(['/opt/openclaw/bin/openclaw', 'C:\\Program Files\\OpenClaw\\openclaw.exe', 'D:/tools/openclaw.exe', '\\\\host\\share\\openclaw.exe'])('accepts an absolute remote-host path independently of the dashboard OS: %s', openclawBin => {
+  const result = buildConfiguration({ ...remote, openclawBin }, context);
+  expect(parseEnv(result.files['collector.env']).OPENCLAW_BIN).toBe(openclawBin);
+});
+it.each(['openclaw', './openclaw', 'C:relative.exe', '\\root-relative.exe'])('rejects relative remote-host executable %s', openclawBin => {
+  expect(() => buildConfiguration({ ...remote, openclawBin }, context)).toThrow(/absolute/i);
 });
 it.each([' spaced # value $HOME `command` ', "a'b", 'a"b', 'C:\\Users\\Name\\office', 'ends\\', ''])('round-trips dotenv scalar %j without shell expansion', value => {
   expect(parseEnv(`VALUE=${dotenvValue(value)}\n`).VALUE).toBe(value);

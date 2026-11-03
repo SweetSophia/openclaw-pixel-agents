@@ -70,7 +70,7 @@ try {
   assert.match(command([launcher, 'configure', '--help'], consumer), /preview/);
   const noninteractive = spawnSync(process.execPath, [launcher, 'configure'], { cwd: consumer, env, encoding: 'utf8', timeout: 5000 });
   assert.equal(noninteractive.status, 1); assert.match(noninteractive.stderr, /interactive terminal/);
-  assert(!existsSync(join(consumer, 'pixel-agents-config')), 'Noninteractive configure created configuration');
+  assert(!existsSync(join(home, '.openclaw-pixel-agents-config')), 'Noninteractive configure created configuration');
   const setup = command([launcher, 'setup'], consumer);
   for (const text of ['CORS_ORIGIN', 'DATA_DIR', 'operator.read', '--generate-key', '--env-file']) assert(setup.includes(text));
   assert.match(command([npmCli, 'exec', '--offline', '--prefix', consumer, '--', 'openclaw-pixel-agents', 'setup'], consumer), /OpenClaw Pixel Agents setup/);
@@ -96,9 +96,9 @@ try {
   await runConfigure({ home, cwd: consumer, output: text => wizardOutput.push(text), ask: async () => {
     assert(answers.length, 'Wizard asked an unexpected question'); return answers.shift();
   } });
-  const config = join(consumer, 'pixel-agents-config', 'office.env');
+  const config = join(home, '.openclaw-pixel-agents-config', 'office.env');
   const generated = parseEnv(await readFile(config, 'utf8'));
-  const collector = parseEnv(await readFile(join(consumer, 'pixel-agents-config', 'collector.env'), 'utf8'));
+  const collector = parseEnv(await readFile(join(home, '.openclaw-pixel-agents-config', 'collector.env'), 'utf8'));
   assert.match(generated.INGEST_API_TOKEN, /^[a-f0-9]{64}$/);
   assert.equal(generated.INGEST_API_TOKEN, collector.PIXEL_INGEST_TOKEN);
   assert(!wizardOutput.join('\n').includes(generated.INGEST_API_TOKEN), 'Wizard printed its ingest secret');

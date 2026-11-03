@@ -35,9 +35,12 @@ an office can generate a separate bundle and deliberately migrate values manuall
 2. Ask for local or remote mode, listener port (default `3001`), exact browser
    origin (default `http://localhost:<port>`), stable absolute office data path
    (default `~/.openclaw-pixel-agents` resolved to the home directory), and new
-   output directory (default `./pixel-agents-config`, resolved absolutely).
+   output directory (default `.openclaw-pixel-agents-config` under the user's home,
+   outside an ordinary source checkout; changed after independent security review).
 3. Local: allow the default `openclaw` resolved through runtime PATH or a supplied
-   absolute `OPENCLAW_BIN`. Remote: ask for the dashboard's collector-accessible
+   absolute `OPENCLAW_BIN`. Remote: accept fully absolute POSIX, Windows drive and
+   UNC executable paths independently of the dashboard OS; actual host execution
+   remains unverified. Ask for the dashboard's collector-accessible
    base URL and the absolute OpenClaw executable path on the remote host. Do not
    claim to verify a remote path. Validate collector URL with the collector's
    existing `getIngestEndpoint` policy. Generate an independent cryptographically

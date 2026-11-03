@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { buildConfiguration, dotenvValue, safeText, validateAbsolutePath, validateCollectorUrl,
-  validateGatewayUrl, validateOrigin, validatePort } from './configure-values.mjs';
+  validateGatewayUrl, validateOrigin, validatePort, validateRemoteExecutablePath } from './configure-values.mjs';
 import { writeConfigurationBundle } from './configure-files.mjs';
 
 function shellPath(value) {
@@ -33,7 +33,7 @@ export async function runConfigure({ ask, output, home, cwd }) {
   const origin = await prompt('Exact browser origin (no trailing slash)', `http://localhost:${port}`, validateOrigin);
   output('The browser origin does not restrict the listener or provide login authentication. Use a firewall/reverse proxy for network exposure.');
   const dataDir = await prompt('Stable absolute office DATA_DIR (use a different path for each independent office)', join(home, '.openclaw-pixel-agents'), validateAbsolutePath);
-  const directory = await prompt('New configuration directory (parent must already exist)', resolve(cwd, 'pixel-agents-config'), value => {
+  const directory = await prompt('New configuration directory (parent must already exist)', join(home, '.openclaw-pixel-agents-config'), value => {
     dotenvValue(value); return resolve(cwd, value);
   });
   let collectorUrl;
@@ -41,7 +41,7 @@ export async function runConfigure({ ask, output, home, cwd }) {
   if (mode === 'remote') {
     output('Collector settings belong on the OpenClaw host. Its executable path is not checked on this machine.');
     collectorUrl = await prompt('Dashboard base URL reachable by the collector', '', validateCollectorUrl);
-    openclawBin = await prompt('Absolute OpenClaw executable path on that host', '', validateAbsolutePath);
+    openclawBin = await prompt('Absolute OpenClaw executable path on that host', '', validateRemoteExecutablePath);
   } else {
     openclawBin = await prompt('Local OpenClaw executable (openclaw uses runtime PATH)', 'openclaw', value => value === 'openclaw' ? value : validateAbsolutePath(value));
   }

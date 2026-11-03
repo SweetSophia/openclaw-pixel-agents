@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { parseEnv } from 'node:util';
 import { getIngestEndpoint } from '../collector/push-pixel-agents.mjs';
 
@@ -41,6 +41,16 @@ export function validateAbsolutePath(value) {
   return value;
 }
 
+export function validateRemoteExecutablePath(value) {
+  dotenvValue(value);
+  // The executable belongs to the collector's host, not this dashboard's OS.
+  const windowsQualified = /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(value);
+  if (!posix.isAbsolute(value) && !(windowsQualified && win32.isAbsolute(value))) {
+    throw Error('Use a fully absolute path on the remote host (POSIX, Windows drive or UNC path).');
+  }
+  return value;
+}
+
 export function validateCollectorUrl(value) {
   safeText(value);
   try {
@@ -72,7 +82,7 @@ export function buildConfiguration(answers, { home, cwd }) {
     DATA_SOURCE: mode === 'remote' ? 'ingest' : 'cli',
     CONTROL_SEND_ENABLED: 'false', CONTROL_APPROVALS_ENABLED: 'false', CONTROL_ALLOW_TAILNET_HTTP: 'false',
   };
-  const directoryInput = safeText(answers.directory ?? 'pixel-agents-config');
+  const directoryInput = safeText(answers.directory ?? join(home, '.openclaw-pixel-agents-config'));
   if (!directoryInput.trim()) throw Error('Choose a new output directory.');
   const directory = validateAbsolutePath(resolve(cwd, directoryInput));
   let collector;
@@ -80,7 +90,7 @@ export function buildConfiguration(answers, { home, cwd }) {
     collector = {
       PIXEL_AGENTS_URL: validateCollectorUrl(answers.collectorUrl ?? ''),
       PIXEL_INGEST_TOKEN: randomBytes(32).toString('hex'),
-      OPENCLAW_BIN: validateAbsolutePath(answers.openclawBin ?? ''),
+      OPENCLAW_BIN: validateRemoteExecutablePath(answers.openclawBin ?? ''),
     };
     office.INGEST_API_TOKEN = collector.PIXEL_INGEST_TOKEN;
   } else if (answers.openclawBin && answers.openclawBin !== 'openclaw') {
