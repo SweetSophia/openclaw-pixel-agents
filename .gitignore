@@ -6,6 +6,7 @@ coverage/
 office.env
 collector.env
 pixel-agents-config/
+.openclaw-pixel-agents-config/
 *.log
 .DS_Store
 

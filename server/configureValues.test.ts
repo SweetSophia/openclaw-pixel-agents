@@ -3,12 +3,16 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { expect, it } from 'vitest';
 // @ts-expect-error Standalone packaged JavaScript CLI.
-import { buildConfiguration, dotenvValue } from '../bin/configure-values.mjs';
+import { buildConfiguration as buildActualConfiguration, dotenvValue } from '../bin/configure-values.mjs';
 // @ts-expect-error Standalone packaged collector.
 import { getIngestEndpoint } from '../collector/push-pixel-agents.mjs';
 import { loadControlConfig } from './control/config';
 
 const context = { home: join(process.cwd(), 'synthetic home'), cwd: process.cwd() };
+function buildConfiguration(answers: Record<string, unknown>, environment: { home: string }) {
+  // Supply a directly executable synthetic path for unrelated policy tests on Windows.
+  return buildActualConfiguration({ ...(process.platform === 'win32' ? { openclawBin: process.execPath } : {}), ...answers }, environment);
+}
 const remote = { mode: 'remote', collectorUrl: 'https://ingest.example/office', openclawBin: '/opt/openclaw/bin/openclaw' };
 
 it('builds a local office using stable defaults without enabling private access', () => {

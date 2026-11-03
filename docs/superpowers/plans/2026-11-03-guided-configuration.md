@@ -34,7 +34,7 @@
 **Files:** Create `bin/configure-values.mjs`, `bin/configure-files.mjs`, `server/configureValues.test.ts`, `server/configureFiles.test.ts`.
 
 **Interfaces:**
-- `buildConfiguration(answers, { home, cwd })` consumes plain validated-answer candidates and returns `{ directory, files, preview, mode, privateAccess }`; `files` maps fixed filenames to dotenv strings. Answers use `mode`, `port`, `origin`, `dataDir`, `directory`, `openclawBin`, `collectorUrl`, `privateAccess`, `gatewayUrl`.
+- `buildConfiguration(answers, { home })` consumes plain validated-answer candidates and returns `{ directory, files, preview, mode, privateAccess }`; `files` maps fixed filenames to dotenv strings. Answers use `mode`, `port`, `origin`, `dataDir`, `directory`, `openclawBin`, `collectorUrl`, `privateAccess`, `gatewayUrl`.
 - `writeConfigurationBundle({ directory, files })` synchronously creates only that new directory/files; returns absolute written paths or throws a sanitized failure. No existing parent creation.
 - `dotenvValue(value)` returns a safely quoted, round-tripping dotenv scalar or rejects unsupported/control-containing text. `preview` never contains actual generated keys.
 
@@ -52,7 +52,7 @@
 **Files:** Create `bin/configure.mjs`, `server/configureCommand.test.ts`; modify `bin/openclaw-pixel-agents.mjs`, `bin/setup.mjs`, `package.json`, `scripts/smoke-package.mjs`, `server/packageCommand.test.ts`, `README.md`, `docs/configuration.md`, `collector/README.md`, and `CONTRIBUTING.md` only where new-command verification instructions belong.
 
 **Interfaces:**
-- `runConfigure({ ask, output, home, cwd })` runs the session; `ask(question)` resolves a line or rejects cancellation/EOF, `output(text)` prints only non-secret text. Returns normally on refusal and after successful write; validation repeats the relevant prompt.
+- `runConfigure({ ask, output, home })` runs the session; `ask(question)` resolves a line or rejects cancellation/EOF, `output(text)` prints only non-secret text. Returns normally on refusal and after successful write; validation repeats the relevant prompt.
 - `configure()` owns real terminal checks/readline lifecycle, delegates to `runConfigure`, and closes terminal resources on every exit. No test-only production seams beyond these natural terminal boundaries.
 - Consumes Task 1's exact builder/writer results. Launcher dispatches only a sole `configure` positional command with no startup/key/version options; `configure --help` prints command usage without needing a TTY or creating files.
 

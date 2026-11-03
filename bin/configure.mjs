@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
-import { lstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { buildConfiguration, defaultBrowserOrigin, resolveConfigurationDirectory, safeText, validateAbsolutePath, validateCollectorUrl,
   validateGatewayUrl, validateLocalExecutable, validateOrigin, validatePort, validateRemoteExecutablePath } from './configure-values.mjs';
@@ -10,17 +10,21 @@ function shellPath(value) {
   return process.platform === 'win32' ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
-export async function runConfigure({ ask, output, home, cwd }) {
+export async function runConfigure({ ask, output, home }) {
   output('Create a NEW configuration bundle. Existing configuration and credentials are not read or changed.\nNo services, OpenClaw commands, network checks or device approvals will run.');
-  const prompt = async (label, fallback, validate = value => value) => {
+  const promptAnswer = async (label, fallback, validate = value => value) => {
     for (;;) {
       let raw;
       try { raw = await ask(`${label}${fallback ? ` [${fallback}]` : ''}: `); }
       catch { throw Error('Configuration cancelled. No configuration was saved.'); }
-      try { return validate(safeText(raw).trim() || fallback); }
+      try {
+        const answer = safeText(raw).trim();
+        return { value: validate(answer || fallback), usedFallback: answer === '' };
+      }
       catch (error) { output(error.message); }
     }
   };
+  const prompt = async (label, fallback, validate) => (await promptAnswer(label, fallback, validate)).value;
   const yesNo = value => {
     if (/^(y|yes)$/i.test(value)) return true;
     if (/^(n|no)$/i.test(value)) return false;
@@ -39,15 +43,19 @@ export async function runConfigure({ ask, output, home, cwd }) {
   const destination = async () => {
     directory = await prompt('New configuration directory (relative paths start under home; parent must already exist)', join(home, '.openclaw-pixel-agents-config'), value => {
       const path = resolveConfigurationDirectory(value, home);
+      try { if (!statSync(dirname(path)).isDirectory()) throw Error(); }
+      catch { throw Error('The destination parent must already exist and be an accessible directory.'); }
       try { lstatSync(path); }
       catch (error) { if (error.code === 'ENOENT') return path; throw Error('Cannot inspect this destination; check its parent and permissions.'); }
       throw Error('Destination already exists; choose a new directory.');
     });
     const suggested = dataDirWasDefault ? join(directory, 'data') : dataDir;
     let fallback = suggested;
-    try { validateAbsolutePath(fallback); } catch { fallback = ''; }
-    dataDir = await prompt('Stable absolute office DATA_DIR (reuse existing state only deliberately)', fallback, validateAbsolutePath);
-    dataDirWasDefault = dataDir === join(directory, 'data');
+    try { validateAbsolutePath(fallback); }
+    catch { output('The suggested data path cannot be stored in an environment file; enter an absolute DATA_DIR.'); fallback = ''; }
+    const answer = await promptAnswer('Stable absolute office DATA_DIR (reuse existing state only deliberately)', fallback, validateAbsolutePath);
+    dataDir = answer.value;
+    dataDirWasDefault = dataDirWasDefault && answer.usedFallback;
   };
   await destination();
   let collectorUrl;
@@ -68,15 +76,15 @@ export async function runConfigure({ ask, output, home, cwd }) {
   }
   let paths;
   for (;;) {
-    const plan = buildConfiguration({ mode, port, origin, dataDir, directory, collectorUrl, openclawBin, privateAccess, gatewayUrl }, { home, cwd });
+    const plan = buildConfiguration({ mode, port, origin, dataDir, directory, collectorUrl, openclawBin, privateAccess, gatewayUrl }, { home });
     output(`Preview (secrets redacted):\n\n${plan.preview}\n\nNothing has been saved or connected. Keep the whole bundle outside Git, in a private parent directory you control. A sudden interruption during saving can leave a partial NEW bundle; retry with another directory, never overwrite it.`);
     if (process.platform === 'win32') output('Windows: POSIX file modes do not ensure ACL privacy. Secure the configuration directory to your account before using or transferring these secret files.');
     const save = await prompt('Save these new files? [y/N]', 'no', yesNo);
     if (!save) { output('Cancelled. No configuration was saved.'); return; }
     try { paths = writeConfigurationBundle(plan); break; }
     catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      output('Destination was created by another process. Choose a different directory and review again; nothing existing was overwritten.');
+      if (!['EEXIST', 'ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+      output('The destination or its parent changed while saving. Choose a different directory and review again; nothing existing was overwritten.');
       await destination();
     }
   }
@@ -96,6 +104,6 @@ export async function configure() {
     rejectPending = reject;
     terminal.question(question, answer => { rejectPending = undefined; accept(answer); });
   });
-  try { await runConfigure({ ask, output: text => console.log(text), home: homedir(), cwd: process.cwd() }); }
+  try { await runConfigure({ ask, output: text => console.log(text), home: homedir() }); }
   finally { terminal.close(); }
 }

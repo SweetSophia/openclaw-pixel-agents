@@ -37,7 +37,7 @@ an office can generate a separate bundle and deliberately migrate values manuall
    output directory (default `.openclaw-pixel-agents-config` under the user's home,
    outside an ordinary source checkout; changed after independent security review).
    Relative directory answers resolve under home. Reject occupied destinations
-   at this prompt, retaining exclusive mkdir as the real save-time guard. Then
+   and missing/non-directory parents at this prompt, retaining exclusive mkdir as the real save-time guard. Then
    ask for stable absolute `DATA_DIR`, defaulting to `<bundle>/data` to isolate
    independent offices. Existing state is reused only by explicit path selection.
 3. Local: allow the default `openclaw` resolved through runtime PATH or a supplied
@@ -66,8 +66,10 @@ an office can generate a separate bundle and deliberately migrate values manuall
 6. After confirmation, exclusively create the bundle directory with POSIX mode
    `0700` and its files with `0600`; no recursive parent creation. Refuse existing
    destinations, including dangling symlinks, and never truncate existing files.
-   On a save-time collision, ask for another directory/data path and require a
+   On a save-time collision or disappearing/non-directory parent, ask for another directory/data path and require a
    fresh preview/confirmation without losing the other answers.
+   Preserve whether DATA_DIR was explicitly entered, including a typed value
+   identical to a suggested default, across repeated destination changes.
    On an ordinary write failure remove only this operation's created files and
    directory; retain the original failure. Warn that sudden process/machine loss
    can leave a partial new bundle; never overwrite it on retry. On Windows explain

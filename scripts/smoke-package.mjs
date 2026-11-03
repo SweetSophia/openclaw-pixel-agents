@@ -93,7 +93,7 @@ try {
   const { runConfigure } = await import(pathToFileURL(join(installed, 'bin/configure.mjs')).href);
   const answers = ['remote', String(port), origin, '', '', origin, process.execPath, 'no', 'yes'];
   const wizardOutput = [];
-  await runConfigure({ home, cwd: consumer, output: text => wizardOutput.push(text), ask: async () => {
+  await runConfigure({ home, output: text => wizardOutput.push(text), ask: async () => {
     assert(answers.length, 'Wizard asked an unexpected question'); return answers.shift();
   } });
   const config = join(home, '.openclaw-pixel-agents-config', 'office.env');
