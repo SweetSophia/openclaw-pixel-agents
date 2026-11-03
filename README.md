@@ -36,7 +36,7 @@ DATA_SOURCE=cli
 
 Keep this file private and out of Git; on POSIX, run `chmod 600 pixel-agents.env` from its folder. If `openclaw` is not in PATH, add `OPENCLAW_BIN` with the full executable path. This file does not enable private tasks or send permissions.
 
-The npm launcher stores layouts and appearances in **`~/.openclaw-pixel-agents`**, outside the installed package, so package upgrades do not replace them. For a service account or multiple offices, set a stable absolute `DATA_DIR`; see [persistent storage](docs/configuration.md#persistent-storage).
+The npm launcher stores layouts and appearances in **`~/.openclaw-pixel-agents`**, outside the installed package, so package upgrades do not replace them. For services or multiple offices, set a stable absolute `DATA_DIR` for each office process. Give independent offices separate directories: sharing one can overwrite their preferences or layouts. See [persistent storage](docs/configuration.md#persistent-storage).
 
 ### Start the office
 
@@ -46,7 +46,9 @@ From the folder containing `pixel-agents.env`, run:
 openclaw-pixel-agents --env-file ./pixel-agents.env
 ```
 
-Open **http://localhost:3001**. Keep the terminal running; press **Ctrl+C** to stop. To start from another folder, pass the full file path, quoted if it contains spaces: `openclaw-pixel-agents --env-file "/absolute/path/to/pixel-agents.env"`. The server does not load `.env` automatically, and existing process environment variables take precedence over file values. If you change the browser hostname or port, update `CORS_ORIGIN` to match exactly.
+Open **http://localhost:3001**. Keep the terminal running; press **Ctrl+C** to stop. To start from another folder, pass the full file path, quoted if it contains spaces: `openclaw-pixel-agents --env-file "/absolute/path/to/pixel-agents.env"`. The server does not load `.env` automatically, and existing process environment variables take precedence over file values.
+
+To change the office's listening port, update both `PORT` and `CORS_ORIGIN`, restart the office, and open the matching URL. For example, `PORT=3002` goes with `CORS_ORIGIN=http://localhost:3002` and **http://localhost:3002**. If only the external browser address changes, such as behind a reverse proxy, update `CORS_ORIGIN` to that exact origin; the backend `PORT` can stay unchanged.
 
 Without a global installation, use `npx --yes openclaw-pixel-agents@latest --env-file ./pixel-agents.env` from the configuration folder instead. It also runs the prebuilt production app.
 
