@@ -18,8 +18,9 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { applyAgentSnapshot } from "./agentSnapshots";
-import { updateAgentPreferences, type PreferenceSaveResult } from "./agentPreferences";
-import { getRecipe } from "../shared/characterRecipes";
+import { serializeAgentPreferences, updateAgentPreferences, type PreferenceSaveResult } from "./agentPreferences";
+import { createAgentRegistry, loadAgentRoster } from "./agentRoster";
+import { parseAgentId } from "../shared/agentRoster.cjs";
 import { correlationMiddleware, httpRequestLogMiddleware } from "./correlation";
 import { createCorsConfig, isOriginAllowed } from "./cors";
 import {
@@ -61,7 +62,7 @@ import { createModelService } from "./control/modelService";
 import { createWorkspaceService } from "./control/workspaceService";
 import { createUsageService } from "./control/usageService";
 import { parseLayoutMutationBody, parseOfficeLayoutDoc, parsePersistedPrefs, parseRecipe, parseSpriteBody, parseTagsBody, parseToggleBody, type OfficeLayoutDoc, type PersistedPrefs } from "./validation";
-import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room, type AgentTag } from "../shared/types";
+import { ALL_TAGS, TAG_COLORS, DEFAULT_ROOMS, resolveRoomByTags, type AgentState, type AgentActivity, type SubAgentInfo, type TickerMessage, type Room } from "../shared/types";
 const app = express();
 const server = createServer(app);
 const corsConfig = createCorsConfig();
@@ -290,32 +291,6 @@ let cliPollHealth: CliPollHealth = INITIAL_CLI_POLL_HEALTH;
 
 // ---- Known agents from config ----
 
-interface KnownAgent {
-  id: string;
-  name: string;
-  pixelEnabled: boolean;
-  characterSpriteId?: string;
-  tags: AgentTag[];
-  /** Paperdoll recipe: body/hair/outfit indices */
-  recipe?: { bodyIndex: number; hairIndex: number; outfitIndex: number };
-}
-
-/** Default agent definitions */
-function defaultRegistry(): Map<string, KnownAgent> {
-  const registry = new Map<string, KnownAgent>([
-    ["main", { id: "main", name: "Shodan", pixelEnabled: true, tags: ["orchestration", "research"] }],
-    ["miku", { id: "miku", name: "Miku", pixelEnabled: true, tags: ["creative", "media"] }],
-    ["chi", { id: "chi", name: "Chi", pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["sysauxilia", { id: "sysauxilia", name: "Sysauxilia", pixelEnabled: true, tags: ["infrastructure", "monitoring"] }],
-    ["descartes", { id: "descartes", name: "Descartes", pixelEnabled: true, tags: ["research", "analysis"] }],
-    ["cyberlogis", { id: "cyberlogis", name: "Cyberlogis", pixelEnabled: true, tags: ["coding", "logic"] }],
-    ["cylena", { id: "cylena", name: "Cylena", pixelEnabled: true, tags: ["coding", "frontend"] }],
-    ["cybera", { id: "cybera", name: "Cybera", pixelEnabled: true, tags: ["coding", "infrastructure"] }],
-  ]);
-  for (const agent of registry.values()) agent.recipe = getRecipe(agent.id);
-  return registry;
-}
-
 /** Load persisted agent preferences (pixelEnabled, spriteId, tags, recipe) from disk */
 function loadPersistedPrefs(): Map<string, PersistedPrefs> {
   try {
@@ -325,6 +300,7 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const map = new Map<string, PersistedPrefs>();
 
     for (const [k, v] of Object.entries(data)) {
+      try { parseAgentId(k); } catch { continue; }
       const prefs = parsePersistedPrefs(v);
       if (prefs) {
         map.set(k, prefs);
@@ -341,15 +317,11 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
 
 /** Save agent preferences to disk */
 function savePersistedPrefs(onReplaced: () => void) {
-  const prefs: Record<string, PersistedPrefs> = {};
-  for (const [id, agent] of AGENT_REGISTRY) {
-    prefs[id] = { pixelEnabled: agent.pixelEnabled, characterSpriteId: agent.characterSpriteId, tags: agent.tags, recipe: agent.recipe };
-  }
   mkdirSync(DATA_DIR, { recursive: true });
   atomicWriteFileSync(
     dirname(PERSIST_PATH),
     basename(PERSIST_PATH),
-    JSON.stringify(prefs, null, 2),
+    serializeAgentPreferences(AGENT_REGISTRY, savedPrefs),
     { onReplaced },
   );
 }
@@ -363,18 +335,10 @@ function finishPreferenceSave(res: Response, result: PreferenceSaveResult, body:
   res.json(body);
 }
 
-// Build registry from defaults + persisted prefs
-const AGENT_REGISTRY = defaultRegistry();
+// An explicit roster is authoritative and must validate before runtime startup.
+const configuredRoster = loadAgentRoster(process.env.AGENT_ROSTER_PATH);
 const savedPrefs = loadPersistedPrefs();
-for (const [id, prefs] of savedPrefs) {
-  const agent = AGENT_REGISTRY.get(id);
-  if (agent) {
-    if (prefs.pixelEnabled !== undefined) agent.pixelEnabled = prefs.pixelEnabled;
-    if (prefs.characterSpriteId !== undefined) agent.characterSpriteId = prefs.characterSpriteId;
-    if (prefs.tags !== undefined) agent.tags = prefs.tags;
-    if (prefs.recipe !== undefined) agent.recipe = prefs.recipe;
-  }
-}
+const AGENT_REGISTRY = createAgentRegistry(configuredRoster, savedPrefs);
 
 // ---- Rooms ----
 

@@ -2,6 +2,38 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { AGENT_ROSTER_LIMITS, createDefaultAgentRoster, parseAgentRoster, type AgentRosterDocument } from '../shared/agentRoster.cjs';
+import { getRecipe } from '../shared/characterRecipes';
+import type { AgentTag, CharacterRecipe } from '../shared/types';
+import type { PersistedPrefs } from './validation';
+
+export interface KnownAgent {
+  id: string;
+  name: string;
+  pixelEnabled: boolean;
+  tags: AgentTag[];
+  recipe: CharacterRecipe;
+  characterSpriteId?: string;
+}
+
+const DEFAULT_TAGS = new Map<string, AgentTag[]>([
+  ['main', ['orchestration', 'research']], ['miku', ['creative', 'media']],
+  ['chi', ['research', 'analysis']], ['sysauxilia', ['infrastructure', 'monitoring']],
+  ['descartes', ['research', 'analysis']], ['cyberlogis', ['coding', 'logic']],
+  ['cylena', ['coding', 'frontend']], ['cybera', ['coding', 'infrastructure']],
+]);
+
+export function createAgentRegistry(roster: AgentRosterDocument, persisted: ReadonlyMap<string, PersistedPrefs>): Map<string, KnownAgent> {
+  return new Map(roster.agents.map(({ id, name }) => {
+    const prefs = persisted.get(id);
+    return [id, {
+      id, name,
+      pixelEnabled: prefs?.pixelEnabled ?? true,
+      tags: [...(prefs?.tags ?? DEFAULT_TAGS.get(id) ?? [])],
+      recipe: getRecipe(id, prefs?.recipe),
+      ...(prefs?.characterSpriteId !== undefined ? { characterSpriteId: prefs.characterSpriteId } : {}),
+    }];
+  }));
+}
 
 class RosterFileError extends Error {}
 

@@ -13,6 +13,7 @@ export const DEFAULT_RECIPES: Readonly<Record<string, Readonly<CharacterRecipe>>
 };
 
 export function getRecipe(agentId: string, overrides?: Partial<CharacterRecipe>): CharacterRecipe {
-  const base = DEFAULT_RECIPES[agentId] ?? { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 };
+  const base = Object.prototype.hasOwnProperty.call(DEFAULT_RECIPES, agentId)
+    ? DEFAULT_RECIPES[agentId] : { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 };
   return { ...base, ...overrides };
 }

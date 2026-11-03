@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { loadAgentRoster } from './agentRoster';
+import { createAgentRegistry, loadAgentRoster } from './agentRoster';
+import type { PersistedPrefs } from './validation';
 
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -19,6 +20,26 @@ function fixture(contents: string | Buffer = JSON.stringify(value)) {
   return { root, path };
 }
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+
+it('replaces defaults with configured IDs and safe new-agent defaults', () => {
+  const registry = createAgentRegistry({ version: 1, agents: [{ id: 'researcher', name: 'Research Assistant' }] }, new Map());
+  expect([...registry.keys()]).toEqual(['researcher']);
+  expect(registry.get('researcher')).toEqual({ id: 'researcher', name: 'Research Assistant', pixelEnabled: true, tags: [], recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 } });
+});
+it('keeps built-in defaults while names and saved preferences have independent authority', () => {
+  const prefs: PersistedPrefs = { pixelEnabled: false, characterSpriteId: 'char_4', tags: ['coding'], recipe: { bodyIndex: 4, hairIndex: 2, outfitIndex: 3 } };
+  const roster = { version: 1 as const, agents: [{ id: 'main', name: 'Coordinator' }, { id: 'miku', name: 'Artist' }] };
+  const registry = createAgentRegistry(roster, new Map([['main', prefs]]));
+  expect(registry.get('main')).toEqual({ id: 'main', name: 'Coordinator', ...prefs });
+  expect(registry.get('miku')).toMatchObject({ name: 'Artist', tags: ['creative', 'media'], recipe: { bodyIndex: 1, hairIndex: 6, outfitIndex: 0 } });
+  registry.get('main')!.tags.push('analysis'); registry.get('main')!.recipe.bodyIndex = 0;
+  expect(prefs.tags).toEqual(['coding']); expect(prefs.recipe?.bodyIndex).toBe(4);
+  expect(roster.agents[0].name).toBe('Coordinator');
+});
+it.each(['toString', 'valueOf'])('never inherits built-in metadata for %s', id => {
+  const registry = createAgentRegistry({ version: 1, agents: [{ id, name: 'Agent' }] }, new Map());
+  expect(registry.get(id)).toMatchObject({ tags: [], recipe: { bodyIndex: 0, hairIndex: 0, outfitIndex: 0 } });
+});
 
 it('uses fresh defaults only when the path is absent or empty', () => {
   expect(loadAgentRoster(undefined).agents.map(agent => agent.id)).toEqual(['main', 'miku', 'chi', 'sysauxilia', 'descartes', 'cyberlogis', 'cylena', 'cybera']);
