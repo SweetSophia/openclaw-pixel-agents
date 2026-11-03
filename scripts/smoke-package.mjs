@@ -53,16 +53,22 @@ try {
   const files = new Set(packed.files.map(file => file.path));
   for (const required of ['bin/openclaw-pixel-agents.mjs', 'bin/setup.mjs', 'bin/configure.mjs', 'bin/configure-values.mjs', 'bin/configure-files.mjs', 'scripts/install-notice.mjs', 'dist/client/index.html',
     'dist/server/server/index.js', 'dist/server/shared/characterRecipes.js',
+    'shared/agentRoster.cjs', 'dist/server/shared/agentRoster.cjs', 'agents.example.json',
     'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', '.env.example',
     'collector/.env.collector.example', 'LICENSE', 'README.md']) assert(files.has(required), `Missing ${required}`);
   for (const path of files) {
     assert(!/(^|\/)(data|node_modules|coverage|\.git|\.superpowers|\.worktrees)(\/|$)/.test(path), `Runtime/private path packed: ${path}`);
     assert(!/\.(test|spec)\.|\.map$|(^|\/)\.env($|\.(?!example$|collector\.example$))/.test(path), `Development/private file packed: ${path}`);
-    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
+    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|(?:shared|dist\/server\/shared)\/agentRoster\.cjs$|agents\.example\.json$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
   }
   const tarball = join(destination, packed.filename);
   command([npmCli, 'install', '--prefix', consumer, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', `${pkg.name}@file:${tarball}`]);
   const installed = join(consumer, 'node_modules', pkg.name);
+  const sourceRoster = await import(pathToFileURL(join(installed, 'shared/agentRoster.cjs')).href);
+  const compiledRoster = await import(pathToFileURL(join(installed, 'dist/server/shared/agentRoster.cjs')).href);
+  assert.deepEqual(sourceRoster.createDefaultAgentRoster(), compiledRoster.createDefaultAgentRoster());
+  assert.deepEqual(sourceRoster.parseAgentRoster(JSON.parse(await readFile(join(installed, 'agents.example.json'), 'utf8'))).agents,
+    [{ id: 'main', name: 'Coordinator' }, { id: 'researcher', name: 'Research Assistant' }]);
   const launcher = join(installed, pkg.bin['openclaw-pixel-agents']);
   assert.equal(command([launcher, '--version'], consumer).trim(), pkg.version);
   assert.equal(command([npmCli, 'exec', '--offline', '--prefix', consumer, '--', 'openclaw-pixel-agents', '--version'], consumer).trim(), pkg.version);

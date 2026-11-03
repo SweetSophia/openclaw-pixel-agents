@@ -8,8 +8,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "allowJs": true,
     "outDir": "./dist/server"
   },
-  "include": ["server"],
+  "include": ["server", "shared/agentRoster.cjs"],
   "exclude": ["**/*.test.ts", "**/*.spec.ts"]
 }

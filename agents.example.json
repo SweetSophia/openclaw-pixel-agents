@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "agents": [
+    { "id": "main", "name": "Coordinator" },
+    { "id": "researcher", "name": "Research Assistant" }
+  ]
+}
