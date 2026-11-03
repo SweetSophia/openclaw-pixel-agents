@@ -2,11 +2,37 @@
 
 Supply configuration through your process/service environment or explicitly load a private file. The server does not automatically read `.env`.
 
-- Source build: `node --env-file=.env dist/server/server/index.js`.
 - npm launcher: `openclaw-pixel-agents --env-file /absolute/path/to/.env`.
+- Source build: `node --env-file=.env dist/server/server/index.js`.
 - Docker: `--env-file .env` supplies the container environment.
 
 Existing process environment variables take precedence over an env file. Start with the [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example). See the [task-access guide](task-access-setup.md) for key generation, pairing and send permissions.
+
+## Minimal local configuration (npm)
+
+Install the prebuilt app using the [recommended quickstart](../README.md#quick-start-recommended). You do not need to clone or build the repository. The following setup assumes OpenClaw runs on the same host and `openclaw` is in PATH.
+
+1. In a folder you control, use a text editor to create **`pixel-agents.env`**:
+
+   ```dotenv
+   PORT=3001
+   CORS_ORIGIN=http://localhost:3001
+   DATA_SOURCE=cli
+   ```
+
+   Keep the file private and out of Git; on POSIX, run `chmod 600 pixel-agents.env` from that folder. If the executable is outside PATH, add `OPENCLAW_BIN` with its full path. For OpenClaw on another host, follow the [collector guide](../collector/README.md) instead of using `DATA_SOURCE=cli`; the collector supplies roster status, not private task access.
+
+2. From the configuration folder, start the office:
+
+   ```sh
+   openclaw-pixel-agents --env-file ./pixel-agents.env
+   ```
+
+   From another folder, pass the full path, quoted if it contains spaces. Existing environment variables override file settings. The npm launcher sets production mode and defaults storage to **`~/.openclaw-pixel-agents`**, outside its installation; you do not need `NODE_ENV` or a relative `DATA_DIR` in this minimal file. Services and multiple offices should set a stable absolute `DATA_DIR` for each office process. Give independent offices separate directories: sharing one can overwrite their preferences or layouts. See [persistent storage](#persistent-storage).
+
+3. Open **http://localhost:3001**. Keep the terminal running; press **Ctrl+C** to stop. To change the office's listening port, update both `PORT` and `CORS_ORIGIN`, restart the office, and open the matching URL; for example, `PORT=3002` with `CORS_ORIGIN=http://localhost:3002` uses **http://localhost:3002**. If only the external browser address changes behind a reverse proxy, update `CORS_ORIGIN` to match its exact scheme, hostname and port; the backend `PORT` can stay unchanged.
+
+This setup enables the public office/roster, not private tasks or sending. Private access requires its [own key and explicit Gateway pairing](task-access-setup.md); it is optional. The [fixed-roster limitation](../README.md#use-your-own-roster) still applies, and production does not insert demo agents when live data is unavailable. Use a trusted network or your own access controls; CORS is not a per-user login. For explanations without changing files or starting the app, run `openclaw-pixel-agents setup`.
 
 ## Environment variables
 

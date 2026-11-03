@@ -9,6 +9,63 @@ A live pixel-art office for [OpenClaw](https://github.com/openclaw/openclaw): se
 <img width="482" height="315" alt="Pixel office with agents" src="https://raw.githubusercontent.com/SweetSophia/openclaw-pixel-agents/refs/heads/main/docs/pixel-agents-1.png" /> <img width="482" height="315"  alt="Pixel office with agents - Tasks" src="https://raw.githubusercontent.com/SweetSophia/openclaw-pixel-agents/refs/heads/main/docs/pixel-agents-2.png" />
 
 
+## Quick start (recommended)
+
+Use the **prebuilt npm package** to run the office. You do not need Git, a source checkout, a build step or development dependencies.
+
+**Before you start:** install Node.js **22.22.2+ within 22.x**, **24.15.0+ within 24.x**, or **26+**, with npm. This example assumes OpenClaw runs on the same host and its `openclaw` command is in PATH. For OpenClaw on another host, use the [collector setup](collector/README.md) instead of local CLI polling.
+
+### npm installation
+
+```sh
+npm install --global openclaw-pixel-agents@latest
+openclaw-pixel-agents --version
+```
+
+`@latest` selects the npm registry's current release. npm **1.7.0** includes Usage, setup instructions and transient Gateway-startup recovery; see the [1.7.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.7.0.md). Newer source additions such as run history, Stop/Steer, approvals and model selection are **not included in 1.7.0**. Check your installed version and release notes rather than assuming a source merge publishes a package.
+
+### Configure the office
+
+Create a file named **`pixel-agents.env`** in a folder you control, using a text editor, and save these settings:
+
+```dotenv
+PORT=3001
+CORS_ORIGIN=http://localhost:3001
+DATA_SOURCE=cli
+```
+
+Keep this file private and out of Git; on POSIX, run `chmod 600 pixel-agents.env` from its folder. If `openclaw` is not in PATH, add `OPENCLAW_BIN` with the full executable path. This file does not enable private tasks or send permissions.
+
+The npm launcher stores layouts and appearances in **`~/.openclaw-pixel-agents`**, outside the installed package, so package upgrades do not replace them. For services or multiple offices, set a stable absolute `DATA_DIR` for each office process. Give independent offices separate directories: sharing one can overwrite their preferences or layouts. See [persistent storage](docs/configuration.md#persistent-storage).
+
+### Start the office
+
+From the folder containing `pixel-agents.env`, run:
+
+```sh
+openclaw-pixel-agents --env-file ./pixel-agents.env
+```
+
+Open **http://localhost:3001**. Keep the terminal running; press **Ctrl+C** to stop. To start from another folder, pass the full file path, quoted if it contains spaces: `openclaw-pixel-agents --env-file "/absolute/path/to/pixel-agents.env"`. The server does not load `.env` automatically, and existing process environment variables take precedence over file values.
+
+To change the office's listening port, update both `PORT` and `CORS_ORIGIN`, restart the office, and open the matching URL. For example, `PORT=3002` goes with `CORS_ORIGIN=http://localhost:3002` and **http://localhost:3002**. If only the external browser address changes, such as behind a reverse proxy, update `CORS_ORIGIN` to that exact origin; the backend `PORT` can stay unchanged.
+
+Without a global installation, use `npx --yes openclaw-pixel-agents@latest --env-file ./pixel-agents.env` from the configuration folder instead. It also runs the prebuilt production app.
+
+**Next steps:** [connect your agents](#connect-your-agents), optionally [enable private task access](#create-your-task-access-key), or open the [configuration reference](docs/configuration.md) and [troubleshooting](#configuration-and-troubleshooting). The current release has a [fixed set of agent IDs](#use-your-own-roster); it does not automatically discover an arbitrary roster. An empty production office can mean the data source is unavailable or your IDs do not match; production does not insert demo agents. Use a trusted network or your own access controls: the public roster/editor is not a per-user login system.
+
+### Setup instructions
+
+For a repeatable explanation of configuration, storage, the collector and optional private pairing, run:
+
+```sh
+openclaw-pixel-agents setup
+```
+
+Available in npm **1.7.0 and newer**, this command **prints instructions only**: it does not create files, generate credentials, pair a device or start the office. Launching without `CORS_ORIGIN` also prints the guide and exits with a configuration error. The npm installation notice points to this guide but can be hidden or disabled by npm; `setup` works independently of that notice.
+
+From a source checkout, use `node bin/openclaw-pixel-agents.mjs setup`; for a local npm installation, use `npx openclaw-pixel-agents setup`. Contributors can find [source development and builds](#start-from-source) below.
+
 ## What you can do
 
 - **Follow live activity.** Animated agents, room counts and a filterable activity dock show working, attention-needed, idle and inactive states. Freshness indicators distinguish an old collector snapshot from a lost browser connection.
@@ -24,73 +81,17 @@ A live pixel-art office for [OpenClaw](https://github.com/openclaw/openclaw): se
 
 Task, Conversation, Results and Usage share the same conversation selection. Workspace follows the selected agent and can include files from any conversation; Agent retains the office roster summary. Private access uses the existing office key and `operator.read` grant. Gateways without assistant-filtered artifact APIs still provide task text; Results explains when file discovery is unsupported. See [results and file access](docs/task-access-setup.md#results-and-delivered-files) and [workspace browsing](docs/task-access-setup.md#read-only-workspace-browsing) for limits and compatibility.
 
-## Start from source
-
-Use Node.js **22.22.2+ within 22.x**, **24.15.0+ within 24.x**, or **26+**; the exact supported range is enforced by the repository. For live agents, you also need OpenClaw locally or a configured collector.
-
-```sh
-git clone https://github.com/SweetSophia/openclaw-pixel-agents.git
-cd openclaw-pixel-agents
-npm ci
-npm run dev
-```
-
-Open **http://localhost:3000**. Vite serves the client and proxies the API and socket to the backend on port **3001**. When OpenClaw is installed elsewhere, set `OPENCLAW_BIN` in the backend environment or follow the [collector guide](collector/README.md).
-
-Development builds can show demo characters before live data arrives. **Production does not insert demo agents**; an empty office may simply be waiting for its data source.
-
-### Run a production build
-
-```sh
-npm run build
-cp .env.example .env
-```
-
-Edit `.env`: set your exact `CORS_ORIGIN`, choose a stable absolute `DATA_DIR`, and configure the roster source. Keep it private (`chmod 600 .env` on POSIX). Then explicitly load it:
-
-```sh
-node --env-file=.env dist/server/server/index.js
-```
-
-The example uses **http://localhost:3001**. The server does not load `.env` automatically. `npm start` is available when your service manager or shell already supplies the environment. Existing process variables take precedence over an env file.
-
-### npm installation
-
-The package includes a launcher and release workflow. Usage, setup instructions and transient Gateway-startup recovery require **1.7.0 or newer**; see the [1.7.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.7.0.md) for features and upgrade details. Workspace browsing is available from 1.6.0 and Results/Files from 1.5.0.
-
-```sh
-npm install --global openclaw-pixel-agents@latest
-openclaw-pixel-agents --help
-openclaw-pixel-agents --env-file /absolute/path/to/.env
-```
-
-Alternatively, use `npx --yes openclaw-pixel-agents@latest --env-file /absolute/path/to/.env`. Both examples select the npm registry's current `latest` release. Check the installed version before using features with a newer minimum version above; merging a release-preparation PR does not publish that version. The package contains the compiled client, server, sprites and key generator; users do not need to build it or install development dependencies.
-
-The launcher runs in production mode. Its default data directory is **`~/.openclaw-pixel-agents`**, outside the installation, so package upgrades do not replace saved layouts or appearances. Set `DATA_DIR` explicitly for a service account or multiple offices. Obtain an [example configuration](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/.env.example) and follow the [configuration reference](docs/configuration.md).
-
-### Setup instructions
-
-The launcher includes a repeatable setup guide, available in npm 1.7.0 and newer:
-
-```sh
-openclaw-pixel-agents setup
-```
-
-It explains private configuration, persistent storage, the collector, optional task-key/device pairing, startup and the browser URL. It does not modify files, generate credentials or start the office. A launch without `CORS_ORIGIN` also prints the guide and exits with a configuration error. Configured launches continue to use `--env-file` or the supplied environment as before. From a source checkout, run `node bin/openclaw-pixel-agents.mjs setup`; for a local npm installation, use `npx openclaw-pixel-agents setup`.
-
-Version 1.7.0 also includes a short installation notice pointing to the guide. npm can hide lifecycle output or disable scripts; the first-run guide and `setup` command work independently of that notice. The install script only prints instructions and does not generate keys, modify configuration or start a service.
-
 ## Create your task-access key
 
 **Each installation creates its own key.** There is no project-wide key, and no developer-specific file path is required.
 
-1. Generate a fresh key from a source checkout:
+1. Generate a fresh key with the npm launcher:
 
    ```sh
-   npm run --silent control:key
+   openclaw-pixel-agents --generate-key
    ```
 
-   With the npm launcher, use `openclaw-pixel-agents --generate-key` instead. Both use Node's cryptographic random generator and print a new 64-character hexadecimal key. They do not change a running server.
+   From a source checkout, use `npm run --silent control:key` instead. Both use Node's cryptographic random generator and print a new 64-character hexadecimal key. They do not change a running server.
 
 2. Put that value in the office server's private configuration:
 
@@ -175,6 +176,40 @@ The roster/editor is not an individual-user login system. The separate task key 
 ## Development and releases
 
 Built with React, TypeScript, Vite, Canvas 2D, Express and Socket.IO.
+
+### Start from source
+
+Use this path to contribute, customize the registry or run unreleased source changes. To use the published app without building, follow the [recommended npm quickstart](#quick-start-recommended).
+
+Use Node.js **22.22.2+ within 22.x**, **24.15.0+ within 24.x**, or **26+**; the exact supported range is enforced by the repository. For live agents, you also need OpenClaw locally or a configured collector.
+
+```sh
+git clone https://github.com/SweetSophia/openclaw-pixel-agents.git
+cd openclaw-pixel-agents
+npm ci
+npm run dev
+```
+
+Open **http://localhost:3000**. Vite serves the client and proxies the API and socket to the backend on port **3001**. If the local OpenClaw executable is outside PATH, set `OPENCLAW_BIN` in the backend environment. For OpenClaw on another host, follow the [collector guide](collector/README.md).
+
+Development builds can show demo characters before live data arrives. **Production does not insert demo agents**; an empty office may simply be waiting for its data source.
+
+#### Run a production build
+
+```sh
+npm run build
+cp .env.example .env
+```
+
+Edit `.env`: set your exact `CORS_ORIGIN`, choose a stable absolute `DATA_DIR`, and configure the roster source. Keep it private (`chmod 600 .env` on POSIX). Then explicitly load it:
+
+```sh
+node --env-file=.env dist/server/server/index.js
+```
+
+The example uses **http://localhost:3001**. The server does not load `.env` automatically. `npm start` is available when your service manager or shell already supplies the environment. Existing process variables take precedence over an env file.
+
+### Development commands
 
 | Command | Purpose |
 | --- | --- |
