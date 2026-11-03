@@ -35,7 +35,7 @@ describe('PixelOffice engine lifecycle and furniture preview status', () => {
     const refresh = vi.spyOn(EditorController.prototype, 'refreshPreview');
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const view = render(<PixelOffice
-      agents={[]} editorMode={false} deleteMode={false} activeLayout={null}
+      agents={[]} registeredAgentIds={[]} editorMode={false} deleteMode={false} activeLayout={null}
       selectedFurnitureType={null} onPlaceFurniture={vi.fn()} onMoveFurniture={vi.fn()}
       onSelectFurniture={vi.fn()} onRotateFurniture={vi.fn()}
     />);
@@ -57,7 +57,7 @@ describe('PixelOffice engine lifecycle and furniture preview status', () => {
 
   it('registers one initially empty polite node before updates, retains its identity and clears on layout and cleanup', () => {
     const props = {
-      agents: [], editorMode: true, deleteMode: false, selectedFurnitureType: 'MISSING',
+      agents: [], registeredAgentIds: [], editorMode: true, deleteMode: false, selectedFurnitureType: 'MISSING',
       activeLayout: { id: 'room', name: 'Room', width: 24, height: 16, updatedAt: 1, furniture: [{ id: 'table', type: 'MISSING', x: 5, y: 5, rotation: 0 }], seats: {} },
       onPlaceFurniture: vi.fn(), onMoveFurniture: vi.fn(), onSelectFurniture: vi.fn(), onRotateFurniture: vi.fn(),
     };
@@ -77,7 +77,7 @@ describe('PixelOffice engine lifecycle and furniture preview status', () => {
   });
 
   it('shares native editor pinch with zoom buttons and Fit through the real engine', () => {
-    const view = render(<PixelOffice agents={[]} editorMode={false} deleteMode={false} activeLayout={null}
+    const view = render(<PixelOffice agents={[]} registeredAgentIds={[]} editorMode={false} deleteMode={false} activeLayout={null}
       selectedFurnitureType={null} onPlaceFurniture={vi.fn()} onMoveFurniture={vi.fn()}
       onSelectFurniture={vi.fn()} onRotateFurniture={vi.fn()} />);
     const canvas = view.container.querySelector('canvas')!;
@@ -97,7 +97,7 @@ describe('PixelOffice engine lifecycle and furniture preview status', () => {
 
   it('maps native placement on an offset, zoomed canvas to the intended grid cell', () => {
     const place = vi.fn();
-    const view = render(<PixelOffice agents={[]} editorMode={true} deleteMode={false} activeLayout={null}
+    const view = render(<PixelOffice agents={[]} registeredAgentIds={[]} editorMode={true} deleteMode={false} activeLayout={null}
       selectedFurnitureType="MISSING" onPlaceFurniture={place} onMoveFurniture={vi.fn()}
       onSelectFurniture={vi.fn()} onRotateFurniture={vi.fn()} />);
     const canvas = view.container.querySelector('canvas')!;

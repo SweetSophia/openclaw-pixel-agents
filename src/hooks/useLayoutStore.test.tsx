@@ -173,6 +173,16 @@ describe('useLayoutStore', () => {
     expect(latest(snapshots).activeLayout?.id).toBe('default');
   });
 
+  it('round-trips inactive literal seat IDs without materializing a legacy alias', async () => {
+    layouts.default = { ...MOCK_LAYOUT, seats: { shodan: { x: 9, y: 4 } } };
+    await renderStoreProbe();
+    await waitFor(() => expect(latest(snapshots).activeLayout?.seats).toEqual({ shodan: { x: 9, y: 4 } }));
+    act(() => latest(snapshots).updateFurniture([{ id: 'desk', type: 'DESK', x: 12, y: 8, rotation: 0 }]));
+    await act(async () => { await latest(snapshots).saveActiveLayout(); });
+    expect(captures.lastPutBody?.seats).toEqual({ shodan: { x: 9, y: 4 } });
+    expect(latest(snapshots).activeLayout?.seats).toEqual({ shodan: { x: 9, y: 4 } });
+  });
+
   describe('layout capacity errors', () => {
     it('returns null and exposes an actionable error when create returns 507', async () => {
       await renderStoreProbe();

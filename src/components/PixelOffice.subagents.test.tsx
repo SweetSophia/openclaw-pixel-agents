@@ -28,6 +28,7 @@ vi.mock('../game/GameEngine', () => {
   class MockGameEngine {
     static latest: MockGameEngine;
     characters = new Set<string>();
+    subAgents = new Set<string>();
     dying = new Set<string>();
 
     constructor(_canvas: HTMLCanvasElement, _config: unknown) {
@@ -46,6 +47,8 @@ vi.mock('../game/GameEngine', () => {
     setDeleteMode = vi.fn();
     setSelectedFurnitureType = vi.fn();
     setLayout = vi.fn();
+    setRegisteredAgentIds = vi.fn();
+    isSubAgent = (id: string) => this.subAgents.has(id);
     setCharacterSprite = vi.fn();
     getCharacterIds = vi.fn(() => Array.from(this.characters));
     assignSeat = vi.fn(() => ({ x: 3, y: 3 }));
@@ -55,10 +58,12 @@ vi.mock('../game/GameEngine', () => {
     updateCharacter = vi.fn();
     removeCharacter = vi.fn((id: string) => {
       this.characters.delete(id);
+      this.subAgents.delete(id);
       this.dying.delete(id);
     });
     spawnSubAgent = vi.fn((_parentId: string, subId: string, _name: string) => {
       this.characters.add(subId);
+      this.subAgents.add(subId);
     });
     killSubAgent = vi.fn((subId: string) => {
       if (this.characters.has(subId)) this.dying.add(subId);
@@ -87,6 +92,7 @@ interface EngineSpy {
 const engineOf = () => (GameEngine as unknown as { latest: EngineSpy }).latest;
 
 const baseProps = {
+  registeredAgentIds: ['cybera'],
   editorMode: false,
   deleteMode: false,
   activeLayout: null,

@@ -78,6 +78,19 @@ it('does not retain invalid persisted keys or invalid preference records', async
   expect(prefs.retained).toEqual({ pixelEnabled: false });
   expect(Object.keys(prefs).sort()).toEqual(['main', 'researcher', 'retained']);
 });
+it('keeps a custom shodan seat through removal, unrelated layout save, restart and re-addition', async () => {
+  setRoster([{ id: 'main', name: 'Coordinator' }, { id: 'shodan', name: 'Custom' }]);
+  let { app } = await load();
+  const created = await request(app).post('/api/layouts').set('Origin', origin).send({ name: 'Seat preservation', width: 24, height: 16, furniture: [], seats: { shodan: { x: 9, y: 4 } } }).expect(200);
+  const id = created.body.layout.id;
+  await closeCurrent(); setRoster([{ id: 'main', name: 'Coordinator' }]); ({ app } = await load());
+  const current = (await request(app).get(`/api/layouts/${id}`).expect(200)).body;
+  await request(app).put(`/api/layouts/${id}`).set('Origin', origin).send({ name: 'Unrelated edit', baseUpdatedAt: current.updatedAt }).expect(200);
+  await closeCurrent(); setRoster([{ id: 'main', name: 'Coordinator' }, { id: 'shodan', name: 'Restored' }]); ({ app } = await load());
+  const restored = (await request(app).get(`/api/layouts/${id}`).expect(200)).body;
+  expect(restored.seats).toEqual({ shodan: { x: 9, y: 4 } });
+  expect(JSON.parse(readFileSync(join(dataDir, 'layouts', `${id}.json`), 'utf8')).seats).toEqual(restored.seats);
+});
 it('uses the custom registry in the real CLI polling path', async () => {
   vi.stubEnv('DATA_SOURCE', 'cli');
   vi.mocked(execFile).mockImplementation(((...args: unknown[]) => {

@@ -11,6 +11,7 @@ const OFFICE_CONFIG = { tileSize: 32, gridWidth: 24, gridHeight: 16 };
 
 interface Props {
   agents: AgentState[];
+  registeredAgentIds: readonly string[];
   editorMode: boolean;
   deleteMode: boolean;
   activeLayout: LayoutDoc | null;
@@ -23,7 +24,7 @@ interface Props {
 }
 
 export const PixelOffice: React.FC<Props> = ({
-  agents, editorMode, deleteMode, activeLayout,
+  agents, registeredAgentIds, editorMode, deleteMode, activeLayout,
   selectedFurnitureType,
   onPlaceFurniture, onSelectFurniture, onMoveFurniture, onRotateFurniture,
   onCharacterClick,
@@ -87,6 +88,12 @@ export const PixelOffice: React.FC<Props> = ({
     engineRef.current?.setSelectedFurnitureType(selectedFurnitureType);
   }, [selectedFurnitureType]);
 
+  // Identity includes disabled/other-room agents, not just visible characters.
+  const registeredIdsKey = JSON.stringify([...registeredAgentIds].sort());
+  useEffect(() => {
+    engineRef.current?.setRegisteredAgentIds(new Set<string>(JSON.parse(registeredIdsKey)));
+  }, [registeredIdsKey, loaded]);
+
   // Load layout data into engine
   // Include every furniture field consumed by GameEngine. In particular, a
   // type swap at unchanged coordinates must still invalidate the engine view.
@@ -132,7 +139,7 @@ export const PixelOffice: React.FC<Props> = ({
     // Remove characters no longer in this room's agent list (handles room switches)
     // Skip sub-agent IDs — they are managed by the dedicated sub-agent cleanup loop below
     for (const id of currentIdsArray) {
-      if (id.startsWith('sub-')) continue;
+      if (engine.isSubAgent(id)) continue;
       if (!agentIds.has(id) || !activeIds.has(id)) {
         engine.removeCharacter(id);
       }
@@ -188,7 +195,7 @@ export const PixelOffice: React.FC<Props> = ({
 
     // Kill sub-agents no longer in the list (across all parents)
     for (const cid of engine.getCharacterIds()) {
-      if (cid.startsWith('sub-') && !allActiveSubIds.has(cid)) {
+      if (engine.isSubAgent(cid) && !allActiveSubIds.has(cid)) {
         engine.killSubAgent(cid);
       }
     }
