@@ -5,7 +5,7 @@ From a source checkout's root: node bin/openclaw-pixel-agents.mjs setup
 Interactive alternative in builds containing configure:
   openclaw-pixel-agents configure
 It previews and creates a NEW private configuration bundle for local or remote
-OpenClaw, with optional private-access guidance. It never overwrites an existing
+OpenClaw, an editable agents.json roster, and optional private-access guidance. It never overwrites an existing
 directory, starts services or pairs devices. This setup command remains read-only.
 
 1. Create a private configuration file, for example pixel-agents.env:
@@ -24,6 +24,11 @@ directory, starts services or pairs devices. This setup command remains read-onl
    Local OpenClaw: put openclaw in PATH or set OPENCLAW_BIN to its full path.
    Remote OpenClaw: use DATA_SOURCE=ingest, configure a separate INGEST_API_TOKEN,
    and run the collector on the OpenClaw host. Roster updates do not enable tasks.
+   For custom IDs/names, copy agents.example.json to a private configuration
+   directory and set AGENT_ROSTER_PATH to its absolute path on the dashboard host.
+   The file replaces the default roster; IDs must match OpenClaw exactly.
+   Restart the office after editing it; no source edits or rebuild are needed.
+   Without a configured file the existing eight agents remain the defaults.
 
 3. Optional Task, Results, Workspace and Conversation access:
    Generate an office key explicitly:

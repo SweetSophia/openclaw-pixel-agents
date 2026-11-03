@@ -32,7 +32,7 @@ Install the prebuilt app using the [recommended quickstart](../README.md#quick-s
 
 3. Open **http://localhost:3001**. Keep the terminal running; press **Ctrl+C** to stop. To change the office's listening port, update both `PORT` and `CORS_ORIGIN`, restart the office, and open the matching URL; for example, `PORT=3002` with `CORS_ORIGIN=http://localhost:3002` uses **http://localhost:3002**. If only the external browser address changes behind a reverse proxy, update `CORS_ORIGIN` to match its exact scheme, hostname and port; the backend `PORT` can stay unchanged.
 
-This setup enables the public office/roster, not private tasks or sending. Private access requires its [own key and explicit Gateway pairing](task-access-setup.md); it is optional. The [fixed-roster limitation](../README.md#use-your-own-roster) still applies, and production does not insert demo agents when live data is unavailable. Use a trusted network or your own access controls; CORS is not a per-user login. For explanations without changing files or starting the app, run `openclaw-pixel-agents setup`.
+This setup enables the public office/roster, not private tasks or sending. Private access requires its [own key and explicit Gateway pairing](task-access-setup.md); it is optional. Published npm 1.7.0 has fixed IDs; [custom rosters](#custom-agent-rosters) are an unreleased source feature. Production does not insert demo agents when live data is unavailable. Use a trusted network or your own access controls; CORS is not a per-user login. For explanations without changing files or starting the app, run `openclaw-pixel-agents setup`.
 
 ## Guided configuration
 
@@ -52,13 +52,15 @@ The wizard defaults `DATA_DIR` to `data` inside the chosen bundle, giving differ
 
 Local mode uses runtime PATH on POSIX or your absolute executable path. On Windows it requires an explicit directly executable OpenClaw binary: `.cmd`/`.bat` shims and the implicit PATH command are not supported by the shell-free execution path. If only npm batch shims are available, run OpenClaw on a supported host/WSL and configure the corresponding local or collector connection; the wizard does not add native Windows batch execution. Remote mode accepts fully absolute POSIX, Windows-drive and UNC paths independently of the dashboard OS, rejecting Windows batch shims; actual host execution remains unverified. See [Node's execution rules](https://nodejs.org/download/release/v26.8.2/docs/api/child_process.html#spawning-bat-and-cmd-files-on-windows).
 
-Remote mode asks for the dashboard URL reachable by the collector (HTTPS except loopback) and the absolute OpenClaw executable path **on the OpenClaw host**, not the dashboard host. The collector URL can differ from the browser origin behind a proxy. URL input is visible in the terminal: never enter credentials or secret URL-path segments. The preview shows only each endpoint's origin and hides its path; the complete address remains in the private file. The wizard does not install a proxy, certificates, OpenClaw or a service, check connectivity, or change the [fixed roster](../README.md#use-your-own-roster).
+Remote mode asks for the dashboard URL reachable by the collector (HTTPS except loopback) and the absolute OpenClaw executable path **on the OpenClaw host**, not the dashboard host. The collector URL can differ from the browser origin behind a proxy. URL input is visible in the terminal: never enter credentials or secret URL-path segments. The preview shows only each endpoint's origin and hides its path; the complete address remains in the private file. The wizard does not install a proxy, certificates, OpenClaw or a service, or check connectivity.
+
+Keep the default eight-agent roster, or choose custom agents and enter a count (1–50), each exact existing OpenClaw ID, and a public display name. Names default to the entered ID. This creates no OpenClaw agents and runs no discovery commands. IDs and names appear in the preview; never enter secrets as names. The generated `agents.json` remains editable after setup; see [custom agent rosters](#custom-agent-rosters).
 
 Optional private access generates a separate office key and records the Gateway endpoint. It leaves sending, approvals and the direct-Tailnet HTTP exception disabled. The wizard never requests Gateway bootstrap credentials or approves devices; complete [manual pairing](task-access-setup.md#3-pair-the-office-with-openclaw) separately for `operator.read`. Retrieve `PIXEL_CONTROL_TOKEN` privately from the saved `office.env` to unlock task details. Do not generate a different key for the browser.
 
-Review the redacted preview and answer yes to save. The default answer is no; cancellation creates nothing. Local mode writes `office.env`; remote mode also writes `collector.env` with an ingest secret matching the office file. Generated keys are never printed. Existing destinations, including empty folders and symlinks, are refused rather than merged or replaced; the wizard asks for another directory. Missing/non-directory parents are rejected at that prompt. If the destination or its parent changes after preview, the exclusive write still protects existing files and the wizard requires a new destination and confirmation without discarding connection answers. An explicitly entered DATA_DIR is retained even when it exactly matches an earlier suggested default. Existing credentials are not imported or rotated. Keep your current config until you have verified the replacement.
+Review the redacted preview and answer yes to save. The default answer is no; cancellation creates nothing. Local mode writes `office.env` and `agents.json`; remote mode also writes `collector.env` with an ingest secret matching the office file. `AGENT_ROSTER_PATH` in the office file points to the roster's absolute dashboard-host path; the collector file has no roster path. Generated keys are never printed. Existing destinations, including empty folders and symlinks, are refused rather than merged or replaced; the wizard asks for another directory. Missing/non-directory parents are rejected at that prompt. If the destination or its parent changes after preview, the exclusive write still protects existing files and the wizard requires a new destination and confirmation without discarding connection or roster answers. An explicitly entered DATA_DIR is retained even when it exactly matches an earlier suggested default. Existing credentials are not imported or rotated. Keep your current config until you have verified the replacement.
 
-The new directory uses POSIX mode `0700` and files use `0600`. On Windows these modes do not establish private ACLs: restrict access to your account before use. Keep the whole bundle outside Git and share neither file publicly. Use a private parent directory you control. A sudden interruption during saving may leave a partial new folder; inspect it and choose another destination on retry. Control characters and Unicode line separators are rejected before trimming. Dotenv values with unsupported quote combinations are rejected at their prompts, but the output directory itself need not follow dotenv quoting rules. If its derived data path cannot be serialized, enter a different absolute `DATA_DIR`.
+The new directory uses POSIX mode `0700` and files use `0600`. On Windows these modes do not establish private ACLs: restrict access to your account before use. Keep the whole bundle outside Git and do not share its secret environment files publicly. Use a private parent directory you control. A sudden interruption during saving may leave a partial new folder; inspect it and choose another destination on retry. Control characters and Unicode line separators are rejected before trimming. Dotenv values with unsupported quote combinations are rejected at their prompts; the output directory must also allow its derived `AGENT_ROSTER_PATH` to round-trip through dotenv. An unsuitable directory is rejected before collecting further settings.
 
 Start explicitly using the command printed by the wizard. The POSIX default example below uses shell expansion of `~`; on Windows use the wizard's printed PowerShell command:
 
@@ -74,6 +76,52 @@ node --env-file /absolute/path/to/collector.env collector/push-pixel-agents.mjs 
 
 For a global npm install the package directory is `openclaw-pixel-agents` under the path printed by `npm root --global`. Dry-run executes OpenClaw but does not transmit a token or snapshot; see [collector setup](../collector/README.md) for scheduling. Use Node's `--env-file`, not shell `source`, for generated files. Existing environment variables override file values, so review your service/shell environment before startup. CORS does not restrict the listener or provide login authentication; retain your network access controls.
 
+## Custom agent rosters
+
+**Unreleased source feature; not in npm 1.7.0.** Use a build containing configurable rosters. The wizard generates a file, or you can adopt one without changing your existing office configuration or credentials:
+
+1. Copy [agents.example.json](../agents.example.json) to a private configuration folder outside the package/repository and edit the complete list:
+
+   ```json
+   {
+     "version": 1,
+     "agents": [
+       { "id": "main", "name": "Coordinator" },
+       { "id": "researcher", "name": "Research Assistant" }
+     ]
+   }
+   ```
+
+2. Add its **absolute path on the dashboard host** to your existing environment file. On Windows use a fully qualified native path; do not use a remote collector path or `~` abbreviation:
+
+   ```dotenv
+   AGENT_ROSTER_PATH='/absolute/path/to/agents.json'
+   ```
+
+3. Restart the office using the same `DATA_DIR` and access keys. Later name/list edits need only another restart, not a build or collector reconfiguration. Rerunning `configure` creates a separate bundle; it is not an editor for existing configuration. An already running process retains the roster it loaded at startup.
+
+An absent or empty `AGENT_ROSTER_PATH` preserves the eight built-in agents. An explicit file replaces the complete roster; it does not append to it. Existing environment variables override env-file settings, including this path. Missing, unreadable, invalid or oversized explicit files stop startup, rather than displaying unrelated defaults. Correct the reported field/index using the example, then restart; for an intentional return to defaults, remove the variable. The server does not repair or rewrite the file.
+
+The file must be regular UTF-8 JSON, at most **64 KiB**, with exactly `version: 1` and **1–50** agent entries containing only `id` and `name`. IDs are case-sensitive and must match OpenClaw exactly: **1–64 ASCII letters/digits/underscores/hyphens**, starting with a letter or digit. Duplicate IDs and reserved names `__proto__`, `constructor`, `prototype` are rejected. Names are literal public text, not markup; use **1–128 UTF-16 code units** without surrounding whitespace, control characters or line separators. No comments, trailing commas or additional per-agent fields are accepted.
+
+Changing a display name retains ID-keyed appearance, tags, visibility and seats. Changing an ID selects a different identity. Removing an entry does not delete that OpenClaw agent, its saved preferences or layout seats; re-adding the same ID restores them. New IDs start enabled in Office with the safe default appearance. Existing IDs keep their built-in defaults until saved preferences override them. Use the existing office controls for tags/appearance/visibility, not extra JSON fields. Old `shodan` seats remain literal in storage; a temporary `main` lookup is used only when no explicit `main` seat or registered `shodan` exists.
+
+The registry remains the allowed set for ingest and private agent queries. Include every ID whose sessions the remote collector submits: any unknown ID rejects the snapshot, even if other IDs are known. To hide a configured agent, use its visibility toggle instead of deleting it from a remote roster. Adding an ID grants no Gateway permissions, bypasses no session-ownership checks and does not enable private access.
+
+### Roster paths in Docker
+
+Keep the roster outside the image and bind-mount it read-only. Use a separate Docker-compatible `container.env` with **container paths**, rather than passing the generated host `office.env` unchanged. In that file set `CORS_ORIGIN` to your browser origin, `DATA_DIR=/app/data`, `DATA_SOURCE=ingest`, `AGENT_ROSTER_PATH=/run/pixel/agents.json` and a private `INGEST_API_TOKEN` matching the collector. Then adapt the host paths:
+
+```sh
+docker run --rm --publish 3001:3001 \
+  --env-file /absolute/path/to/container.env \
+  --mount type=bind,source=/absolute/path/to/private-config/agents.json,target=/run/pixel/agents.json,readonly \
+  --volume pixel-agent-data:/app/data \
+  openclaw-pixel-agents
+```
+
+The mounted file must be readable by the image's non-root account; do not make secret environment files public to solve a roster permission error. Restart the container after editing the mounted roster. If your editor replaces a file atomically, recreate the container so a single-file bind mount references the replacement; no image rebuild is needed. Persist the data volume and keep the same keys. The collector does not need this mount or `AGENT_ROSTER_PATH`.
+
 ## Environment variables
 
 | Variable | Default | Purpose |
@@ -82,6 +130,7 @@ For a global npm install the package directory is `openclaw-pixel-agents` under 
 | `NODE_ENV` | Supplied by runner | `npm start`, Docker and the npm launcher use production mode. Production requires `CORS_ORIGIN`. |
 | `CORS_ORIGIN` | None | Comma-separated exact browser origins allowed for Socket.IO and state-changing REST requests in production. |
 | `DATA_DIR` | See storage below | Preferences, layouts and private task device credentials. Set an absolute persistent path for a service. |
+| `AGENT_ROSTER_PATH` | Built-in eight-agent roster | Optional absolute dashboard-host path to a version-1 roster file. Read once at startup; invalid explicit files fail startup. |
 | `DATA_SOURCE` | `auto` | `auto`, `cli` or `ingest`; unknown values fall back to `auto`. |
 | `OPENCLAW_BIN` | `openclaw` | CLI executable for local polling. The separate collector requires an absolute path. |
 | `POLL_INTERVAL` | `3000` | CLI polling interval in milliseconds. |

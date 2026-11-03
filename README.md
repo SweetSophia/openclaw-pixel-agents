@@ -26,7 +26,7 @@ openclaw-pixel-agents --version
 
 ### Configure the office
 
-**Interactive alternative (unreleased source feature; not in npm 1.7.0):** builds containing the wizard provide `openclaw-pixel-agents configure`. It guides local OpenClaw or a remote collector, optionally prepares private Task/Gateway access, previews settings with secrets hidden, then asks before creating a new private configuration folder. It never overwrites an existing folder, starts services or pairs devices. See [guided configuration](docs/configuration.md#guided-configuration). The manual steps below work with the published package today.
+**Interactive alternative (unreleased source feature; not in npm 1.7.0):** builds containing the wizard provide `openclaw-pixel-agents configure`. It guides local OpenClaw or a remote collector, lets you keep the default agents or enter your own IDs and public names, and optionally prepares private Task/Gateway access. It previews settings with secrets hidden, then asks before creating a new private configuration folder containing an editable `agents.json`. It never overwrites an existing folder, starts services or pairs devices. See [guided configuration](docs/configuration.md#guided-configuration). The manual steps below work with the published package today.
 
 Create a file named **`pixel-agents.env`** in a folder you control, using a text editor, and save these settings:
 
@@ -125,9 +125,13 @@ The collector supplies roster/session status. It does **not** enable private tas
 
 ### Use your own roster
 
-The current server ships with eight predefined agent IDs: `main`, `miku`, `chi`, `sysauxilia`, `descartes`, `cyberlogis`, `cylena` and `cybera`. Display names, default tags and enabled state are defined in `defaultRegistry()` in [server/index.ts](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/server/index.ts); default appearance recipes live in [shared/characterRecipes.ts](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/shared/characterRecipes.ts).
+**Unreleased source feature; not in npm 1.7.0:** custom rosters need a build containing this feature. No new npm publication is implied by a source merge.
 
-If your OpenClaw installation uses different IDs, adapt the registry in a source checkout and rebuild. The current release does not automatically discover an arbitrary agent roster. Tags determine room mapping and can be edited in the office.
+Run `openclaw-pixel-agents configure` and choose custom agents to enter their existing OpenClaw IDs and public display names. The new private bundle contains `agents.json`, and `office.env` points to it through `AGENT_ROSTER_PATH`. To change the list or names later, edit that file and **restart the office—no source edits or rebuild needed**. Rerunning `configure` creates a separate bundle rather than changing your current settings or credentials.
+
+For an existing office, copy [agents.example.json](agents.example.json) into a private configuration folder, edit the complete list, and add its absolute dashboard-host path as `AGENT_ROSTER_PATH` in your existing environment file. Keep the same `DATA_DIR` and keys. See [custom roster configuration](docs/configuration.md#custom-agent-rosters) for the format, limits, Docker paths and troubleshooting.
+
+Without a configured file, the eight built-in IDs remain: `main`, `miku`, `chi`, `sysauxilia`, `descartes`, `cyberlogis`, `cylena` and `cybera`. A custom file replaces that list; IDs must match OpenClaw exactly. Changing only a name keeps ID-keyed preferences and seats. Unknown ingest IDs are rejected, so include every agent whose sessions your collector submits and use the office's existing visibility toggle to hide one. Tags and appearance remain editable in the office; configuration does not create OpenClaw agents or enable private task access.
 
 ## Using the office
 

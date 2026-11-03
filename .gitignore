@@ -5,6 +5,7 @@ coverage/
 .env.local
 office.env
 collector.env
+agents.json
 pixel-agents-config/
 .openclaw-pixel-agents-config/
 *.log

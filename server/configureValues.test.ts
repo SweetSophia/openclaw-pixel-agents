@@ -7,6 +7,7 @@ import { buildConfiguration as buildActualConfiguration, dotenvValue } from '../
 // @ts-expect-error Standalone packaged collector.
 import { getIngestEndpoint } from '../collector/push-pixel-agents.mjs';
 import { loadControlConfig } from './control/config';
+import { parseAgentRoster } from '../shared/agentRoster.cjs';
 
 const context = { home: join(process.cwd(), 'synthetic home'), cwd: process.cwd() };
 function buildConfiguration(answers: Record<string, unknown>, environment: { home: string }) {
@@ -18,12 +19,14 @@ const remote = { mode: 'remote', collectorUrl: 'https://ingest.example/office', 
 it('builds a local office using stable defaults without enabling private access', () => {
   const result = buildConfiguration({}, context);
   expect(result.directory).toBe(join(context.home, '.openclaw-pixel-agents-config'));
-  expect(Object.keys(result.files)).toEqual(['office.env']);
+  expect(Object.keys(result.files)).toEqual(['office.env', 'agents.json']);
   const office = parseEnv(result.files['office.env']);
   expect(office.PORT).toBe('3001');
   expect(office.CORS_ORIGIN).toBe('http://localhost:3001');
   expect(office.DATA_SOURCE).toBe('cli');
   expect(office.DATA_DIR).toBe(join(context.home, '.openclaw-pixel-agents-config', 'data'));
+  expect(office.AGENT_ROSTER_PATH).toBe(join(result.directory, 'agents.json'));
+  expect(parseAgentRoster(JSON.parse(result.files['agents.json'])).agents).toHaveLength(8);
   expect(office.OPENCLAW_BIN).toBe(process.platform === 'win32' ? process.execPath : undefined);
   expect(loadControlConfig(office, context.home).enabled).toBe(false);
 });
@@ -45,6 +48,7 @@ it('keeps collector addressing distinct and generates matching ingest keys but a
   for (const flag of ['CONTROL_SEND_ENABLED', 'CONTROL_APPROVALS_ENABLED', 'CONTROL_ALLOW_TAILNET_HTTP']) expect(office[flag]).toBe('false');
   expect(office.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
   expect(office.OPENCLAW_GATEWAY_PASSWORD).toBeUndefined();
+  expect(collector.AGENT_ROSTER_PATH).toBeUndefined();
   expect(result.preview).not.toContain(office.INGEST_API_TOKEN);
   expect(result.preview).not.toContain(office.PIXEL_CONTROL_TOKEN);
   expect(buildConfiguration(remote, context).files['office.env']).not.toBe(result.files['office.env']);
@@ -101,9 +105,16 @@ it('resolves relative bundle paths under home and gives each bundle isolated sta
   const existing = join(context.home, 'existing-office-state');
   expect(parseEnv(buildConfiguration({ directory: 'replacement', dataDir: existing }, context).files['office.env']).DATA_DIR).toBe(existing);
 });
-it('does not impose dotenv quoting rules on an output directory that is never serialized', () => {
+it('rejects a bundle path whose new roster-path environment value cannot be represented', () => {
   const directory = join(context.home, `O'Brien's "office"`);
-  expect(buildConfiguration({ directory, dataDir: join(context.home, 'separate-state') }, context).directory).toBe(directory);
+  expect(() => buildConfiguration({ directory, dataDir: join(context.home, 'separate-state') }, context)).toThrow(/quotes|environment/i);
+});
+it('validates and serializes custom IDs/names into an editable roster with a public preview', () => {
+  const roster = { version: 1, agents: [{ id: 'sub-worker', name: '研究 Assistant' }] };
+  const plan = buildConfiguration({ roster }, context);
+  expect(JSON.parse(plan.files['agents.json'])).toEqual(roster);
+  expect(plan.preview).toContain('sub-worker'); expect(plan.preview).toContain('研究 Assistant');
+  expect(() => buildConfiguration({ roster: { version: 1, agents: [] } }, context)).toThrow(/roster/i);
 });
 it('keeps URL paths out of the preview while preserving them in the private files', () => {
   const result = buildConfiguration({ ...remote, collectorUrl: 'https://collector.example/private-route', privateAccess: true,

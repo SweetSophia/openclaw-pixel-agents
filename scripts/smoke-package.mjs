@@ -97,7 +97,7 @@ try {
   const port = lease.address().port; await new Promise((accept, reject) => lease.close(error => error ? reject(error) : accept()));
   const origin = `http://127.0.0.1:${port}`;
   const { runConfigure } = await import(pathToFileURL(join(installed, 'bin/configure.mjs')).href);
-  const answers = ['remote', String(port), origin, '', '', origin, process.execPath, 'no', 'yes'];
+  const answers = ['remote', String(port), origin, '', '', origin, process.execPath, '', 'no', 'yes'];
   const wizardOutput = [];
   await runConfigure({ home, output: text => wizardOutput.push(text), ask: async () => {
     assert(answers.length, 'Wizard asked an unexpected question'); return answers.shift();

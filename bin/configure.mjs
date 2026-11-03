@@ -2,9 +2,10 @@ import { homedir } from 'node:os';
 import { lstatSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { buildConfiguration, defaultBrowserOrigin, resolveConfigurationDirectory, safeText, validateAbsolutePath, validateCollectorUrl,
+import { buildConfiguration, defaultBrowserOrigin, dotenvValue, resolveConfigurationDirectory, safeText, validateAbsolutePath, validateCollectorUrl,
   validateGatewayUrl, validateLocalExecutable, validateOrigin, validatePort, validateRemoteExecutablePath } from './configure-values.mjs';
 import { writeConfigurationBundle } from './configure-files.mjs';
+import { AGENT_ROSTER_LIMITS, createDefaultAgentRoster, parseAgentId, parseAgentName } from '../shared/agentRoster.cjs';
 
 function shellPath(value) {
   return process.platform === 'win32' ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -43,6 +44,7 @@ export async function runConfigure({ ask, output, home }) {
   const destination = async () => {
     directory = await prompt('New configuration directory (relative paths start under home; parent must already exist)', join(home, '.openclaw-pixel-agents-config'), value => {
       const path = resolveConfigurationDirectory(value, home);
+      dotenvValue(join(path, 'agents.json'));
       try { if (!statSync(dirname(path)).isDirectory()) throw Error(); }
       catch { throw Error('The destination parent must already exist and be an accessible directory.'); }
       try { lstatSync(path); }
@@ -68,6 +70,26 @@ export async function runConfigure({ ask, output, home }) {
   } else {
     openclawBin = await prompt('Local OpenClaw executable (Windows requires a directly executable binary, not a batch shim)', process.platform === 'win32' ? '' : 'openclaw', validateLocalExecutable);
   }
+  output('The roster lists existing OpenClaw IDs and public display names. IDs must match OpenClaw exactly; this does not create agents or discover them. Never put secrets in a display name.');
+  let roster = createDefaultAgentRoster();
+  if (!await prompt('Use the built-in agent roster? (yes/no)', 'yes', yesNo)) {
+    const count = await prompt('Number of agents', '1', value => {
+      if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > AGENT_ROSTER_LIMITS.maxAgents) throw Error('Choose between 1 and 50 agents.');
+      return Number(value);
+    });
+    const agents = [];
+    const seen = new Set();
+    for (let index = 1; index <= count; index++) {
+      const id = await prompt(`Agent ${index} ID`, '', value => {
+        const id = parseAgentId(value);
+        if (seen.has(id)) throw Error('This agent ID is already in the roster; enter a different ID.');
+        return id;
+      });
+      const name = await prompt(`Agent ${index} display name`, id, parseAgentName);
+      seen.add(id); agents.push({ id, name });
+    }
+    roster = { version: 1, agents };
+  }
   const privateAccess = await prompt('Configure optional private Task/Gateway access? (yes/no)', 'no', yesNo);
   let gatewayUrl;
   if (privateAccess) {
@@ -76,7 +98,7 @@ export async function runConfigure({ ask, output, home }) {
   }
   let paths;
   for (;;) {
-    const plan = buildConfiguration({ mode, port, origin, dataDir, directory, collectorUrl, openclawBin, privateAccess, gatewayUrl }, { home });
+    const plan = buildConfiguration({ mode, port, origin, dataDir, directory, collectorUrl, openclawBin, roster, privateAccess, gatewayUrl }, { home });
     output(`Preview (secrets redacted):\n\n${plan.preview}\n\nNothing has been saved or connected. Keep the whole bundle outside Git, in a private parent directory you control. A sudden interruption during saving can leave a partial NEW bundle; retry with another directory, never overwrite it.`);
     if (process.platform === 'win32') output('Windows: POSIX file modes do not ensure ACL privacy. Secure the configuration directory to your account before using or transferring these secret files.');
     const save = await prompt('Save these new files? [y/N]', 'no', yesNo);
@@ -89,6 +111,7 @@ export async function runConfigure({ ask, output, home }) {
     }
   }
   output(`Saved private configuration:\n${paths.join('\n')}\n\nExisting environment variables override env-file values at startup.\nStart explicitly (PowerShell on Windows; POSIX shell elsewhere):\nopenclaw-pixel-agents --env-file ${shellPath(join(directory, 'office.env'))}\nFrom a source checkout, use node bin/openclaw-pixel-agents.mjs with the same arguments.\nBrowser: ${origin}\nNo connection has been verified.`);
+  output(`Edit ${join(directory, 'agents.json')} to change IDs or public names, then restart the office. No rebuild or collector reconfiguration is required. Changing an ID creates a different identity; changing only its name keeps preferences. Rerunning configure creates a NEW bundle, never edits this one.`);
   if (mode === 'remote') output('Securely copy collector.env to the OpenClaw host; it contains the shared ingest secret.\nFrom the source checkout or installed package directory on that host, replace the path below with the copied file:\nnode --env-file /absolute/path/to/collector.env collector/push-pixel-agents.mjs --dry-run\nDry-run executes OpenClaw on that host but does not send a snapshot. See collector/README.md for scheduling.\nPublic roster ingestion alone does not enable private tasks.');
   if (privateAccess) output(`Private access still requires explicit Gateway pairing with operator.read.\nRetrieve PIXEL_CONTROL_TOKEN privately from ${join(directory, 'office.env')} and enter it in Unlock task details; do not share the file.\nGateway bootstrap credentials remain a separate manual server-only step. Never paste them in the browser.\nSend, approvals and Tailnet HTTP exceptions remain disabled.\nPairing guide: https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/task-access-setup.md`);
 }

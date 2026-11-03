@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { parseEnv } from 'node:util';
 import { getIngestEndpoint } from '../collector/push-pixel-agents.mjs';
+import { createDefaultAgentRoster, parseAgentRoster } from '../shared/agentRoster.cjs';
 
 export function safeText(value) {
   if (typeof value !== 'string' || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(value)) {
@@ -95,10 +96,12 @@ export function buildConfiguration(answers, { home }) {
   if (!['local', 'remote'].includes(mode)) throw Error('Choose local or remote mode.');
   const port = validatePort(String(answers.port ?? '3001'));
   const directory = resolveConfigurationDirectory(answers.directory ?? join(home, '.openclaw-pixel-agents-config'), home);
+  const roster = parseAgentRoster(answers.roster ?? createDefaultAgentRoster());
   const office = {
     PORT: port,
     CORS_ORIGIN: validateOrigin(answers.origin ?? defaultBrowserOrigin(port)),
     DATA_DIR: validateAbsolutePath(answers.dataDir ?? join(directory, 'data')),
+    AGENT_ROSTER_PATH: validateAbsolutePath(join(directory, 'agents.json')),
     DATA_SOURCE: mode === 'remote' ? 'ingest' : 'cli',
     CONTROL_SEND_ENABLED: 'false', CONTROL_APPROVALS_ENABLED: 'false', CONTROL_ALLOW_TAILNET_HTTP: 'false',
   };
@@ -122,6 +125,7 @@ export function buildConfiguration(answers, { home }) {
   const environments = { 'office.env': office, ...(collector ? { 'collector.env': collector } : {}) };
   const serialize = env => Object.entries(env).map(([key, value]) => `${key}=${dotenvValue(value)}`).join('\n') + '\n';
   const files = Object.fromEntries(Object.entries(environments).map(([name, env]) => [name, serialize(env)]));
+  files['agents.json'] = JSON.stringify(roster, null, 2) + '\n';
   const previewValue = (key, value) => {
     if (key.includes('TOKEN')) return '[redacted]';
     if (key === 'PIXEL_AGENTS_URL' || key === 'OPENCLAW_GATEWAY_URL') {
@@ -131,6 +135,7 @@ export function buildConfiguration(answers, { home }) {
     return value;
   };
   const preview = Object.entries(environments).map(([name, env]) => `${join(directory, name)}\n${Object.entries(env)
-    .map(([key, value]) => `${key}=${previewValue(key, value)}`).join('\n')}`).join('\n\n');
+    .map(([key, value]) => `${key}=${previewValue(key, value)}`).join('\n')}`).join('\n\n')
+    + `\n\n${join(directory, 'agents.json')} (public names)\n${roster.agents.map(agent => `${agent.id}: ${agent.name}`).join('\n')}`;
   return { directory, files, preview, mode, privateAccess };
 }

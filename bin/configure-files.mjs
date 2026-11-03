@@ -4,7 +4,7 @@ import { isAbsolute, join } from 'node:path';
 export function writeConfigurationBundle({ directory, files }) {
   const entries = Object.entries(files);
   if (!isAbsolute(directory) || !entries.some(([name]) => name === 'office.env')
-    || entries.some(([name, value]) => !['office.env', 'collector.env'].includes(name) || typeof value !== 'string')) {
+    || entries.some(([name, value]) => !['office.env', 'collector.env', 'agents.json'].includes(name) || typeof value !== 'string')) {
     throw Error('Invalid configuration bundle.');
   }
   let created = false;
