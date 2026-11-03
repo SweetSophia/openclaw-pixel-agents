@@ -2,14 +2,16 @@
 
 const AGENT_ROSTER_LIMITS = Object.freeze({ maxAgents: 50, maxBytes: 65536, maxIdLength: 64, maxNameLength: 128 });
 const RESERVED_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+const ID_REQUIREMENTS = `use 1–${AGENT_ROSTER_LIMITS.maxIdLength} letters/digits/_/-, starting with a letter or digit, and no reserved identities`;
+const NAME_REQUIREMENTS = `use 1–${AGENT_ROSTER_LIMITS.maxNameLength} well-formed Unicode code units without surrounding whitespace or control characters`;
 const DEFAULT_AGENTS = [
   ['main', 'Shodan'], ['miku', 'Miku'], ['chi', 'Chi'], ['sysauxilia', 'Sysauxilia'],
   ['descartes', 'Descartes'], ['cyberlogis', 'Cyberlogis'], ['cylena', 'Cylena'], ['cybera', 'Cybera'],
 ];
 
 function parseAgentId(value) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value) || RESERVED_IDS.has(value)) {
-    throw Error('Invalid roster id: use 1–64 letters/digits/_/-, starting with a letter or digit, and no reserved identities.');
+  if (typeof value !== 'string' || value.length > AGENT_ROSTER_LIMITS.maxIdLength || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value) || RESERVED_IDS.has(value)) {
+    throw Error(`Invalid roster id: ${ID_REQUIREMENTS}.`);
   }
   return value;
 }
@@ -17,7 +19,7 @@ function parseAgentId(value) {
 function parseAgentName(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > AGENT_ROSTER_LIMITS.maxNameLength
     || value.trim() !== value || !value.isWellFormed() || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(value)) {
-    throw Error('Invalid roster name: use 1–128 Unicode code units without surrounding whitespace or control characters.');
+    throw Error(`Invalid roster name: ${NAME_REQUIREMENTS}.`);
   }
   return value;
 }
@@ -38,8 +40,8 @@ function parseAgentRoster(value) {
     if (!hasOnlyKeys(entry, ['id', 'name'])) throw Error(`Invalid roster agents[${index}]: expected only id and name.`);
     let id;
     let name;
-    try { id = parseAgentId(entry.id); } catch { throw Error(`Invalid roster agents[${index}].id.`); }
-    try { name = parseAgentName(entry.name); } catch { throw Error(`Invalid roster agents[${index}].name.`); }
+    try { id = parseAgentId(entry.id); } catch { throw Error(`Invalid roster agents[${index}].id: ${ID_REQUIREMENTS}.`); }
+    try { name = parseAgentName(entry.name); } catch { throw Error(`Invalid roster agents[${index}].name: ${NAME_REQUIREMENTS}.`); }
     if (seen.has(id)) throw Error(`Invalid roster agents[${index}].id: duplicate identity.`);
     seen.add(id);
     return { id, name };

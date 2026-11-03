@@ -300,7 +300,11 @@ function loadPersistedPrefs(): Map<string, PersistedPrefs> {
     const map = new Map<string, PersistedPrefs>();
 
     for (const [k, v] of Object.entries(data)) {
-      try { parseAgentId(k); } catch { continue; }
+      try { parseAgentId(k); }
+      catch {
+        logger.warn({ subsystem: "prefs" }, "skipping persisted prefs with invalid agent ID");
+        continue;
+      }
       const prefs = parsePersistedPrefs(v);
       if (prefs) {
         map.set(k, prefs);

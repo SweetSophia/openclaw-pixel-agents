@@ -52,10 +52,7 @@ export async function runConfigure({ ask, output, home }) {
       throw Error('Destination already exists; choose a new directory.');
     });
     const suggested = dataDirWasDefault ? join(directory, 'data') : dataDir;
-    let fallback = suggested;
-    try { validateAbsolutePath(fallback); }
-    catch { output('The suggested data path cannot be stored in an environment file; enter an absolute DATA_DIR.'); fallback = ''; }
-    const answer = await promptAnswer('Stable absolute office DATA_DIR (reuse existing state only deliberately)', fallback, validateAbsolutePath);
+    const answer = await promptAnswer('Stable absolute office DATA_DIR (reuse existing state only deliberately)', suggested, validateAbsolutePath);
     dataDir = answer.value;
     dataDirWasDefault = dataDirWasDefault && answer.usedFallback;
   };
@@ -111,7 +108,7 @@ export async function runConfigure({ ask, output, home }) {
     }
   }
   output(`Saved private configuration:\n${paths.join('\n')}\n\nExisting environment variables override env-file values at startup.\nStart explicitly (PowerShell on Windows; POSIX shell elsewhere):\nopenclaw-pixel-agents --env-file ${shellPath(join(directory, 'office.env'))}\nFrom a source checkout, use node bin/openclaw-pixel-agents.mjs with the same arguments.\nBrowser: ${origin}\nNo connection has been verified.`);
-  output(`Edit ${join(directory, 'agents.json')} to change IDs or public names, then restart the office. No rebuild or collector reconfiguration is required. Changing an ID creates a different identity; changing only its name keeps preferences. Rerunning configure creates a NEW bundle, never edits this one.`);
+  output(`Edit ${shellPath(join(directory, 'agents.json'))} to change IDs or public names, then restart the office. No rebuild or collector reconfiguration is required. Changing an ID creates a different identity; changing only its name keeps preferences. Rerunning configure creates a NEW bundle, never edits this one.`);
   if (mode === 'remote') output('Securely copy collector.env to the OpenClaw host; it contains the shared ingest secret.\nFrom the source checkout or installed package directory on that host, replace the path below with the copied file:\nnode --env-file /absolute/path/to/collector.env collector/push-pixel-agents.mjs --dry-run\nDry-run executes OpenClaw on that host but does not send a snapshot. See collector/README.md for scheduling.\nPublic roster ingestion alone does not enable private tasks.');
   if (privateAccess) output(`Private access still requires explicit Gateway pairing with operator.read.\nRetrieve PIXEL_CONTROL_TOKEN privately from ${join(directory, 'office.env')} and enter it in Unlock task details; do not share the file.\nGateway bootstrap credentials remain a separate manual server-only step. Never paste them in the browser.\nSend, approvals and Tailnet HTTP exceptions remain disabled.\nPairing guide: https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/task-access-setup.md`);
 }

@@ -13,7 +13,9 @@ const docker = args => {
   assert.equal(result.status, 0, `Docker ${args[0]} failed: ${result.error?.message ?? result.stderr}`);
   return (args[0] === 'logs' ? result.stdout + result.stderr : result.stdout).trim();
 };
-const root = await mkdtemp(join(tmpdir(), 'pixel-roster-docker-'));
+const temporaryRoot = tmpdir();
+assert(!temporaryRoot.includes(','), 'TMPDIR must not contain a comma for the Docker bind-mount smoke');
+const root = await mkdtemp(join(temporaryRoot, 'pixel-roster-docker-'));
 const directory = join(root, 'roster'); const path = join(directory, 'agents.json');
 const owned = [];
 const token = randomBytes(32).toString('hex');
@@ -56,6 +58,9 @@ try {
   await mkdir(directory); await chmod(directory, 0o755); // Synthetic public roster only; no secret files are mounted.
   await writeRoster(first);
   const id = create('valid', true); docker(['start', id]);
+  assert(/^[1-9]\d*$/.test(docker(['exec', id, 'id', '-u'])), 'Docker roster fixture must run as a non-root user');
+  const mounts = JSON.parse(docker(['inspect', '--format', '{{json .Mounts}}', id]));
+  assert(mounts.some(mount => mount.Type === 'bind' && mount.Destination === '/run/pixel' && mount.RW === false), 'Docker roster fixture requires a read-only roster bind mount');
   let base = baseFor(id);
   await ready(base); assert.deepEqual(await snapshot(base), first);
   assert.equal((await fetch(base, { signal: AbortSignal.timeout(5000) })).status, 200);
@@ -73,7 +78,7 @@ try {
   assert.equal(docker(['wait', invalid]), '1');
   const diagnostic = docker(['logs', invalid]);
   assert.match(diagnostic, /Invalid roster/); assert.doesNotMatch(diagnostic, /server running/);
-  console.log('Docker roster verified: read-only directory mount, non-root file access, real API/SPA/assets, atomic file replacement, restart without rebuild, no hot reload and fail-closed invalid startup.');
+  console.log('Docker roster verified: read-only directory mount, non-root file access, real API/SPA/assets, host file replacement, restart without rebuild, no hot reload and fail-closed invalid startup.');
 } catch (error) {
   for (const id of owned) { try { console.error(docker(['logs', '--tail', '20', id])); } catch { /* Original failure wins. */ } }
   throw error;

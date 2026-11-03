@@ -52,6 +52,9 @@ it('saves local defaults only after presenting a redacted preview and affirmativ
   expect(f.output.join('\n')).toContain('Saved');
   expect(f.questions[f.questions.length - 1]).toMatch(/save.*\[y\/N\]/i);
   expect(f.output.join('\n')).toContain(process.platform === 'win32' ? "''" : "'\"'\"'");
+  const editInstruction = f.output.find(line => line.startsWith('Edit '));
+  expect(editInstruction).toMatch(/^Edit '/);
+  expect(editInstruction).toContain(process.platform === 'win32' ? "O''Brien''s office" : "O'\"'\"'Brien'\"'\"'s office");
 });
 it('writes matching remote files with private access disabled for mutations and never prints their secrets', async () => {
   const f = fixture();

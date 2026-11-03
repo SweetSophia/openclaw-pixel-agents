@@ -45,6 +45,7 @@ export function loadAgentRoster(rosterPath: string | undefined): AgentRosterDocu
   }
   let descriptor: number | undefined;
   let bytes: Buffer;
+  let readFailed = false;
   try {
     // Nonblocking open lets descriptor validation reject FIFOs rather than hang.
     descriptor = openSync(rosterPath, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -61,15 +62,20 @@ export function loadAgentRoster(rosterPath: string | undefined): AgentRosterDocu
     if (length > AGENT_ROSTER_LIMITS.maxBytes) throw new RosterFileError('AGENT_ROSTER_PATH exceeds 65536 bytes (64 KiB).');
     bytes = buffer.subarray(0, length);
   } catch (error) {
+    readFailed = true;
     throw Error(error instanceof RosterFileError ? error.message : 'Unable to read AGENT_ROSTER_PATH; check that the file exists and is accessible.');
   } finally {
     if (descriptor !== undefined) {
       try { closeSync(descriptor); }
-      catch { throw Error('Unable to close the AGENT_ROSTER_PATH file.'); }
+      catch { if (!readFailed) throw Error('Unable to close the AGENT_ROSTER_PATH file.'); }
     }
   }
+  let decoded: string;
+  try { decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw Error('AGENT_ROSTER_PATH must contain valid UTF-8 text.'); }
   let value: unknown;
-  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
-  catch { throw Error('AGENT_ROSTER_PATH must contain valid UTF-8 JSON.'); }
-  return parseAgentRoster(value);
+  try { value = JSON.parse(decoded); }
+  catch { throw Error('AGENT_ROSTER_PATH must contain valid JSON.'); }
+  try { return parseAgentRoster(value); }
+  catch (error) { throw Error(`Invalid AGENT_ROSTER_PATH: ${(error as Error).message}`); }
 }

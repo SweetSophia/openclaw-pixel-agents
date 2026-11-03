@@ -48,6 +48,12 @@ describe('versioned agent roster documents', () => {
     try { parseAgentRoster(document([{ id: 'secret\u001bvalue', name: 'safe' }])); }
     catch (error) { expect(String(error)).not.toMatch(/secret|\u001b/); }
   });
+  it('includes safe actionable field requirements without propagating input exceptions', () => {
+    expect(() => parseAgentRoster(document([{ id: '-bad', name: 'Agent' }]))).toThrow(/agents\[0\].id:.*1–64/);
+    expect(() => parseAgentRoster(document([{ id: 'worker', name: '\ud800' }]))).toThrow(/agents\[0\].name:.*well-formed/);
+    const entry = { get id() { throw Error('synthetic-private-marker'); }, name: 'Agent' };
+    try { parseAgentRoster(document([entry])); } catch (error) { expect(String(error)).not.toContain('synthetic-private-marker'); }
+  });
   it('returns the existing default roster without shared mutable entries', () => {
     const first = createDefaultAgentRoster();
     expect(first).toEqual({ version: 1, agents: [

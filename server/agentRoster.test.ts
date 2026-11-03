@@ -10,7 +10,7 @@ import type { PersistedPrefs } from './validation';
 
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, openSync: vi.fn(actual.openSync), readSync: vi.fn(actual.readSync) };
+  return { ...actual, openSync: vi.fn(actual.openSync), readSync: vi.fn(actual.readSync), closeSync: vi.fn(actual.closeSync) };
 });
 const roots: string[] = [];
 const value = { version: 1, agents: [{ id: 'researcher', name: '研究 Assistant' }] };
@@ -70,7 +70,27 @@ it.each([Buffer.from([0xc3, 0x28]), Buffer.from('{"secret":"synthetic\u001bsecre
 });
 it('keeps safe schema field/index diagnostics', () => {
   const f = fixture('{"version":1,"agents":[{"id":"worker","name":" untrimmed "}]}');
-  expect(() => loadAgentRoster(f.path)).toThrow(/agents\[0\].name/);
+  expect(() => loadAgentRoster(f.path)).toThrow(/AGENT_ROSTER_PATH.*agents\[0\].name.*whitespace/);
+});
+it.each([
+  [Buffer.from([0xc3, 0x28]), /must contain valid UTF-8 text/],
+  [Buffer.from('{"synthetic-private-marker": invalid}'), /must contain valid JSON/],
+])('distinguishes encoding failures from JSON syntax without echoing bytes', (contents, diagnostic) => {
+  const f = fixture(contents);
+  expect(() => loadAgentRoster(f.path)).toThrow(diagnostic);
+  try { loadAgentRoster(f.path); } catch (error) { expect(String(error)).not.toContain('synthetic-private-marker'); }
+});
+it('keeps the primary file diagnostic if descriptor cleanup also fails', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const f = fixture();
+  vi.mocked(fs.closeSync).mockImplementationOnce(fd => { actual.closeSync(fd); throw Error('synthetic-close-secret'); });
+  expect(() => loadAgentRoster(f.root)).toThrow(/regular file/);
+});
+it('still fails closed if closing an otherwise readable file fails', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const f = fixture();
+  vi.mocked(fs.closeSync).mockImplementationOnce(fd => { actual.closeSync(fd); throw Error('synthetic-close-secret'); });
+  expect(() => loadAgentRoster(f.path)).toThrow('Unable to close the AGENT_ROSTER_PATH file.');
 });
 it('rejects missing files and directories without falling back', () => {
   const f = fixture();
