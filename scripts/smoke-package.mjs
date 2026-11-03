@@ -131,7 +131,7 @@ try {
   await ingest(); await stop(); await start(); await ingest();
   const { agents } = await (await fetch(`${origin}/api/agents`)).json();
   assert.deepEqual(agents.find(agent => agent.id === 'main').recipe, recipe);
-  const prefs = JSON.parse(await readFile(join(home, '.openclaw-pixel-agents', 'agent-prefs.json'), 'utf8'));
+  const prefs = JSON.parse(await readFile(join(generated.DATA_DIR, 'agent-prefs.json'), 'utf8'));
   assert.deepEqual(prefs.main.recipe, recipe);
   console.log(`Package verified: ${pkg.name}@${pkg.version}; ${files.size} files, script-disabled setup, enabled install notice, guided configuration, production startup, assets, key generation, ingest and restart persistence.`);
   if (values['pack-destination']) console.log(`Tested tarball: ${tarball}`);

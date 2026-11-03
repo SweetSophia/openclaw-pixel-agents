@@ -90,9 +90,26 @@ remote/private saves, default-no, Ctrl+C and EOF passed from source and the
 installed tarball. Local documentation targets were checked. These are synthetic
 fixtures, not live Gateway, Windows-host or deployment acceptance.
 
-One Minor finding remains deferred: a collector URL containing both literal quote
-kinds can pass its field prompt, then fail final dotenv serialization without
-writing files, requiring the user to rerun. No security boundary is bypassed.
+The initial delivery deferred one Minor finding: a collector URL containing both
+literal quote kinds could pass its field prompt, then fail final serialization.
+The subsequent bot-feedback follow-up now rejects it at the field prompt and
+allows correction without losing answers. No security boundary was bypassed.
+
+Bot-feedback follow-up also isolates default state per bundle, anchors relative
+output paths under home, hides endpoint URL paths in preview, handles both early
+and save-time destination collisions, rejects Unicode line separators and Windows
+batch shims, fixes the port-80 default, and narrows platform-dependent test fixtures.
+Existing source-time ingest ordering is tracked separately; no ingest API contract
+or collector execution behavior is changed by this configuration delivery.
+
+Follow-up qualification: 107 focused tests and typecheck passed; the full suite
+and coverage passed 128 files / 1,972 tests, with unchanged coverage totals/floors.
+Build, the 188-file installed tarball's generated-config startup/ingest/restart,
+both audits (zero vulnerabilities), and seven source/installed real-terminal flows
+passed. The terminal flows additionally cover occupied-directory recovery and an
+output directory containing both quote kinds. Windows policy was checked with
+synthetic inputs/simulated platform branching, not a native Windows host.
+The pre-existing ordering risk is tracked in [#342](https://github.com/SweetSophia/openclaw-pixel-agents/issues/342).
 
 The checked execution steps record local implementation/review, not PR creation,
 merge, publication or deployment. Integration choice is pending; if a PR is

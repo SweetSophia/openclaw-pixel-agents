@@ -3,6 +3,9 @@ dist/
 coverage/
 .env
 .env.local
+office.env
+collector.env
+pixel-agents-config/
 *.log
 .DS_Store
 

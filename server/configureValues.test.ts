@@ -19,7 +19,7 @@ it('builds a local office using stable defaults without enabling private access'
   expect(office.PORT).toBe('3001');
   expect(office.CORS_ORIGIN).toBe('http://localhost:3001');
   expect(office.DATA_SOURCE).toBe('cli');
-  expect(office.DATA_DIR).toBe(join(context.home, '.openclaw-pixel-agents'));
+  expect(office.DATA_DIR).toBe(join(context.home, '.openclaw-pixel-agents-config', 'data'));
   expect(office.OPENCLAW_BIN).toBeUndefined();
   expect(loadControlConfig(office, context.home).enabled).toBe(false);
 });
@@ -82,6 +82,38 @@ it.each(['openclaw', './openclaw', 'C:relative.exe', '\\root-relative.exe'])('re
 it.each([' spaced # value $HOME `command` ', "a'b", 'a"b', 'C:\\Users\\Name\\office', 'ends\\', ''])('round-trips dotenv scalar %j without shell expansion', value => {
   expect(parseEnv(`VALUE=${dotenvValue(value)}\n`).VALUE).toBe(value);
 });
-it.each(['a\nb', 'a\rb', 'a\u0000b', '\u001b[31m', '\u007f', 'a\tb', 'both\'"quotes'])('rejects unsupported dotenv/control input %j', value => {
+it.each(['a\nb', 'a\rb', 'a\u0000b', '\u001b[31m', '\u007f', 'a\tb', '\u2028edge', 'mid\u2029line', 'both\'"quotes'])('rejects unsupported dotenv/control input %j', value => {
   expect(() => dotenvValue(value)).toThrow();
+});
+it('uses a canonical browser origin for the default HTTP port', () => {
+  expect(parseEnv(buildConfiguration({ port: '80' }, context).files['office.env']).CORS_ORIGIN).toBe('http://localhost');
+});
+it('resolves relative bundle paths under home and gives each bundle isolated stable state', () => {
+  const first = buildConfiguration({ directory: 'first-office' }, context);
+  const second = buildConfiguration({ directory: 'second-office' }, context);
+  expect(first.directory).toBe(join(context.home, 'first-office'));
+  expect(parseEnv(first.files['office.env']).DATA_DIR).toBe(join(context.home, 'first-office', 'data'));
+  expect(parseEnv(second.files['office.env']).DATA_DIR).toBe(join(context.home, 'second-office', 'data'));
+  const existing = join(context.home, 'existing-office-state');
+  expect(parseEnv(buildConfiguration({ directory: 'replacement', dataDir: existing }, context).files['office.env']).DATA_DIR).toBe(existing);
+});
+it('does not impose dotenv quoting rules on an output directory that is never serialized', () => {
+  const directory = join(context.home, `O'Brien's "office"`);
+  expect(buildConfiguration({ directory, dataDir: join(context.home, 'separate-state') }, context).directory).toBe(directory);
+});
+it('keeps URL paths out of the preview while preserving them in the private files', () => {
+  const result = buildConfiguration({ ...remote, collectorUrl: 'https://collector.example/private-route', privateAccess: true,
+    gatewayUrl: 'wss://gateway.example/secret-route' }, context);
+  expect(parseEnv(result.files['collector.env']).PIXEL_AGENTS_URL).toBe('https://collector.example/private-route');
+  expect(parseEnv(result.files['office.env']).OPENCLAW_GATEWAY_URL).toBe('wss://gateway.example/secret-route');
+  expect(result.preview).not.toContain('private-route'); expect(result.preview).not.toContain('secret-route');
+  expect(result.preview).toContain('https://collector.example'); expect(result.preview).toContain('wss://gateway.example');
+});
+it('rejects unserializable collector URLs at field validation, not after all prompts', async () => {
+  // @ts-expect-error Standalone packaged JavaScript CLI.
+  const { validateCollectorUrl } = await import('../bin/configure-values.mjs');
+  expect(() => validateCollectorUrl(`https://collector.example/a'"b`)).toThrow();
+});
+it.each(['C:\\tools\\openclaw.cmd', 'C:\\tools\\openclaw.BAT'])('rejects Windows remote batch shims rather than promising execFile support: %s', openclawBin => {
+  expect(() => buildConfiguration({ ...remote, openclawBin }, context)).toThrow(/batch|directly executable/i);
 });

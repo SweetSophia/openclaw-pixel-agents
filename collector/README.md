@@ -2,6 +2,8 @@
 
 The collector reads live OpenClaw sessions on the OpenClaw host and sends them to a pixel-agents server running in `ingest` mode. CLI collection and HTTP delivery are each limited to 10 seconds. systemd begins terminating an unexpected overrun after 25 seconds and force-stops the complete control group within 5 more seconds.
 
+Use one scheduled collector service per office/token and avoid overlapping manual runs or multiple producers. The current ingest API applies snapshots in arrival order, not source-time order; delayed concurrent pushes can replace newer state. This behavior predates the configuration wizard and is tracked in [#342](https://github.com/SweetSophia/openclaw-pixel-agents/issues/342). The supplied timer targets one service, but independent manual processes need their own serialization.
+
 ## Requirements
 
 - A Node.js version allowed by the repository's `package.json#engines`

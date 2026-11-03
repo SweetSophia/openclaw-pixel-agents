@@ -30,16 +30,24 @@ it('creates a private bundle with exact file contents and refuses a second write
   expect(() => writeConfigurationBundle({ ...f, files: { 'office.env': 'CHANGED=true\n' } })).toThrow(/exist/i);
   expect(fs.readFileSync(join(f.directory, 'office.env'), 'utf8')).toBe('PORT=3001\n');
 });
-it.each(['file', 'empty-directory', 'nonempty-directory', 'dangling-symlink'])('never replaces an existing %s destination', kind => {
+it.each(['file', 'empty-directory', 'nonempty-directory'])('never replaces an existing %s destination', kind => {
   const f = fixture();
   if (kind === 'file') fs.writeFileSync(f.directory, 'keep');
-  else if (kind === 'dangling-symlink') fs.symlinkSync(join(f.root, 'missing'), f.directory, 'dir');
   else { fs.mkdirSync(f.directory); if (kind === 'nonempty-directory') fs.writeFileSync(join(f.directory, 'keep'), 'keep'); }
   expect(() => writeConfigurationBundle(f)).toThrow(/exist/i);
   expect(fs.lstatSync(f.directory)).toBeTruthy();
   if (kind === 'file') expect(fs.readFileSync(f.directory, 'utf8')).toBe('keep');
   if (kind === 'nonempty-directory') expect(fs.readFileSync(join(f.directory, 'keep'), 'utf8')).toBe('keep');
-  if (kind === 'dangling-symlink') expect(fs.readlinkSync(f.directory)).toBe(join(f.root, 'missing'));
+});
+it('never replaces an existing dangling-symlink destination where the OS permits that fixture', ({ skip }) => {
+  const f = fixture();
+  try { fs.symlinkSync(join(f.root, 'missing'), f.directory, 'dir'); }
+  catch (error) {
+    if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) { skip(); return; }
+    throw error;
+  }
+  expect(() => writeConfigurationBundle(f)).toThrow(/exist/i);
+  expect(fs.readlinkSync(f.directory)).toBe(join(f.root, 'missing'));
 });
 it('does not create missing parents or allow unexpected/traversing file names', () => {
   const f = fixture();

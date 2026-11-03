@@ -4,7 +4,7 @@ import { parseEnv } from 'node:util';
 import { getIngestEndpoint } from '../collector/push-pixel-agents.mjs';
 
 export function safeText(value) {
-  if (typeof value !== 'string' || /[\u0000-\u001f\u007f-\u009f]/.test(value)) {
+  if (typeof value !== 'string' || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(value)) {
     throw Error('Use a single line without terminal control characters.');
   }
   return value;
@@ -23,6 +23,16 @@ export function validatePort(value) {
   safeText(value);
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535) throw Error('Listener port must be an integer from 1 to 65535.');
   return String(Number(value));
+}
+
+export function defaultBrowserOrigin(port) {
+  return new URL(`http://localhost:${validatePort(String(port))}`).origin;
+}
+
+export function resolveConfigurationDirectory(value, home) {
+  safeText(value);
+  if (!value.trim()) throw Error('Choose a new output directory.');
+  return safeText(resolve(home, value));
 }
 
 export function validateOrigin(value) {
@@ -48,11 +58,20 @@ export function validateRemoteExecutablePath(value) {
   if (!posix.isAbsolute(value) && !(windowsQualified && win32.isAbsolute(value))) {
     throw Error('Use a fully absolute path on the remote host (POSIX, Windows drive or UNC path).');
   }
+  if (windowsQualified && /\.(?:cmd|bat)$/i.test(value)) throw Error('Windows batch shims are not supported; supply a directly executable OpenClaw binary or use a supported host/WSL.');
   return value;
 }
 
-export function validateCollectorUrl(value) {
+export function validateLocalExecutable(value) {
   safeText(value);
+  if (process.platform === 'win32' && (value === 'openclaw' || /\.(?:cmd|bat)$/i.test(value))) {
+    throw Error('On Windows, supply an absolute directly executable OpenClaw binary; npm batch shims and the implicit PATH command are not supported. Use a supported host/WSL if none is available.');
+  }
+  return value === 'openclaw' ? value : validateAbsolutePath(value);
+}
+
+export function validateCollectorUrl(value) {
+  dotenvValue(value);
   try {
     const url = new URL(value);
     if (url.search || url.hash || /[?#]/.test(value)) throw Error();
@@ -71,20 +90,18 @@ export function validateGatewayUrl(value) {
   return url.href;
 }
 
-export function buildConfiguration(answers, { home, cwd }) {
+export function buildConfiguration(answers, { home }) {
   const mode = answers.mode ?? 'local';
   if (!['local', 'remote'].includes(mode)) throw Error('Choose local or remote mode.');
   const port = validatePort(String(answers.port ?? '3001'));
+  const directory = resolveConfigurationDirectory(answers.directory ?? join(home, '.openclaw-pixel-agents-config'), home);
   const office = {
     PORT: port,
-    CORS_ORIGIN: validateOrigin(answers.origin ?? `http://localhost:${port}`),
-    DATA_DIR: validateAbsolutePath(answers.dataDir ?? join(home, '.openclaw-pixel-agents')),
+    CORS_ORIGIN: validateOrigin(answers.origin ?? defaultBrowserOrigin(port)),
+    DATA_DIR: validateAbsolutePath(answers.dataDir ?? join(directory, 'data')),
     DATA_SOURCE: mode === 'remote' ? 'ingest' : 'cli',
     CONTROL_SEND_ENABLED: 'false', CONTROL_APPROVALS_ENABLED: 'false', CONTROL_ALLOW_TAILNET_HTTP: 'false',
   };
-  const directoryInput = safeText(answers.directory ?? join(home, '.openclaw-pixel-agents-config'));
-  if (!directoryInput.trim()) throw Error('Choose a new output directory.');
-  const directory = validateAbsolutePath(resolve(cwd, directoryInput));
   let collector;
   if (mode === 'remote') {
     collector = {
@@ -93,8 +110,9 @@ export function buildConfiguration(answers, { home, cwd }) {
       OPENCLAW_BIN: validateRemoteExecutablePath(answers.openclawBin ?? ''),
     };
     office.INGEST_API_TOKEN = collector.PIXEL_INGEST_TOKEN;
-  } else if (answers.openclawBin && answers.openclawBin !== 'openclaw') {
-    office.OPENCLAW_BIN = validateAbsolutePath(answers.openclawBin);
+  } else {
+    const executable = validateLocalExecutable(answers.openclawBin ?? 'openclaw');
+    if (executable !== 'openclaw') office.OPENCLAW_BIN = executable;
   }
   const privateAccess = answers.privateAccess === true;
   if (privateAccess) {
@@ -104,7 +122,15 @@ export function buildConfiguration(answers, { home, cwd }) {
   const environments = { 'office.env': office, ...(collector ? { 'collector.env': collector } : {}) };
   const serialize = env => Object.entries(env).map(([key, value]) => `${key}=${dotenvValue(value)}`).join('\n') + '\n';
   const files = Object.fromEntries(Object.entries(environments).map(([name, env]) => [name, serialize(env)]));
+  const previewValue = (key, value) => {
+    if (key.includes('TOKEN')) return '[redacted]';
+    if (key === 'PIXEL_AGENTS_URL' || key === 'OPENCLAW_GATEWAY_URL') {
+      const url = new URL(value);
+      return `${url.origin}${url.pathname !== '/' ? '/[path hidden]' : ''}`;
+    }
+    return value;
+  };
   const preview = Object.entries(environments).map(([name, env]) => `${join(directory, name)}\n${Object.entries(env)
-    .map(([key, value]) => `${key}=${key.includes('TOKEN') ? '[redacted]' : value}`).join('\n')}`).join('\n\n');
+    .map(([key, value]) => `${key}=${previewValue(key, value)}`).join('\n')}`).join('\n\n');
   return { directory, files, preview, mode, privateAccess };
 }

@@ -33,14 +33,19 @@ an office can generate a separate bundle and deliberately migrate values manuall
 1. Require an interactive terminal for input and output. Help remains usable in
    scripts. Explain scope and that no existing configuration will be loaded.
 2. Ask for local or remote mode, listener port (default `3001`), exact browser
-   origin (default `http://localhost:<port>`), stable absolute office data path
-   (default `~/.openclaw-pixel-agents` resolved to the home directory), and new
+   origin (canonical `http://localhost:<port>`, omitting the default port 80), and new
    output directory (default `.openclaw-pixel-agents-config` under the user's home,
    outside an ordinary source checkout; changed after independent security review).
+   Relative directory answers resolve under home. Reject occupied destinations
+   at this prompt, retaining exclusive mkdir as the real save-time guard. Then
+   ask for stable absolute `DATA_DIR`, defaulting to `<bundle>/data` to isolate
+   independent offices. Existing state is reused only by explicit path selection.
 3. Local: allow the default `openclaw` resolved through runtime PATH or a supplied
-   absolute `OPENCLAW_BIN`. Remote: accept fully absolute POSIX, Windows drive and
+   absolute `OPENCLAW_BIN`. Native Windows requires an explicit directly executable
+   binary, not batch shims or the implicit PATH command. Remote: accept fully absolute POSIX, Windows drive and
    UNC executable paths independently of the dashboard OS; actual host execution
-   remains unverified. Ask for the dashboard's collector-accessible
+   remains unverified; reject Windows batch shims rather than enabling a shell.
+   Ask for the dashboard's collector-accessible
    base URL and the absolute OpenClaw executable path on the remote host. Do not
    claim to verify a remote path. Validate collector URL with the collector's
    existing `getIngestEndpoint` policy. Generate an independent cryptographically
@@ -51,7 +56,9 @@ an office can generate a separate bundle and deliberately migrate values manuall
    unencrypted connection, no embedded credentials/query/fragment. Generate a
    separate 32-byte office key. Do not ask for Gateway bootstrap credentials.
    Set send, approvals and Tailnet HTTP exceptions explicitly false.
-5. Preview absolute output paths and non-secret settings, with tokens redacted.
+5. Preview absolute output paths and non-secret settings, with tokens redacted
+   and collector/Gateway URL paths omitted. URL entry itself is visible; warn
+   users not to enter secrets in URL paths.
    Say remote collector settings belong on the OpenClaw host and that local
    validation does not establish connectivity. Ask explicit save confirmation,
    default no. EOF, Ctrl+C, refusal or validation failure before confirmation must
@@ -59,6 +66,8 @@ an office can generate a separate bundle and deliberately migrate values manuall
 6. After confirmation, exclusively create the bundle directory with POSIX mode
    `0700` and its files with `0600`; no recursive parent creation. Refuse existing
    destinations, including dangling symlinks, and never truncate existing files.
+   On a save-time collision, ask for another directory/data path and require a
+   fresh preview/confirmation without losing the other answers.
    On an ordinary write failure remove only this operation's created files and
    directory; retain the original failure. Warn that sudden process/machine loss
    can leave a partial new bundle; never overwrite it on retry. On Windows explain
@@ -81,10 +90,11 @@ an office can generate a separate bundle and deliberately migrate values manuall
 - Validate port as an integer in `1..65535`, exact HTTP(S) origin without path,
   credentials/query/fragment, and platform-absolute paths. Do not imply an origin
   setting binds the listener to loopback or provides network authentication.
-- Reject newline, NUL and terminal control characters in entered values. Dotenv
+- Reject newline, NUL, Unicode line/paragraph separators and terminal control characters in entered values. Dotenv
   encoding must round-trip with `node:util.parseEnv`; never use JSON backslash
   escaping as dotenv escaping. Quote values with a delimiter absent from the
-  value; reject values containing both quote kinds with an actionable message.
+  value; reject dotenv values containing both quote kinds at their field prompts.
+  Output directory names are not dotenv values and may contain both quote kinds.
 - Keep new files explicitly included in the npm allowlist and package smoke
   assertions; do not broaden the package to all `bin/**` or include private data.
 - Fixed roster remains a separate follow-up. No npm publication or live deployment.

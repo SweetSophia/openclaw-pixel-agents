@@ -26,8 +26,8 @@ export function writeConfigurationBundle({ directory, files }) {
       try { rmdirSync(directory); } catch { /* Never recursively remove unexpected contents. */ }
     }
     const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'IO_ERROR';
-    throw Error(code === 'EEXIST'
+    throw Object.assign(Error(code === 'EEXIST'
       ? 'Destination already exists; choose a new configuration directory. Nothing existing was overwritten.'
-      : `Could not save configuration (${code}). Check the parent directory and permissions; inspect any partial new bundle before retrying.`);
+      : `Could not save configuration (${code}). Check the parent directory and permissions; inspect any partial new bundle before retrying.`), { code });
   }
 }

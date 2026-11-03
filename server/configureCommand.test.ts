@@ -36,7 +36,7 @@ it('saves local defaults only after presenting a redacted preview and affirmativ
   expect(f.output.join('\n')).toContain('Preview');
   expect(f.output.join('\n')).toContain('Saved');
   expect(f.questions[f.questions.length - 1]).toMatch(/save.*\[y\/N\]/i);
-  expect(f.output.join('\n')).toContain("'\"'\"'"); // POSIX shell-safe apostrophe in an absolute startup path.
+  expect(f.output.join('\n')).toContain(process.platform === 'win32' ? "''" : "'\"'\"'");
 });
 it('writes matching remote files with private access disabled for mutations and never prints their secrets', async () => {
   const f = fixture();
@@ -120,4 +120,55 @@ it('prints configure help without a terminal or creating files', () => {
   expect(result.status).toBe(0);
   expect(result.stdout).toContain('configure'); expect(result.stdout).toContain('preview');
   expect(readdirSync(f.root)).toEqual([]);
+});
+it('accepts the canonical default origin at port 80', async () => {
+  const f = fixture(); await f.run(['', '80', '', '', '', '', '', 'yes']);
+  const office = parseEnv(readFileSync(join(f.root, '.openclaw-pixel-agents-config', 'office.env'), 'utf8'));
+  expect(office.CORS_ORIGIN).toBe('http://localhost');
+});
+it('retries an unserializable collector URL without losing the rest of the session', async () => {
+  const f = fixture(); await f.run(['remote', '', '', '', '', `https://collector.example/a'"b`, 'https://collector.example/valid', '/opt/bin/openclaw', 'no', 'yes']);
+  const collector = parseEnv(readFileSync(join(f.root, '.openclaw-pixel-agents-config', 'collector.env'), 'utf8'));
+  expect(collector.PIXEL_AGENTS_URL).toBe('https://collector.example/valid');
+});
+it('retries occupied destinations before preview, preserving existing files and the other answers', async () => {
+  const f = fixture(); const existing = join(f.root, 'existing'); mkdirSync(existing);
+  let directories = 0;
+  await runConfigure({ home: f.root, cwd: f.root, output: (text: string) => f.output.push(text), ask: async (question: string) => {
+    if (question.startsWith('New configuration directory')) return ++directories === 1 ? existing : 'fresh-office';
+    if (question.startsWith('Save these new files?')) return 'yes';
+    return '';
+  } });
+  expect(directories).toBe(2); expect(readdirSync(existing)).toEqual([]);
+  const office = parseEnv(readFileSync(join(f.root, 'fresh-office', 'office.env'), 'utf8'));
+  expect(office.DATA_DIR).toBe(join(f.root, 'fresh-office', 'data'));
+});
+it('recovers from a destination created after preview and requires a fresh confirmation', async () => {
+  const f = fixture(); let directories = 0; let confirmations = 0;
+  await runConfigure({ home: f.root, cwd: f.root, output: () => {}, ask: async (question: string) => {
+    if (question.startsWith('New configuration directory')) return ++directories === 1 ? 'raced-office' : 'retry-office';
+    if (question.startsWith('Save these new files?')) {
+      if (++confirmations === 1) mkdirSync(join(f.root, 'raced-office'));
+      return 'yes';
+    }
+    return '';
+  } });
+  expect(confirmations).toBe(2); expect(readdirSync(join(f.root, 'raced-office'))).toEqual([]);
+  expect(parseEnv(readFileSync(join(f.root, 'retry-office', 'office.env'), 'utf8')).DATA_DIR).toBe(join(f.root, 'retry-office', 'data'));
+});
+it('rejects Unicode line separators before trimming or previewing', async () => {
+  const f = fixture(); await f.run(['\u2028', '', '', '', '', '', '', '', '']);
+  expect(f.output.join('')).not.toContain('\u2028'); expect(readdirSync(f.root)).toEqual([]);
+  expect(f.questions.filter(question => question.startsWith('OpenClaw location'))).toHaveLength(2);
+});
+it('ignores generated configuration filenames in the source repository', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const result = spawnSync('git', ['check-ignore', '--no-index', 'office.env', 'nested/collector.env', 'pixel-agents-config/anything'], { cwd: root, encoding: 'utf8' });
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim().split('\n')).toHaveLength(3);
+});
+it('refuses the implicit PATH command on a simulated Windows dashboard instead of generating an unusable local config', () => {
+  const f = fixture(); const moduleUrl = new URL('../bin/configure-values.mjs', import.meta.url).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `Object.defineProperty(process, 'platform', { value: 'win32' }); const {buildConfiguration}=await import(${JSON.stringify(moduleUrl)}); buildConfiguration({},${JSON.stringify({ home: f.root, cwd: f.root })});`], { encoding: 'utf8', timeout: 5000 });
+  expect(result.status).not.toBe(0); expect(result.stderr).toMatch(/directly executable/i);
 });
