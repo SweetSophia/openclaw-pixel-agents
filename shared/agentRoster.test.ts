@@ -57,9 +57,11 @@ describe('versioned agent roster documents', () => {
   });
   it('explains ASCII identity requirements without echoing labels', () => {
     expect(() => parseAgentId('研究')).toThrow(/ASCII/);
+    try { parseAgentId('研究'); } catch (error) { expect(String(error)).not.toContain('研究'); }
   });
   it('explains the line-separator restriction without echoing labels', () => {
     expect(() => parseAgentName('A\u2028B')).toThrow(/line separators/);
+    try { parseAgentName('A\u2028B'); } catch (error) { expect(String(error)).not.toContain('A\u2028B'); }
   });
   it('returns the existing default roster without shared mutable entries', () => {
     const first = createDefaultAgentRoster();

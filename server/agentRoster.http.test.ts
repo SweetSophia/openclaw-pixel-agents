@@ -87,6 +87,7 @@ it('warns about rejected persisted identities without logging the untrusted key'
   expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
   expect(result.stdout).toMatch(/invalid agent ID/);
   expect(result.stdout + result.stderr).not.toContain('synthetic-hidden-key');
+  expect(result.stdout + result.stderr).not.toContain('another/invalid');
   const warnings = result.stdout.trim().split('\n').map(line => JSON.parse(line));
   expect(warnings).toEqual([expect.objectContaining({ subsystem: 'prefs', invalidAgentIdCount: 2 })]);
 });

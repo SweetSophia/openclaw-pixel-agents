@@ -53,8 +53,7 @@ it('saves local defaults only after presenting a redacted preview and affirmativ
   expect(f.questions[f.questions.length - 1]).toMatch(/save.*\[y\/N\]/i);
   expect(f.output.join('\n')).toContain(process.platform === 'win32' ? "''" : "'\"'\"'");
   const editInstruction = f.output.find(line => line.startsWith('Edit '));
-  expect(editInstruction).toMatch(/^Edit '/);
-  expect(editInstruction).toContain(process.platform === 'win32' ? "O''Brien''s office" : "O'\"'\"'Brien'\"'\"'s office");
+  expect(editInstruction).toContain(`\n${join(directory, 'agents.json')}\n`);
 });
 it('writes matching remote files with private access disabled for mutations and never prints their secrets', async () => {
   const f = fixture();
@@ -72,8 +71,19 @@ it('writes matching remote files with private access disabled for mutations and 
   expect(text).not.toContain(office.PIXEL_CONTROL_TOKEN);
   expect(text).not.toContain(office.INGEST_API_TOKEN);
   expect(text).toContain('--dry-run'); expect(text).toContain('operator.read');
-  expect(text).toContain("Retrieve PIXEL_CONTROL_TOKEN privately from '");
+  expect(text).toContain(`\n${join(dir, 'office.env')}\n`);
   expect(text).not.toMatch(/connected successfully|connection verified/i);
+});
+it('prints apostrophe-containing prose paths verbatim while retaining shell-escaped startup arguments', async () => {
+  const f = fixture(); const directory = join(f.root, "O'Brien office");
+  await f.run(['', '', '', directory, '', '', 'yes', '', 'yes']);
+  const edit = f.output.find(line => line.startsWith('Edit '));
+  const access = f.output.find(line => line.startsWith('Private access still'));
+  expect(edit).toContain(`\n${join(directory, 'agents.json')}\n`);
+  expect(access).toContain(`\n${join(directory, 'office.env')}\n`);
+  expect(edit).not.toContain(process.platform === 'win32' ? "O''Brien" : "O'\"'\"'Brien");
+  expect(access).not.toContain(process.platform === 'win32' ? "O''Brien" : "O'\"'\"'Brien");
+  expect(f.output.join('\n')).toContain(process.platform === 'win32' ? "O''Brien office" : "O'\"'\"'Brien office");
 });
 it.each(['', 'no'])('defaults save confirmation to no (%j)', async confirmation => {
   const f = fixture(); await f.run(['', '', '', '', '', '', '', confirmation]);
