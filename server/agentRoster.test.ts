@@ -101,8 +101,8 @@ it('rejects a FIFO promptly without blocking startup', ({ skip }) => {
   if (made.error && (made.error as NodeJS.ErrnoException).code === 'ENOENT') { skip(); return; }
   expect(made.status).toBe(0);
   const module = fileURLToPath(new URL('./agentRoster.ts', import.meta.url));
-  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
-    `const {loadAgentRoster}=await import(${JSON.stringify(module)});try{loadAgentRoster(${JSON.stringify(fifo)});process.exitCode=2;}catch(error){console.error(error.message);process.exitCode=1;}`],
+  const result = spawnSync(process.execPath, ['--require', 'tsx/cjs', '-e',
+    `const {loadAgentRoster}=require(${JSON.stringify(module)});try{loadAgentRoster(${JSON.stringify(fifo)});process.exitCode=2;}catch(error){console.error(error.message);process.exitCode=1;}`],
   { encoding: 'utf8', timeout: 5000 });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(1);
