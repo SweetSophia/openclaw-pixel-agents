@@ -214,6 +214,16 @@ it('refreshes at most every fifteen seconds, pauses for dirty editing and never 
   await act(async () => { await vi.advanceTimersByTimeAsync(45000); }); expect(reads()).toHaveLength(count); expect(submits()).toHaveLength(1);
 });
 
+it('pauses automatic refresh for incomplete local editing without blocking explicit refresh', async () => {
+  vi.useFakeTimers(); let editing = false;
+  const { result, rerender } = renderHook(() => useSchedules({ agentId: 'cylena', active: true, historical: false, editing }));
+  await act(async () => {}); expect(result.current.snapshot).not.toBeNull();
+  editing = true; rerender();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(reads()).toHaveLength(1); expect(result.current.draft).toBeNull();
+  await act(() => result.current.refresh()); expect(reads()).toHaveLength(2);
+});
+
 it('does not overlap reads and marks a timed-out last-known snapshot stale without changing verification time', async () => {
   const { result } = await ready(); vi.useFakeTimers();
   access.request.mockImplementation((_path, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new ControlApiError('unavailable')), { once: true })));

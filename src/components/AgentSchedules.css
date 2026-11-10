@@ -1,0 +1,12 @@
+.agent-schedules { min-width: 0; overflow-wrap: anywhere; }
+.schedule-list { list-style: none; padding: 0; margin: 16px 0; }
+.schedule-list > li, .schedule-editor, .schedule-recovery { border-top: 1px solid rgba(255,255,255,.12); padding: 16px 0; }
+.agent-schedules h4 { margin: 0 0 8px; font: 600 14px var(--font-body); }
+.agent-schedules p { white-space: pre-wrap; }
+.schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.schedule-editor fieldset { border: 0; padding: 0; margin: 0 0 16px; min-width: 0; }
+.schedule-editor :is(input, textarea, select) { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; margin-bottom: 12px; border: 1px solid var(--border-color, rgba(255,255,255,.2)); border-radius: 6px; padding: 8px 12px; background: var(--bg-panel, #131c2c); color: var(--text-main); font: inherit; }
+.schedule-editor textarea { resize: vertical; }
+.agent-schedules :is(button, input, textarea, select):focus-visible, .schedule-review:focus-visible { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
+.schedule-editor [aria-invalid="true"] { border-color: var(--acc-pink); }
+.schedule-review { margin: 16px 0; }

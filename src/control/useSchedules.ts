@@ -15,7 +15,7 @@ const empty = (): View => ({ snapshot: null, draft: null, confirmation: null, lo
 const identity = (value: unknown) => JSON.stringify(value);
 const terminal = (error: ControlApiError) => ['locked', 'scope-required', 'pairing-required', 'invalid-target', 'disabled', 'transport-required'].includes(error.code);
 
-export function useSchedules(options: { agentId: string; active: boolean; historical: boolean }) {
+export function useSchedules(options: { agentId: string; active: boolean; historical: boolean; editing?: boolean }) {
   const access = useControlAccess(); const owner = identity([options.agentId, access.generation]);
   const context = useRef({ ...options, access, owner }); context.current = { ...options, access, owner };
   const [view, render] = useState<View>(empty); const data = useRef(view);
@@ -222,7 +222,7 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
   useEffect(() => {
     if (!permitted() || !visible) return;
     const automatic = () => {
-      if (freshRequired.current || data.current.draft || binding.current || mutation.current || readers.current.size || data.current.operation?.state === 'unknown') {
+      if (context.current.editing || freshRequired.current || data.current.draft || binding.current || mutation.current || readers.current.size || data.current.operation?.state === 'unknown') {
         update(old => ({ ...old, stale: true })); return;
       }
       // One server page can consume 200 native positions; only explicit Load more follows its cursor.
