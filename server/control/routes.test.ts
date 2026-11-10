@@ -147,7 +147,7 @@ describe('private control routes', () => {
     vi.resetModules(); vi.stubEnv('NODE_ENV', 'production'); vi.stubEnv('CORS_ORIGIN', 'https://pixel.test');
     vi.stubEnv('OPENCLAW_GATEWAY_URL', ''); vi.stubEnv('PIXEL_CONTROL_TOKEN', '');
     const close = vi.fn(); const start = vi.fn();
-    vi.doMock('./gatewayClient', () => ({ createControlGateway: () => ({ start, close, status: () => ({ configured: false, state: 'disabled', canRead: false, canSend: false }), onEvent: () => () => {}, request: vi.fn() }) }));
+    vi.doMock('./gatewayClient', async importOriginal => ({ ...await importOriginal<typeof import('./gatewayClient')>(), createControlGateway: () => ({ start, close, status: () => ({ configured: false, state: 'disabled', canRead: false, canSend: false }), onEvent: () => () => {}, request: vi.fn() }) }));
     const { app, server, io } = await import('../index');
     try {
       expect((await request(app).post('/api/control/agents/main/task').set('Origin', 'https://other.test').send({})).status).toBe(403);
