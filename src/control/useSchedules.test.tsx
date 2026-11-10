@@ -311,3 +311,46 @@ it('retains all 500 recovery records through explicit metadata pages without fol
   expect(result.current.snapshot?.operations).toHaveLength(500); expect(result.current.snapshot?.operationsCursor).toBeUndefined(); expect(reads()).toHaveLength(1);
   const count = access.request.mock.calls.length; await act(() => result.current.loadMoreOperations()); expect(access.request).toHaveBeenCalledTimes(count);
 });
+
+it.each(['unavailable', 'locked'] as const)('superseded prepare rejection %s cannot clear a newer draft or confirmation', async code => {
+  const { result } = await ready(); const delayed = deferred<ScheduleConfirmation>(); const original = access.request.getMockImplementation()!;
+  let preparations = 0;
+  access.request.mockImplementation((path, init) => {
+    if (path.endsWith('/prepare') && ++preparations === 1) return delayed.promise;
+    return original(path, init);
+  });
+  act(() => result.current.setDraft(draft)); let previous!: Promise<void>;
+  act(() => { previous = result.current.prepare(intent); });
+  await waitFor(() => expect(preparations).toBe(1)); const signal = lastRequest()[1]!.signal!;
+  const replacement = { ...draft, message: 'Newer synthetic draft' };
+  act(() => result.current.setDraft(replacement)); expect(signal.aborted).toBe(true);
+  await act(() => result.current.prepare({ kind: 'create', draft: replacement }));
+  expect(result.current.confirmation?.intent).toEqual({ kind: 'create', draft: replacement });
+  await act(async () => { delayed.reject(new ControlApiError(code)); await previous; });
+  expect(result.current.draft).toEqual(replacement); expect(result.current.confirmation?.intent).toEqual({ kind: 'create', draft: replacement });
+  expect(result.current.snapshot?.source).toEqual({ state: 'current', observedAt: 1234 }); expect(result.current.stale).toBe(false); expect(result.current.error).toBeNull();
+});
+
+it('an aborted old metadata rejection cannot poison a verified replacement management epoch', async () => {
+  latest = snapshot({ operations: [outcome()], operationsCursor: 'old-metadata' }); const { result } = await ready();
+  const delayed = deferred<unknown>(); const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.includes('/operations?') ? delayed.promise : original(path, init));
+  let previous!: Promise<void>; act(() => { previous = result.current.loadMoreOperations(); }); const signal = lastRequest()[1]!.signal!;
+  latest = snapshot({ management: { ...latest.management, epoch: 'epoch-2' }, operations: [outcome('changed')] });
+  await act(() => result.current.refresh()); expect(signal.aborted).toBe(true);
+  await act(async () => { delayed.reject(new ControlApiError('unavailable')); await previous; });
+  expect(result.current.snapshot?.management.epoch).toBe('epoch-2'); expect(result.current.snapshot?.operationsError).toBeUndefined();
+  expect(result.current.snapshot?.operations[0].state).toBe('changed'); expect(result.current.stale).toBe(false); expect(result.current.error).toBeNull();
+});
+
+it('an aborted snapshot-derived reconciliation rejection cannot restore an old epoch operation', async () => {
+  latest = snapshot({ operations: [outcome()] }); const { result } = await ready();
+  const delayed = deferred<ScheduleOperation>(); const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.endsWith('/reconcile') ? delayed.promise : original(path, init));
+  let previous!: Promise<void>; act(() => { previous = result.current.reconcile(id); }); const signal = lastRequest()[1]!.signal!;
+  latest = snapshot({ management: { ...latest.management, epoch: 'epoch-2' }, operations: [outcome('changed')] });
+  await act(() => result.current.refresh()); expect(signal.aborted).toBe(true);
+  await act(async () => { delayed.reject(new ControlApiError('unavailable')); await previous; });
+  expect(result.current.snapshot?.management.epoch).toBe('epoch-2'); expect(result.current.stale).toBe(false); expect(result.current.error).toBeNull();
+  await act(() => result.current.refresh()); expect(result.current.snapshot?.operations[0].state).toBe('changed'); expect(result.current.operation).toBeNull();
+});

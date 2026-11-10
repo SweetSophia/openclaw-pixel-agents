@@ -82,9 +82,8 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
       if (previous && previous.management.epoch !== snapshot.management.epoch) {
         cancelRead('metadata'); cancelRead('reconcile'); cancelRead('prepare'); mutation.current?.abort();
         // Recovery continuations belong to the old management source, never the new one.
-        for (const [id, operation] of localOperations.current) {
-          versions.current.set(id, ++sequence.current); localOperations.current.set(id, { ...operation, recovery: undefined });
-        }
+        for (const id of versions.current.keys()) versions.current.set(id, ++sequence.current);
+        for (const [id, operation] of localOperations.current) localOperations.current.set(id, { ...operation, recovery: undefined });
       }
       const jobs = more ? [...new Map([...previous!.jobs, ...snapshot.jobs].map(row => [row.id, row])).values()] : snapshot.jobs;
       const operations = mergeOperations(snapshot.operations, more ? previous!.operations : []);
@@ -106,18 +105,19 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
     if (!permitted() || !previous || !cursor || previous.operations.length >= 500 || readers.current.has('metadata')) return;
     const selected = context.current.owner; const epoch = lifecycle.current; const management = previous.management.epoch;
     const controller = startRead('metadata'); const dispose = controlReadDeadline(controller); update(old => ({ ...old, loading: true }));
+    const applicable = () => current(selected, epoch) && data.current.snapshot?.management.epoch === management && readers.current.get('metadata') === controller;
     try {
       const page = parseScheduleOperationsPage(await context.current.access.request(`${path()}/operations?cursor=${encodeURIComponent(cursor)}`, { signal: controller.signal }));
-      if (!current(selected, epoch) || data.current.snapshot?.management.epoch !== management) return;
+      if (!applicable()) return;
       if (controller.signal.aborted) throw controller.signal.reason;
       if (!page || page.agentId !== context.current.agentId) throw new ControlApiError('invalid-source');
       update(old => ({ ...old, snapshot: old.snapshot ? { ...old.snapshot, operations: mergeOperations(page.operations, old.snapshot.operations), operationsCursor: page.nextCursor, operationsError: undefined } : null, error: null }));
     } catch (error) {
-      if (!current(selected, epoch)) return;
+      if (!applicable()) return;
       const failure = controlReadError(controller, error); invalidate(); freshRequired.current = true;
       // Metadata safety fails independently of the verified native browse/CAS edit state.
       update(old => ({ ...old, confirmation: null, error: failure, snapshot: old.snapshot ? { ...old.snapshot, operationsCursor: undefined, operationsError: 'storage-unavailable' } : null }));
-    } finally { dispose(); if (readers.current.get('metadata') === controller) readers.current.delete('metadata'); if (current(selected, epoch)) update(old => ({ ...old, loading: loading() })); }
+    } finally { dispose(); if (readers.current.get('metadata') === controller) { readers.current.delete('metadata'); if (current(selected, epoch)) update(old => ({ ...old, loading: loading() })); } }
   }, [update]);
   const setDraft = useCallback((value: ScheduleDraft | null) => {
     if (context.current.access.state !== 'unlocked' || scope.current !== context.current.owner) return;
@@ -135,9 +135,11 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
     if (!current(selected, epoch) || draft !== draftVersion.current || !canManage(intent) || readers.current.has('browse')) return;
     const management = data.current.snapshot!.management.epoch!; const started = performance.now();
     const controller = startRead('prepare'); const dispose = controlReadDeadline(controller); update(old => ({ ...old, loading: true, error: null }));
+    const applicable = () => current(selected, epoch) && draft === draftVersion.current && context.current.historical === history
+      && data.current.snapshot?.management.epoch === management && readers.current.get('prepare') === controller;
     try {
       const confirmation = parseScheduleConfirmation(await context.current.access.request(`${path()}/prepare`, { method: 'POST', signal: controller.signal, body: JSON.stringify({ intent }) }));
-      if (!current(selected, epoch) || draft !== draftVersion.current || context.current.historical !== history || data.current.snapshot?.management.epoch !== management) return;
+      if (!applicable()) return;
       if (controller.signal.aborted) throw controller.signal.reason;
       if (!confirmation || confirmation.agentId !== context.current.agentId || identity(confirmation.intent) !== identity(intent)
         || confirmation.epoch !== management || data.current.snapshot?.management.epoch !== management || !canManage(intent)
@@ -147,8 +149,8 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
       binding.current = { owner: selected, draft, history, epoch: management, expires: started + 60000, confirmation };
       // Keep the private capture independent of objects exposed to React consumers.
       update(old => ({ ...old, confirmation: parseScheduleConfirmation(confirmation) }));
-    } catch (error) { if (current(selected, epoch)) fail(controlReadError(controller, error)); }
-    finally { dispose(); if (readers.current.get('prepare') === controller) readers.current.delete('prepare'); if (current(selected, epoch)) update(old => ({ ...old, loading: loading() })); }
+    } catch (error) { if (applicable()) fail(controlReadError(controller, error)); }
+    finally { dispose(); if (readers.current.get('prepare') === controller) { readers.current.delete('prepare'); if (current(selected, epoch)) update(old => ({ ...old, loading: loading() })); } }
   }, [refresh, update]);
   const submit = useCallback(async () => {
     const captured = binding.current; const confirmation = captured?.confirmation;
@@ -183,19 +185,21 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
     const selected = context.current.owner; const epoch = lifecycle.current; const management = data.current.snapshot?.management.epoch;
     const version = ++sequence.current; versions.current.set(operationId, version);
     const controller = startRead('reconcile'); const dispose = controlReadDeadline(controller); invalidate(); update(old => ({ ...old, confirmation: null, loading: true }));
+    const applicable = () => current(selected, epoch) && management === data.current.snapshot?.management.epoch
+      && versions.current.get(operationId) === version && readers.current.get('reconcile') === controller;
     try {
       const result = parseScheduleOperation(await context.current.access.request(`${path()}/operations/${encodeURIComponent(operationId)}/reconcile`, { method: 'POST', signal: controller.signal,
         body: JSON.stringify(operation.recovery?.nextCursor ? { cursor: operation.recovery.nextCursor } : {}) }));
-      if (!current(selected, epoch) || management !== data.current.snapshot?.management.epoch || versions.current.get(operationId) !== version) return;
+      if (!applicable()) return;
       if (controller.signal.aborted) throw controller.signal.reason;
       if (!result || result.agentId !== operation.agentId || result.operationId !== operationId || result.action !== operation.action) throw new ControlApiError('invalid-source');
       applyOperation(result, version); if (result.state !== 'unknown') uncertainIntents.current.delete(operationId);
       update(old => ({ ...old, error: null }));
     } catch (error) {
-      if (!current(selected, epoch) || versions.current.get(operationId) !== version) return;
+      if (!applicable()) return;
       freshRequired.current = true; localOperations.current.set(operationId, { ...operation, recovery: undefined });
       fail(controlReadError(controller, error));
-    } finally { dispose(); if (readers.current.get('reconcile') === controller) readers.current.delete('reconcile'); if (current(selected, epoch)) update(old => ({ ...old, loading: loading() })); }
+    } finally { dispose(); if (readers.current.get('reconcile') === controller) { readers.current.delete('reconcile'); if (current(selected, epoch)) update(old => ({ ...old, loading: loading() })); } }
   }, [update]);
 
   useLayoutEffect(() => {
