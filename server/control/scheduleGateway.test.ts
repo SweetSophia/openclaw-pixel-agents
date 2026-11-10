@@ -166,6 +166,21 @@ describe('separate signed scheduling authority', () => {
     expect(partial.status()).toMatchObject({ canManage: false, epoch: null, reason: 'permission' });
     await expect(partial.request('cron.add', {})).rejects.toMatchObject({ code: 'schedule-denied' }); expect(host.frames).toHaveLength(3);
   });
+  it.each(['token', 'password'] as const)('retained bootstrap %s cannot upgrade a cached read-only scheduling grant', async credential => {
+    const host = await fixture(); const configured = config(host.url);
+    if (credential === 'password') { configured.token = undefined; configured.password = 'schedule-password'; }
+    const identity = devices.loadOrCreateDeviceIdentity(configured.deviceDirectory);
+    devices.writeDeviceGrant(configured.deviceDirectory, host.url, identity.deviceId, 'schedule-device-grant', ['operator.read']);
+    const gateway = client(configured); await ready(gateway);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+    expect(host.frames[0].params.device.id).toBe(identity.deviceId);
+    checkSignature(host.frames[0], credential === 'token' ? 'schedule-bootstrap' : '');
+    expect(gateway.status()).toMatchObject({ canManage: false, epoch: null, reason: 'permission' });
+    expect(gateway.connection()).toBeNull();
+    for (const method of ['cron.add', 'cron.update'] as const) await expect(gateway.request(method, {})).rejects.toMatchObject({ code: 'schedule-denied' });
+    expect(devices.readDeviceGrantDetails(configured.deviceDirectory, host.url, identity.deviceId)?.scopes).toEqual(['operator.read']);
+    expect(host.frames).toHaveLength(1);
+  });
   it('revocation_invalidates_epoch', async () => {
     let connections = 0;
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect'

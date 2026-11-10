@@ -104,8 +104,9 @@ function createSignedGateway(profile: GatewayProfile) {
     const current = ++generation; const ws = new WebSocket(config.url!); socket = ws;
     let connectId: string | undefined;
     const readOnlyFallback = !config.token && !config.password && cached?.scopes.includes('operator.read') && !cached.scopes.includes('operator.write');
+    // Cached scheduling grants bound authority even when bootstrap secrets remain configured.
     const scopes = scheduling
-      ? !config.token && !config.password && cached ? SCHEDULE_SCOPES.filter(scope => cached.scopes.includes(scope)) : [...SCHEDULE_SCOPES]
+      ? cached ? SCHEDULE_SCOPES.filter(scope => cached.scopes.includes(scope)) : [...SCHEDULE_SCOPES]
       : control?.sendEnabled && !readOnlyFallback ? ['operator.read', 'operator.write'] : ['operator.read'];
     // Device-only reconnects keep their existing grant; opt-in never silently upgrades it.
     if (control?.approvalsEnabled && (config.token || config.password || !cached || cached.scopes.includes('operator.approvals'))) scopes.push('operator.approvals');
