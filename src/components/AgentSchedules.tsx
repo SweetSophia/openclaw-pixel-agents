@@ -55,7 +55,7 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
   const snapshot = schedules.snapshot;
   const rootRef = useRef<HTMLElement>(null); const newRef = useRef<HTMLButtonElement>(null);
   const editorTrigger = useRef<HTMLButtonElement | null>(null); const confirmTrigger = useRef<HTMLButtonElement | null>(null);
-  const submitted = useRef<string | null>(null);
+  const submitted = useRef<{ operationId: string; editor: Editor | null } | null>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const reviewRef = useRef<HTMLElement>(null); const previousHistorical = useRef(historical);
   // Partial fields are private tab memory, never placeholder valid drafts or shared caches.
@@ -72,10 +72,12 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
   }, [historical, active, schedules.refresh]);
   useEffect(() => { if (active && schedules.confirmation) reviewRef.current?.focus(); }, [schedules.confirmation, active]);
   useEffect(() => {
-    if (schedules.operation?.operationId === submitted.current && schedules.operation.state === 'confirmed') {
-      submitted.current = null; setEditor(null); setErrors({}); schedules.setDraft(null); restore(editorTrigger.current);
+    const receipt = submitted.current;
+    if (receipt && schedules.operation?.operationId === receipt.operationId && schedules.operation.state === 'confirmed') {
+      submitted.current = null;
+      if (editor === receipt.editor) { setEditor(null); setErrors({}); schedules.setDraft(null); restore(editorTrigger.current); }
     }
-  }, [schedules.operation]); // A receipt closes only the editor that explicitly submitted it.
+  }, [schedules.operation, editor]); // A receipt closes only its unchanged submitted editor.
   useEffect(() => { if (active && editor) rootRef.current?.querySelector<HTMLInputElement>('[data-schedule-name]')?.focus(); }, [editor?.target?.id, editor !== null]);
   const manageable = active && !historical && access.state === 'unlocked' && access.status?.canRead === true
     && snapshot?.management.canManage === true && snapshot.source.state === 'current' && !schedules.stale;
@@ -92,7 +94,7 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
     const fields = { ...editor.fields, [field]: value };
     setEditor({ ...editor, fields }); setErrors({}); schedules.setDraft(validate(fields).draft);
   };
-  const cancelEditor = () => { pendingFocus.current = editorTrigger.current; setEditor(null); setErrors({}); schedules.setDraft(null); };
+  const cancelEditor = () => { submitted.current = null; pendingFocus.current = editorTrigger.current; setEditor(null); setErrors({}); schedules.setDraft(null); };
   const review = async (trigger: HTMLButtonElement) => {
     if (!editor || historical) return;
     const checked = validate(editor.fields); setErrors(checked.errors);
@@ -180,7 +182,7 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
           : intent.kind === 'enabled' ? intent.enabled ? <p>Enabling permits future execution. Ordinary tools can act externally despite no announcements or failure alerts. Native default staggering may apply.</p> : <p>Pausing stops future scheduling; existing runs may continue.</p>
             : <p>{confirmation.currentEnabled ? 'This enabled schedule changes future runs.' : 'The schedule remains paused.'} Changing interval timing can reanchor the schedule; cron retains native default staggering.</p>}
         <p className="task-muted">Review applies only to this exact target and revision. Confirmation expires within 60 seconds; a refresh or navigation cancels it.</p>
-        <div className="schedule-actions"><button type="button" disabled={!manageable || controlsBusy} onClick={() => { submitted.current = confirmation.operationId; void schedules.submit(); }}>{intent.kind === 'create' ? 'Create disabled schedule' : intent.kind === 'edit' ? 'Confirm edit' : intent.enabled ? 'Confirm enable' : 'Confirm pause'}</button>
+        <div className="schedule-actions"><button type="button" disabled={!manageable || controlsBusy} onClick={() => { submitted.current = { operationId: confirmation.operationId, editor }; void schedules.submit(); }}>{intent.kind === 'create' ? 'Create disabled schedule' : intent.kind === 'edit' ? 'Confirm edit' : intent.enabled ? 'Confirm enable' : 'Confirm pause'}</button>
           <button type="button" onClick={() => { pendingFocus.current = confirmTrigger.current; schedules.setDraft(schedules.draft); }}>Cancel confirmation</button></div>
       </section>}
       <section aria-label="Schedule recovery records" className="schedule-recovery">

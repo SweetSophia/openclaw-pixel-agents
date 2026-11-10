@@ -188,3 +188,37 @@ it('Escape closes the drawer without preparing or submitting an incomplete sched
   fireEvent.keyDown(document, { key: 'Escape' }); expect(close).toHaveBeenCalledOnce();
   expect(access.request.mock.calls.some(([path]) => /\/(prepare|submit|reconcile)$/.test(path))).toBe(false);
 });
+
+it.each(['field changes', 'cancel then refresh and new editor'] as const)('a delayed confirmed receipt preserves newer draft after %s', async scenario => {
+  await open(); fill(); fireEvent.click(screen.getByRole('button', { name: 'Review disabled creation' }));
+  await screen.findByRole('region', { name: 'Review schedule change' });
+  let finish!: () => void; const delayed = new Promise<void>(resolve => { finish = resolve; });
+  const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation(async (path, init) => {
+    const response = await original(path, init);
+    if (path.endsWith('/submit')) await delayed;
+    return response;
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create disabled schedule' }));
+  await waitFor(() => expect(submissions).toHaveLength(1));
+  expect(screen.queryByRole('region', { name: 'Review schedule change' })).toBeNull();
+  if (scenario === 'cancel then refresh and new editor') {
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel editing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New schedule' })).toBeEnabled());
+    // Identical fields in a replacement editor must still count as newer local work.
+    fill();
+  } else {
+    fireEvent.change(screen.getByLabelText('Task prompt'), { target: { value: 'Newer local draft while receipt is pending' } });
+  }
+  const prompt = screen.getByRole('textbox', { name: 'Task prompt' }); prompt.focus();
+  const expected = scenario === 'field changes' ? 'Newer local draft while receipt is pending' : draft.message;
+  await act(async () => { finish(); });
+  await screen.findByText(/Native change acknowledged/);
+  expect(screen.getByRole('textbox', { name: 'Task prompt' })).toHaveValue(expected); expect(prompt).toHaveFocus();
+  expect(submissions).toHaveLength(1);
+  // A fresh review proves the hook's valid draft survived too, not just the local textbox.
+  fireEvent.click(screen.getByRole('button', { name: 'Review disabled creation' }));
+  const review = await screen.findByRole('region', { name: 'Review schedule change' });
+  expect(within(review).getByText(expected)).toBeInTheDocument(); expect(submissions).toHaveLength(1);
+});
