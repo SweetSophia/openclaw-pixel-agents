@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-Status: approach accepted; written design awaiting approval. This document does not authorize implementation, live pairing, new live grants, or real scheduled tasks.
+Status: written design approved by the user on 2026-11-10; implementation planning authorized. Execution follows review of the implementation plan. No live pairing, new live grants, or real scheduled tasks are authorized.
 
 ## Purpose and chosen approach
 
