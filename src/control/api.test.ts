@@ -21,6 +21,15 @@ it.each([['model-denied', 403], ['model-busy', 409]] as const)('preserves method
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code }), { status })));
   await expect(controlFetch('/api/control/agents/cylena/model', 'fixture-key', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code, message: expect.stringMatching(/model|work/i) });
 });
+it.each(['schedule-outcome-unknown', 'schedule-changed', 'schedule-denied', 'schedule-storage-unavailable'])('keeps %s local and never suggests replaying a mutation', async code => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code }), { status: 409 })));
+  let caught: unknown;
+  try { await controlFetch('/api/control/agents/custom-id/schedules/submit', 'fixture-key', { method: 'POST', body: '{}' }); }
+  catch (error) { caught = error; }
+  expect(caught).toMatchObject({ code, message: expect.stringMatching(/schedule|scheduling/i) });
+  expect((caught as Error).message).not.toMatch(/retry|try again|resubmit/i);
+  expect((caught as Error).message).toMatch(/other.*remain.*(available|unlocked)/i);
+});
 it.each(['approval-changed', 'approval-unavailable', 'rate-limited'])('parses only closed proven-not-dispatched approval rejection %s', async code => {
   for (const [extra, expected] of [[{ approvalDisposition: 'not-dispatched' }, 'not-dispatched'], [{}, undefined], [{ approvalDisposition: 'attempted' }, undefined], [{ approvalDisposition: 'not-dispatched', unexpected: true }, undefined]] as const) {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code, error: 'Rejected before native dispatch.', ...extra }), { status: code === 'rate-limited' ? 429 : 409 })));

@@ -25,6 +25,10 @@ const messages: Partial<Record<ClientErrorCode, string>> = {
   'approval-unavailable': 'This approval is no longer available to this conversation audience.',
   'approval-changed': 'This approval changed. Inspect the current record and explicitly confirm any new decision.',
   'approval-outcome-unknown': 'Approval outcome is unknown. Inspect the record to reconcile; this decision will not be replayed.',
+  'schedule-outcome-unknown': 'The schedule outcome is unknown. Inspect current schedules to reconcile; this action will not be replayed. Other panels remain available.',
+  'schedule-changed': 'The schedule changed. Inspect the current definition and explicitly confirm any new action. Other panels remain available.',
+  'schedule-denied': 'Scheduling management was denied by OpenClaw. Other panels remain unlocked.',
+  'schedule-storage-unavailable': 'Scheduling management storage is unavailable. Ask the office operator to inspect it. Other panels remain available.',
   'timed-out': 'The request timed out. Try again.',
 };
 // Browser-only error copy must not expand the server's rejection vocabulary.
@@ -35,6 +39,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'workspace-changed', 'unavailable', 'invalid-source', 'usage-denied', 'stop-denied',
   'approvals-denied', 'approval-unavailable', 'approval-changed', 'approval-outcome-unknown',
   'model-denied', 'model-busy',
+  'schedule-outcome-unknown', 'schedule-changed', 'schedule-denied', 'schedule-storage-unavailable',
 ]);
 export class ControlApiError extends Error {
   constructor(public readonly code: ClientErrorCode = 'unavailable', public readonly approvalDisposition?: 'not-dispatched') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }
