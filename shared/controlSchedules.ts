@@ -16,12 +16,13 @@ export interface ScheduleRow {
 export interface ScheduleOperation {
   operationId: string; agentId: string; action: ScheduleIntent['kind'];
   state: 'confirmed' | 'observed' | 'changed' | 'unknown' | 'not-sent'; jobId?: string;
+  recovery?: { scanned: number; truncated: boolean; nextCursor?: string };
 }
 export interface ScheduleOperationsPage { agentId: string; operations: ScheduleOperation[]; nextCursor?: string }
 export interface ScheduleManagement { configured: boolean; state: ControlGatewayState; canManage: boolean; epoch: string | null; reason: string | null }
 export interface ScheduleSnapshot {
   agentId: string; source: ControlSource; management: ScheduleManagement; jobs: ScheduleRow[];
-  operations: ScheduleOperation[]; operationsCursor?: string; scanned: number; truncated: boolean; nextCursor?: string;
+  operations: ScheduleOperation[]; operationsCursor?: string; operationsError?: 'storage-unavailable'; scanned: number; truncated: boolean; nextCursor?: string;
 }
 
 const INVALID = Symbol('invalid-schedule-field');
@@ -101,6 +102,13 @@ export function parseScheduleOperation(value: unknown): ScheduleOperation | null
   return object(value, {
     operationId: uuid, agentId, action: oneOf(['create', 'edit', 'enabled']),
     state: oneOf(['confirmed', 'observed', 'changed', 'unknown', 'not-sent']), jobId: optional(text(200)),
+    recovery: optional(child(value => {
+      const recovery = object<NonNullable<ScheduleOperation['recovery']>>(value, {
+        scanned: value => integer(value) !== INVALID && (value as number) <= 2000 ? value : INVALID,
+        truncated: bool, nextCursor: optional(text(2048)),
+      });
+      return recovery && (!recovery.nextCursor || (recovery.truncated && recovery.scanned > 0 && recovery.scanned < 2000)) ? recovery : null;
+    })),
   });
 }
 export function parseScheduleOperationsPage(value: unknown): ScheduleOperationsPage | null {
@@ -132,10 +140,12 @@ export function parseScheduleSnapshot(value: unknown): ScheduleSnapshot | null {
   const snapshot = object<ScheduleSnapshot>(value, {
     agentId, source: child(value => object(value, { state: oneOf(['current', 'stale']), observedAt: timestamp })),
     management: child(parseManagement), jobs: list(parseRow, 2000), operations: list(parseScheduleOperation, 50), operationsCursor: optional(text(2048)),
+    operationsError: optional(oneOf(['storage-unavailable'])),
     scanned: value => integer(value) !== INVALID && (value as number) <= 2000 ? value : INVALID,
     truncated: bool, nextCursor: optional(text(2048)),
   });
   return snapshot && snapshot.jobs.every(job => job.agentId === snapshot.agentId)
     && snapshot.operations.every(operation => operation.agentId === snapshot.agentId)
-    && (!snapshot.operationsCursor || snapshot.operations.length > 0) ? snapshot : null;
+    && (!snapshot.operationsCursor || snapshot.operations.length > 0)
+    && (!snapshot.operationsError || (snapshot.operations.length === 0 && !snapshot.operationsCursor)) ? snapshot : null;
 }

@@ -10,7 +10,7 @@ export interface ScheduleReservation {
   createdAt: number; state: 'uncertain' | 'acknowledged' | 'observed' | 'changed'; jobId?: string;
 }
 export interface ScheduleJournal {
-  reserve(input: { operationId: string; agentId: string; requestDigest: string }): Promise<ScheduleReservation>;
+  reserve(input: { operationId: string; agentId: string; requestDigest: string }): Promise<ScheduleReservation & { reserved: boolean }>;
   record(operationId: string, state: ScheduleReservation['state'], jobId?: string): Promise<void>;
   list(agentId: string): ScheduleReservation[];
   close(): Promise<void>;
@@ -212,7 +212,7 @@ export function openScheduleJournal(options: { directory: string; binding: { gat
         const previous = metadata!.records.find(row => row.operationId.toLowerCase() === operationId.toLowerCase());
         if (previous) {
           if (previous.agentId !== agentId || previous.requestDigest !== requestDigest || previous.bindingDigest !== bindingDigest) throw changed();
-          return { ...previous };
+          return { ...previous, reserved: false };
         }
         if (metadata!.records.some(row => row.agentId === agentId && row.requestDigest === requestDigest
           && (row.state === 'uncertain' || row.state === 'changed'))) throw changed();
@@ -220,8 +220,8 @@ export function openScheduleJournal(options: { directory: string; binding: { gat
         const reservation: ScheduleReservation = { operationId, agentId, requestDigest, bindingDigest,
           declarationKey: `pixel-agents:${metadata!.installationId}:${operationId}`, createdAt: Date.now(), state: 'uncertain' };
         const next = { ...metadata!, records: [...metadata!.records, reservation] };
-        // Only this durable return authorizes a caller to consider a native send; this journal never sends or replays.
-        write(next); metadata = next; return { ...reservation };
+        // Only an explicitly new durable reservation authorizes first send; existing rows never grant replay.
+        write(next); metadata = next; return { ...reservation, reserved: true };
       });
     },
     record(operationId, state, jobId) {

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { CONTROL_LIMITS, controlByteSize, controlRecord } from '../../shared/control';
 import { parseScheduleDraft, parseScheduleIntent, type ScheduleDraft, type ScheduleIntent, type ScheduleRow } from '../../shared/controlSchedules';
+import { ControlError } from './errors';
 
 const reservedDeclarations = ['heartbeat-task:', 'heartbeat:', 'skill-collection-review:'];
 const knownJobFields = new Set([
@@ -30,6 +31,16 @@ function closed(value: unknown, keys: readonly string[]): Record<string, unknown
   return input && Reflect.ownKeys(input).every(key => typeof key === 'string' && keys.includes(key)) ? input : null;
 }
 export function isCanonicalScheduleAgentId(id: string): boolean { return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id); }
+
+export function parseScheduleNativePage(value: unknown, offset: number): { jobs: Record<string, unknown>[]; snapshotRevision: string; hasMore: boolean } {
+  const record = closed(value, ['jobs', 'snapshotRevision', 'total', 'offset', 'limit', 'hasMore', 'nextOffset']);
+  if (!record || !Array.isArray(record.jobs) || record.jobs.length > 50 || !record.jobs.every(row => controlRecord(row) !== null)
+    || !text(record.snapshotRevision, 128) || !safeInteger(record.total) || record.offset !== offset || record.limit !== 50 || offset > record.total
+    || record.jobs.length !== Math.min(50, record.total - offset)
+    || record.hasMore !== (offset + record.jobs.length < record.total)
+    || record.nextOffset !== (record.hasMore ? offset + record.jobs.length : null)) throw new ControlError('invalid-source');
+  return { jobs: record.jobs as Record<string, unknown>[], snapshotRevision: record.snapshotRevision, hasMore: record.hasMore as boolean };
+}
 
 export function projectScheduleJob(value: unknown, agentId: string): ScheduleRow | null {
   const job = controlRecord(value);

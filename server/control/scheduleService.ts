@@ -1,43 +1,46 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { CONTROL_LIMITS, controlByteSize, controlRecord, isControlAgentId } from '../../shared/control';
-import type { ScheduleManagement, ScheduleOperationsPage, ScheduleSnapshot } from '../../shared/controlSchedules';
+import type { ScheduleConfirmation, ScheduleIntent, ScheduleManagement, ScheduleOperation, ScheduleOperationsPage, ScheduleSnapshot, ScheduleSubmit } from '../../shared/controlSchedules';
 import type { ControlGateway, ScheduleGateway } from './gatewayClient';
 import { ControlError } from './errors';
 import type { ScheduleConfig } from './scheduleConfig';
-import { readScheduleRecovery } from './scheduleJournal';
-import { isCanonicalScheduleAgentId, projectScheduleJob } from './scheduleProjection';
+import { openScheduleJournal, readScheduleRecovery, type ScheduleJournal } from './scheduleJournal';
+import { isCanonicalScheduleAgentId, parseScheduleNativePage, projectScheduleJob } from './scheduleProjection';
+import { createScheduleMutations } from './scheduleMutations';
 
 export interface ScheduleService {
   read(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ScheduleSnapshot>;
   operations(agentId: string, cursor?: string): Promise<ScheduleOperationsPage>;
+  prepare(agentId: string, intent: ScheduleIntent, signal?: AbortSignal): Promise<ScheduleConfirmation>;
+  submit(agentId: string, input: ScheduleSubmit): Promise<ScheduleOperation>;
+  reconcile(agentId: string, operationId: string, cursor?: string, signal?: AbortSignal): Promise<ScheduleOperation>;
   close(): Promise<void>;
 }
 interface RecoveryCursor { purpose: 'recovery'; agentId: string; offset: number; revision: string; expires: number }
 interface NativeCursor { purpose: 'native'; agentId: string; epoch: string; offset: number; scanned: number; revision: string; expires: number }
 type Cursor = RecoveryCursor | NativeCursor;
-interface NativePage { jobs: Record<string, unknown>[]; snapshotRevision: string; hasMore: boolean }
 const PAGE = 50; const AUTOMATIC = 200; const MAXIMUM = 2000;
-const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-function page(value: unknown, offset: number): NativePage {
-  const record = controlRecord(value);
-  const fields = ['jobs', 'snapshotRevision', 'total', 'offset', 'limit', 'hasMore', 'nextOffset'];
-  if (!record || Reflect.ownKeys(record).some(key => typeof key !== 'string' || !fields.includes(key))
-    || !Array.isArray(record.jobs) || record.jobs.length > PAGE || !record.jobs.every(row => controlRecord(row) !== null)
-    || typeof record.snapshotRevision !== 'string' || !record.snapshotRevision.length || record.snapshotRevision.length > 128
-    || /[\u0000-\u001f\u007f-\u009f]/.test(record.snapshotRevision) || /[\ud800-\udfff]/u.test(record.snapshotRevision)
-    || !integer(record.total) || record.offset !== offset || record.limit !== PAGE || offset > record.total
-    || record.jobs.length !== Math.min(PAGE, record.total - offset)
-    || record.hasMore !== (offset + record.jobs.length < record.total)
-    || record.nextOffset !== (record.hasMore ? offset + record.jobs.length : null)) throw new ControlError('invalid-source');
-  return { jobs: record.jobs as Record<string, unknown>[], snapshotRevision: record.snapshotRevision, hasMore: record.hasMore as boolean };
-}
 
 export function createScheduleService(options: {
   reader: ControlGateway; manager: ScheduleGateway; config: ScheduleConfig; registeredAgents: () => ReadonlySet<string>;
 }): ScheduleService {
   const { reader, manager, config, registeredAgents } = options;
   const cursors = new Map<string, Cursor>(); const admitted = new Set<Promise<unknown>>(); const controllers = new Set<AbortController>();
-  let closed = false; let epoch = 0; let managerStarted = false; let closePromise: Promise<void> | undefined;
+  let closed = false; let epoch = 0; let managerStarted = false; let closePromise: Promise<void> | undefined; let readCount = 0;
+  let journal: ScheduleJournal | undefined; let journalBinding: string | undefined;
+  const mutations = createScheduleMutations({ manager, registeredAgents, acquireRead, readerReady: () => {
+    const status = reader.status(); const endpoint = reader.artifactConnection ? reader.artifactConnection()?.gatewayUrl : config.url;
+    return !closed && config.enabled && status.configured && status.canRead && status.state === 'ready'
+      && endpoint !== undefined && endpoint === manager.connection()?.gatewayUrl;
+  }, journal: () => {
+    if (closed) throw new ControlError('unavailable');
+    const connection = manager.connection(); const status = manager.status();
+    if (!config.enabled || !connection || !status.canManage || status.state !== 'ready' || status.epoch !== connection.epoch) throw new ControlError('schedule-denied');
+    const binding = { gatewayUrl: connection.gatewayUrl, deviceId: connection.deviceId }; const key = JSON.stringify(binding);
+    if (journal && journalBinding !== key) throw new ControlError('schedule-changed');
+    if (!journal) { journal = openScheduleJournal({ directory: config.deviceDirectory, binding }); journalBinding = key; }
+    return journal;
+  } });
   const off = reader.onEvent(event => {
     if (event.event === 'source.invalidated') {
       epoch++; for (const [token, cursor] of cursors) if (cursor.purpose === 'native') cursors.delete(token);
@@ -56,6 +59,12 @@ export function createScheduleService(options: {
     // Native normalization lowercases IDs. Never silently operate on a different configured identity.
     if (!isCanonicalScheduleAgentId(agentId)) throw new ControlError('schedule-denied');
   }
+  function acquireRead(): () => void {
+    if (closed) throw new ControlError('unavailable');
+    if (readCount >= 4) throw new ControlError('rate-limited');
+    readCount++; let released = false;
+    return () => { if (!released) { released = true; readCount--; } };
+  }
   function readerEpoch(): string {
     const status = reader.status();
     if (status.state === 'pairing-required') throw new ControlError('pairing-required');
@@ -70,14 +79,15 @@ export function createScheduleService(options: {
     if (readerEpoch() !== expected) throw new ControlError('schedule-changed');
   }
   function admission<T>(agentId: string, action: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
-    try { registered(agentId); } catch (error) { return Promise.reject(error); }
+    let release: () => void;
+    try { registered(agentId); release = acquireRead(); } catch (error) { return Promise.reject(error); }
     const controller = new AbortController(); const abort = () => controller.abort();
     if (signal?.aborted) controller.abort(); else signal?.addEventListener('abort', abort, { once: true });
     controllers.add(controller);
     const work = Promise.resolve().then(() => { registered(agentId); if (controller.signal.aborted) throw new ControlError('unavailable'); return action(controller.signal); });
     admitted.add(work);
     void work.then(cleanup, cleanup);
-    function cleanup() { admitted.delete(work); controllers.delete(controller); signal?.removeEventListener('abort', abort); }
+    function cleanup() { admitted.delete(work); controllers.delete(controller); signal?.removeEventListener('abort', abort); release(); }
     return work;
   }
   async function recovery(agentId: string, token?: string): Promise<ScheduleOperationsPage> {
@@ -116,11 +126,18 @@ export function createScheduleService(options: {
     read(agentId, cursor, signal) {
       return admission(agentId, async requestSignal => {
         const expected = readerEpoch(); const position = continuation(agentId, cursor, expected); const initialScanned = position.scanned;
-        const recoveryPage = await recovery(agentId); current(agentId, expected, requestSignal);
+        let recoveryPage: ScheduleOperationsPage; let operationsError: ScheduleSnapshot['operationsError'];
+        try { recoveryPage = await recovery(agentId); }
+        catch (error) {
+          if (!(error instanceof ControlError) || error.code !== 'schedule-storage-unavailable') throw error;
+          recoveryPage = { agentId, operations: [] }; operationsError = 'storage-unavailable';
+        }
+        current(agentId, expected, requestSignal);
         // Only an authenticated new browse reaches here; recovery/history and HTTP listening do not pair management.
         if (config.enabled && cursor === undefined && !managerStarted) { manager.start(); managerStarted = true; }
         const snapshot: ScheduleSnapshot = { agentId, source: { state: 'current', observedAt: Date.now() },
           management: management(), jobs: [], operations: recoveryPage.operations,
+          ...(operationsError ? { operationsError } : {}),
           ...(recoveryPage.nextCursor ? { operationsCursor: recoveryPage.nextCursor } : {}), scanned: position.scanned, truncated: cursor !== undefined };
         // Reserve the exact opaque-token footprint before adding rows, including JSON-escaping costs.
         const token = randomBytes(32).toString('base64url');
@@ -133,7 +150,7 @@ export function createScheduleService(options: {
           // Native deletions clamp the offset; a changed revision means refresh, not malformed/empty data.
           const responseRevision = controlRecord(response)?.snapshotRevision;
           if (position.revision && typeof responseRevision === 'string' && position.revision !== responseRevision) throw new ControlError('schedule-changed');
-          const native = page(response, position.offset);
+          const native = parseScheduleNativePage(response, position.offset);
           position.revision = native.snapshotRevision;
           snapshot.source.observedAt = Date.now();
           more = native.hasMore;
@@ -168,13 +185,20 @@ export function createScheduleService(options: {
       }, signal);
     },
     operations(agentId, cursor) { return admission(agentId, () => recovery(agentId, cursor)); },
+    prepare(agentId, intent, signal) { return mutations.prepare(agentId, intent, signal); },
+    submit(agentId, input) { return mutations.submit(agentId, input); },
+    reconcile(agentId, operationId, cursor, signal) { return mutations.reconcile(agentId, operationId, cursor, signal); },
     close() {
       if (closePromise) return closePromise;
       closed = true; off(); cursors.clear();
       for (const controller of controllers) controller.abort();
+      const mutationClose = mutations.close();
       let failure = false;
       try { manager.close(); } catch { failure = true; }
-      closePromise = Promise.allSettled([...admitted]).then(() => { if (failure) throw new ControlError('unavailable'); });
+      closePromise = Promise.allSettled([...admitted, mutationClose]).then(async () => {
+        try { await journal?.close(); } catch { failure = true; }
+        if (failure) throw new ControlError('unavailable');
+      });
       return closePromise;
     },
   };

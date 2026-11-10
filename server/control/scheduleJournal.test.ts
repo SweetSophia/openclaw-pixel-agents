@@ -32,6 +32,15 @@ afterEach(async () => {
 });
 
 describe('durable metadata-only schedule journal', () => {
+  it('first_reservation_only_grants_admission_once_and_never_persists_the_flag', async () => {
+    const dir = directory(); const journal = open(dir); const request = input();
+    const results = await Promise.all([journal.reserve(request), journal.reserve(request), journal.reserve(request)]);
+    expect(results.map(row => row.reserved)).toEqual([true, false, false]);
+    expect(journal.list('main')[0]).not.toHaveProperty('reserved');
+    expect((await readScheduleRecovery(dir, 'main'))[0]).not.toHaveProperty('reserved');
+    expect(disk(dir).records[0]).not.toHaveProperty('reserved');
+    await journal.close(); expect((await open(dir).reserve(request)).reserved).toBe(false);
+  });
   it('reservation_survives_restart_without_payload', async () => {
     const dir = directory(); const journal = open(dir);
     const request = { ...input(), requestDigest: scheduleCreateDigest('main', {
@@ -48,8 +57,9 @@ describe('durable metadata-only schedule journal', () => {
     expect(fs.statSync(join(dir, 'journal.lock')).mode & 0o777).toBe(0o600);
     await journal.close();
     const restarted = open(dir);
-    expect(await restarted.reserve(request)).toEqual(reserved);
-    expect(restarted.list('main')).toEqual([reserved]);
+    expect(await restarted.reserve(request)).toEqual({ ...reserved, reserved: false });
+    const { reserved: _admission, ...metadata } = reserved;
+    expect(restarted.list('main')).toEqual([metadata]);
     const detached = restarted.list('main'); detached[0].state = 'changed';
     reserved.state = 'observed';
     expect(restarted.list('main')[0].state).toBe('uncertain');
@@ -74,7 +84,7 @@ describe('durable metadata-only schedule journal', () => {
 
   it.each(['gatewayUrl', 'deviceId'] as const)('refuses old-binding reuse and mutation after changing %s', async field => {
     const dir = directory(); const first = open(dir); const request = input();
-    const original = await first.reserve(request); await first.close();
+    const { reserved: _admission, ...original } = await first.reserve(request); await first.close();
     const changed = open(dir, { ...binding, [field]: field === 'gatewayUrl' ? 'https://other.example.test' : 'b'.repeat(64) });
     expect(changed.list('main')).toEqual([original]);
     await expect(changed.reserve(request)).rejects.toMatchObject({ code: 'schedule-changed' });
@@ -96,11 +106,12 @@ describe('durable metadata-only schedule journal', () => {
   it('serializes competing reservations and preserves acknowledged metadata on restart', async () => {
     const dir = directory(); const journal = open(dir); const request = input();
     const [first, duplicate] = await Promise.all([journal.reserve(request), journal.reserve(request)]);
-    expect(duplicate).toEqual(first); expect(disk(dir).records).toHaveLength(1);
+    expect(duplicate).toEqual({ ...first, reserved: false }); expect(disk(dir).records).toHaveLength(1);
     await journal.record(request.operationId, 'acknowledged', 'native-job');
     await journal.record(request.operationId, 'observed');
     await journal.close();
-    expect(open(dir).list('main')).toEqual([{ ...first, state: 'observed', jobId: 'native-job' }]);
+    const { reserved: _admission, ...metadata } = first;
+    expect(open(dir).list('main')).toEqual([{ ...metadata, state: 'observed', jobId: 'native-job' }]);
   });
 
   it('settles queued writes before idempotent close and refuses new writes while closing', async () => {
@@ -184,7 +195,7 @@ describe('durable metadata-only schedule journal', () => {
   });
 
   it('keeps active writer lock intact when a second instance reads or closes', async () => {
-    const dir = directory(); const first = open(dir); const request = input(); const record = await first.reserve(request);
+    const dir = directory(); const first = open(dir); const request = input(); const { reserved: _admission, ...record } = await first.reserve(request);
     const lock = fs.readFileSync(join(dir, 'journal.lock'), 'utf8'); const second = open(dir);
     expect(second.list('main')).toEqual([record]);
     await expect(second.reserve(input('blocked'))).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
@@ -194,7 +205,7 @@ describe('durable metadata-only schedule journal', () => {
   });
 
   it('never steals an abandoned lock and still permits side-effect-free recovery', async () => {
-    const dir = directory(); const journal = open(dir); const request = input(); const original = await journal.reserve(request);
+    const dir = directory(); const journal = open(dir); const request = input(); const { reserved: _admission, ...original } = await journal.reserve(request);
     await journal.close(); fs.writeFileSync(join(dir, 'journal.lock'), 'abandoned-unverified-owner', { mode: 0o600 });
     const before = fs.readdirSync(dir); const raw = fs.readFileSync(join(dir, 'journal.json'), 'utf8');
     expect(await readScheduleRecovery(dir, 'main')).toEqual([original]);
@@ -231,7 +242,7 @@ describe('durable metadata-only schedule journal', () => {
   });
 
   it('leaves crash-shaped foreign temporary files untouched and recovers uncertain metadata', async () => {
-    const dir = directory(); const journal = open(dir); const original = await journal.reserve(input()); await journal.close();
+    const dir = directory(); const journal = open(dir); const { reserved: _admission, ...original } = await journal.reserve(input()); await journal.close();
     const orphan = join(dir, `journal.${randomUUID()}.tmp`);
     fs.writeFileSync(orphan, '{partial-write', { mode: 0o600 });
     const reopened = open(dir); await reopened.reserve(input('new'));
@@ -240,7 +251,7 @@ describe('durable metadata-only schedule journal', () => {
   });
 
   it('returns only validated read-only metadata when opening the writer directory fails', async () => {
-    const dir = directory(); const first = open(dir); const original = await first.reserve(input()); await first.close();
+    const dir = directory(); const first = open(dir); const { reserved: _admission, ...original } = await first.reserve(input()); await first.close();
     const real = fs.openSync;
     vi.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
       if (args[0] === dir) throw new Error('synthetic writer directory open failure'); return real(...args);

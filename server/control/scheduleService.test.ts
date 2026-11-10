@@ -1,6 +1,6 @@
 // @vitest-environment node
 import fs from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -172,7 +172,7 @@ describe('bounded private schedule browsing', () => {
     expect(f.manager.start).not.toHaveBeenCalled(); expect(f.manager.request).not.toHaveBeenCalled();
     fs.writeFileSync(join(directory, 'journal.json'), '{}');
     await expect(f.service.operations('main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
-    await expect(f.service.read('main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+    expect(await f.service.read('main')).toMatchObject({ jobs: [{ id: 'one' }], operations: [], operationsError: 'storage-unavailable' });
   });
   it('browses_intact_native_prompts_and_retrieves_all_500_large_recovery_records_independently', async () => {
     const f = fixture([native('large', 'main', 'x'.repeat(16384))], true); const saved = writeRecovery(f.directory);
@@ -224,5 +224,72 @@ describe('bounded private schedule browsing', () => {
     expect(f.manager.close).toHaveBeenCalledTimes(1); expect(aborted).toBe(true); expect(finished).toBe(false);
     await expect(f.service.read('main')).rejects.toMatchObject({ code: 'unavailable' });
     settle({}); await closing; await rejected; expect(finished).toBe(true);
+  });
+  it.each(['corrupt', 'unsafe'] as const)('isolates_%s_journal_failures_from_browsing_and_updates_but_refuses_creation', async failure => {
+    const f = fixture(undefined, true); const saved = writeRecovery(f.directory, 0);
+    if (failure === 'corrupt') fs.writeFileSync(saved.path, '{}'); else fs.chmodSync(saved.path, 0o644);
+    vi.spyOn(f.manager, 'status').mockReturnValue({ configured: true, state: 'ready', canManage: true, epoch: 'e1', reason: null });
+    vi.spyOn(f.manager, 'connection').mockReturnValue({ epoch: 'e1', gatewayUrl: 'ws://127.0.0.1:9/', deviceId: 'actual-ready-device' });
+    const draft = { name: 'Synthetic', message: 'Synthetic prompt', schedule: { kind: 'every' as const, everyMs: 60000 } };
+    const prepared = await f.service.prepare('main', { kind: 'create', draft });
+    await expect(f.service.submit('main', { operationId: prepared.operationId, intent: prepared.intent })).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+    const snapshot = await f.service.read('main'); expect(snapshot).toMatchObject({ jobs: [{ id: 'one' }], operations: [], operationsError: 'storage-unavailable' });
+    expect(snapshot.operationsCursor).toBeUndefined(); expect(parseScheduleSnapshot(snapshot)).not.toBeNull();
+    vi.mocked(f.manager.request).mockImplementation(async method => method === 'cron.get' ? native('one') : { ...native('one'), enabled: true, configRevision: 'revision-2' });
+    const enable = await f.service.prepare('main', { kind: 'enabled', jobId: 'one', revision: 'revision-1', enabled: true });
+    expect(await f.service.submit('main', { operationId: enable.operationId, intent: enable.intent })).toMatchObject({ state: 'confirmed' });
+    expect(fs.readdirSync(saved.directory)).toEqual(['journal.json']);
+  });
+  it('full_journal_refuses_creation_without_hiding_valid_metadata_or_blocking_native_reads_and_edits', async () => {
+    const f = fixture(undefined, true); const saved = writeRecovery(f.directory);
+    vi.spyOn(f.manager, 'status').mockReturnValue({ configured: true, state: 'ready', canManage: true, epoch: 'e1', reason: null });
+    vi.spyOn(f.manager, 'connection').mockReturnValue({ epoch: 'e1', gatewayUrl: 'ws://127.0.0.1:9/', deviceId: 'actual-ready-device' });
+    const draft = { name: 'Synthetic', message: 'Unrelated synthetic prompt', schedule: { kind: 'every' as const, everyMs: 60000 } };
+    const prepared = await f.service.prepare('main', { kind: 'create', draft });
+    await expect(f.service.submit('main', { operationId: prepared.operationId, intent: prepared.intent })).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+    const snapshot = await f.service.read('main'); expect(snapshot.jobs[0].id).toBe('one'); expect(snapshot.operations).toHaveLength(50);
+    expect(snapshot.operationsError).toBeUndefined(); expect(snapshot.operationsCursor).toEqual(expect.any(String));
+    vi.mocked(f.manager.request).mockImplementation(async method => method === 'cron.get' ? native('one') : { ...native('one'), enabled: true, configRevision: 'revision-2' });
+    const enable = await f.service.prepare('main', { kind: 'enabled', jobId: 'one', revision: 'revision-1', enabled: true });
+    expect(await f.service.submit('main', { operationId: enable.operationId, intent: enable.intent })).toMatchObject({ state: 'confirmed' });
+    expect(JSON.parse(fs.readFileSync(saved.path, 'utf8')).records).toHaveLength(500);
+    expect(vi.mocked(f.manager.request).mock.calls.every(call => call[0] !== 'cron.add')).toBe(true);
+  });
+  it('shares_four_read_slots_across_ordinary_browse_metadata_and_management_preflight_and_recovery', async () => {
+    const f = fixture(undefined, true);
+    vi.spyOn(f.manager, 'status').mockReturnValue({ configured: true, state: 'ready', canManage: true, epoch: 'e1', reason: null });
+    vi.spyOn(f.manager, 'connection').mockReturnValue({ epoch: 'e1', gatewayUrl: 'ws://127.0.0.1:9/', deviceId: 'actual-ready-device' });
+    const browseSettles: Array<(value: unknown) => void> = []; const managementSettles: Array<(value: unknown) => void> = [];
+    vi.mocked(f.reader.request).mockImplementation(() => new Promise(resolve => browseSettles.push(resolve)));
+    vi.mocked(f.manager.request).mockImplementation(() => new Promise(resolve => managementSettles.push(resolve)));
+    const enabled = { kind: 'enabled' as const, jobId: 'one', revision: 'revision-1', enabled: true };
+    const first = f.service.read('main'); const second = f.service.read('main'); const preflight = f.service.prepare('main', enabled);
+    const saved = writeRecovery(f.directory, 1); const operationId = saved.metadata.records[0].operationId;
+    saved.metadata.records[0].bindingDigest = createHash('sha256').update(JSON.stringify({ gatewayUrl: 'ws://127.0.0.1:9/', deviceId: 'actual-ready-device' })).digest('hex');
+    fs.writeFileSync(saved.path, JSON.stringify(saved.metadata));
+    const fourth = f.service.reconcile('main', operationId); const held: Promise<unknown>[] = [first, second, preflight, fourth];
+    for (const promise of held) void promise.catch(() => {});
+    try {
+      await vi.waitFor(() => { expect(browseSettles).toHaveLength(2); expect(managementSettles).toHaveLength(2); });
+      await expect(f.service.operations('main')).rejects.toMatchObject({ code: 'rate-limited' });
+      await expect(f.service.read('main')).rejects.toMatchObject({ code: 'rate-limited' });
+      await expect(f.service.prepare('main', enabled)).rejects.toMatchObject({ code: 'rate-limited' });
+      await expect(f.service.reconcile('main', operationId)).rejects.toMatchObject({ code: 'rate-limited' });
+      expect(f.reader.request).toHaveBeenCalledTimes(2); expect(f.manager.request).toHaveBeenCalledTimes(2);
+      browseSettles.shift()!({ jobs: [], snapshotRevision: 's1', total: 0, offset: 0, limit: 50, hasMore: false, nextOffset: null }); await first;
+      expect((await f.service.operations('main')).operations).toHaveLength(1);
+      const replacement = f.service.prepare('main', enabled); held.push(replacement); void replacement.catch(() => {});
+      await vi.waitFor(() => expect(managementSettles).toHaveLength(3));
+      managementSettles.shift()!(native('one')); await preflight;
+      const rejected = [second, fourth, replacement].map(promise => expect(promise).rejects.toMatchObject({ code: 'unavailable' }));
+      const closing = f.service.close(); expect(f.manager.close).toHaveBeenCalledTimes(1);
+      browseSettles.shift()!({}); managementSettles.forEach(resolve => resolve(native('one')));
+      await Promise.all([...rejected, closing]);
+      await expect(f.service.operations('main')).rejects.toMatchObject({ code: 'unavailable' });
+      await expect(f.service.prepare('main', enabled)).rejects.toMatchObject({ code: 'unavailable' });
+    } finally {
+      const closing = f.service.close(); browseSettles.forEach(resolve => resolve({})); managementSettles.forEach(resolve => resolve({}));
+      await Promise.allSettled(held); await closing;
+    }
   });
 });

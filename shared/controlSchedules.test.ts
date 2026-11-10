@@ -71,6 +71,18 @@ describe('closed private scheduling contract', () => {
     for (const state of ['confirmed', 'observed', 'changed', 'unknown', 'not-sent']) expect(parseScheduleOperation({ ...operation, state, jobId: 'job' })).not.toBeNull();
     for (const extra of [{ state: 'completed' }, { action: 'delete' }, { message: 'private' }, { operationId: 'arbitrary' }]) expect(parseScheduleOperation({ ...operation, ...extra })).toBeNull();
   });
+  it('validates_closed_reconciliation_facts_and_explicit_storage_warnings', () => {
+    const recovery = { scanned: 200, truncated: true, nextCursor: 'opaque-reconciliation' };
+    expect(parseScheduleOperation({ ...operation, state: 'unknown', recovery })).toEqual({ ...operation, state: 'unknown', recovery });
+    for (const extra of [{ scanned: -1 }, { scanned: 2001 }, { scanned: 1.5 }, { truncated: 'yes' }, { nextCursor: '' },
+      { nextCursor: 'x'.repeat(2049) }, { declarationKey: 'private' }, { scanned: 0 }, { truncated: false }, { scanned: 2000 }]) {
+      expect(parseScheduleOperation({ ...operation, recovery: { ...recovery, ...extra } })).toBeNull();
+    }
+    expect(parseScheduleSnapshot({ ...snapshot, operations: [], operationsError: 'storage-unavailable' })).not.toBeNull();
+    for (const extra of [{ operationsError: 'unknown' }, { operationsCursor: 'cursor' }, { operations: [operation] }]) {
+      expect(parseScheduleSnapshot({ ...snapshot, operations: [], operationsError: 'storage-unavailable', ...extra })).toBeNull();
+    }
+  });
   it('separates_closed_bounded_recovery_pages_from_native_continuation', () => {
     const page = { agentId: 'custom-id', operations: [operation], nextCursor: 'opaque-recovery' };
     expect(parseScheduleOperationsPage(page)).toEqual(page);
