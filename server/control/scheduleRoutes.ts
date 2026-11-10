@@ -25,8 +25,11 @@ export function createScheduleRouter(service: ScheduleService): Router {
     run(req, res, signal => service.read(String(req.params.id), cursor as string | undefined, signal));
   });
   router.get<{ id: string }>('/operations', (req, res) => {
-    if (Object.keys(req.query).length) { res.status(400).json({ code: 'invalid-request', error: 'Invalid recovery request.' }); return; }
-    run(req, res, () => service.operations(String(req.params.id)));
+    const cursor = req.query.cursor;
+    if (Object.keys(req.query).some(key => key !== 'cursor') || (cursor !== undefined && (typeof cursor !== 'string' || !cursor || cursor.length > 2048))) {
+      res.status(400).json({ code: 'invalid-request', error: 'Invalid recovery cursor.' }); return;
+    }
+    run(req, res, () => service.operations(String(req.params.id), cursor as string | undefined));
   });
   return router;
 }

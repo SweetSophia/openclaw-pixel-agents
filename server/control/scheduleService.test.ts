@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { controlByteSize } from '../../shared/control';
-import { parseScheduleSnapshot, type ScheduleManagement } from '../../shared/controlSchedules';
+import { parseScheduleOperationsPage, parseScheduleSnapshot, type ScheduleManagement } from '../../shared/controlSchedules';
 import { createScheduleService, type ScheduleService } from './scheduleService';
 import type { ControlGateway, GatewayEvent, ScheduleGateway } from './gatewayClient';
 import { openScheduleJournal } from './scheduleJournal';
@@ -15,6 +15,15 @@ function native(id: string, agentId = 'main', message = 'Synthetic prompt') {
   return { id, agentId, effectiveAgentId: agentId, owner: { agentId }, name: 'Synthetic', enabled: false,
     configRevision: 'revision-1', schedule: { kind: 'every', everyMs: 60000 }, sessionTarget: 'isolated',
     wakeMode: 'now', payload: { kind: 'agentTurn', message }, delivery: { mode: 'none' }, failureAlert: false, state: {} };
+}
+function writeRecovery(root: string, count = 500) {
+  const directory = join(root, 'control-schedules'); fs.mkdirSync(directory, { mode: 0o700 }); const installationId = randomUUID();
+  const records = Array.from({ length: count }, () => {
+    const operationId = randomUUID(); return { operationId, agentId: 'main', declarationKey: `pixel-agents:${installationId}:${operationId}`,
+      requestDigest: 'a'.repeat(64), bindingDigest: 'b'.repeat(64), createdAt: 1700000000000, state: 'acknowledged', jobId: '界'.repeat(200) };
+  });
+  const metadata = { version: 1, installationId, records }; const path = join(directory, 'journal.json');
+  fs.writeFileSync(path, JSON.stringify(metadata), { mode: 0o600 }); return { metadata, path, directory };
 }
 function fixture(rows = [native('one')], enabled = false) {
   const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-schedule-service-')); directories.push(directory);
@@ -158,35 +167,53 @@ describe('bounded private schedule browsing', () => {
     const journal = openScheduleJournal({ directory, binding: { gatewayUrl: 'ws://old.synthetic.test', deviceId: 'old-device' } });
     const reserved = await journal.reserve({ operationId: randomUUID(), agentId: 'main', requestDigest: 'a'.repeat(64) }); await journal.close();
     const before = fs.readdirSync(directory); const result = await f.service.operations('main');
-    expect(result).toEqual([{ operationId: reserved.operationId, agentId: 'main', action: 'create', state: 'unknown' }]);
+    expect(result).toEqual({ agentId: 'main', operations: [{ operationId: reserved.operationId, agentId: 'main', action: 'create', state: 'unknown' }] });
     expect(fs.readdirSync(directory)).toEqual(before); expect(JSON.stringify(result)).not.toMatch(/digest|declaration|binding|old-device/);
     expect(f.manager.start).not.toHaveBeenCalled(); expect(f.manager.request).not.toHaveBeenCalled();
     fs.writeFileSync(join(directory, 'journal.json'), '{}');
     await expect(f.service.operations('main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
     await expect(f.service.read('main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
   });
-  it('fails_explicitly_instead_of_returning_oversized_recovery_metadata', async () => {
-    const f = fixture(undefined, true); const directory = join(f.directory, 'control-schedules');
-    fs.mkdirSync(directory, { mode: 0o700 }); const installationId = randomUUID();
-    const records = Array.from({ length: 500 }, () => {
-      const operationId = randomUUID(); return { operationId, agentId: 'main', declarationKey: `pixel-agents:${installationId}:${operationId}`,
-        requestDigest: 'a'.repeat(64), bindingDigest: 'b'.repeat(64), createdAt: 1700000000000, state: 'acknowledged', jobId: '界'.repeat(200) };
-    });
-    fs.writeFileSync(join(directory, 'journal.json'), JSON.stringify({ version: 1, installationId, records }), { mode: 0o600 });
-    await expect(f.service.operations('main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
-    expect(f.manager.start).not.toHaveBeenCalled();
+  it('browses_intact_native_prompts_and_retrieves_all_500_large_recovery_records_independently', async () => {
+    const f = fixture([native('large', 'main', 'x'.repeat(16384))], true); const saved = writeRecovery(f.directory);
+    const metadata = await f.service.operations('main'); expect(metadata.operations).toHaveLength(50); expect(metadata.nextCursor).toEqual(expect.any(String));
+    expect(f.manager.start).not.toHaveBeenCalled(); expect(f.reader.request).not.toHaveBeenCalled();
+    const snapshot = await f.service.read('main'); expect(parseScheduleSnapshot(snapshot)).not.toBeNull();
+    expect(snapshot.jobs[0].draft?.message).toBe('x'.repeat(16384)); expect(controlByteSize(snapshot)).toBeLessThanOrEqual(256 * 1024);
+    expect(snapshot.operations).toEqual(metadata.operations); expect(snapshot.operationsCursor).toEqual(expect.any(String));
+    expect(snapshot.nextCursor).toBeUndefined(); expect(snapshot.truncated).toBe(false); expect(snapshot.scanned).toBe(1);
+    const all = [...snapshot.operations]; let cursor = snapshot.operationsCursor; let pages = 1;
+    while (cursor) {
+      const page = await f.service.operations('main', cursor); expect(parseScheduleOperationsPage(page)).not.toBeNull();
+      expect(page.operations).toHaveLength(50); expect(controlByteSize(page)).toBeLessThanOrEqual(256 * 1024);
+      all.push(...page.operations); cursor = page.nextCursor; pages++; expect(pages).toBeLessThanOrEqual(10);
+    }
+    expect(all.map(row => row.operationId)).toEqual(saved.metadata.records.map(row => row.operationId)); expect(pages).toBe(10);
+    expect(all.every(row => row.state === 'unknown' && row.jobId === '界'.repeat(200))).toBe(true);
+    expect(f.reader.request).toHaveBeenCalledTimes(1); expect(f.manager.start).toHaveBeenCalledTimes(1); expect(f.manager.request).not.toHaveBeenCalled();
+    expect(fs.readdirSync(saved.directory)).toEqual(['journal.json']); expect(JSON.parse(fs.readFileSync(saved.path, 'utf8'))).toEqual(saved.metadata);
   });
-  it('fails_explicitly_when_recovery_metadata_prevents_any_native_position_progress', async () => {
-    const f = fixture([native('large', 'main', 'x'.repeat(16384))]); const directory = join(f.directory, 'control-schedules');
-    fs.mkdirSync(directory, { mode: 0o700 }); const installationId = randomUUID();
-    const records = Array.from({ length: 500 }, () => {
-      const operationId = randomUUID(); return { operationId, agentId: 'main', declarationKey: `pixel-agents:${installationId}:${operationId}`,
-        requestDigest: 'a'.repeat(64), bindingDigest: 'b'.repeat(64), createdAt: 1700000000000, state: 'acknowledged', jobId: '界'.repeat(125) };
-    });
-    fs.writeFileSync(join(directory, 'journal.json'), JSON.stringify({ version: 1, installationId, records }), { mode: 0o600 });
-    const metadata = await f.service.operations('main'); expect(controlByteSize(metadata)).toBeLessThan(256 * 1024);
-    expect(256 * 1024 - controlByteSize(metadata)).toBeLessThan(16384);
-    await expect(f.service.read('main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+  it('isolates_recovery_cursors_by_purpose_agent_metadata_revision_expiry_and_restart', async () => {
+    const f = fixture(Array.from({ length: 51 }, (_, i) => native(`job-${i}`))); const saved = writeRecovery(f.directory);
+    const metadata = await f.service.operations('main'); const first = await f.service.read('main');
+    await expect(f.service.read('main', metadata.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('main', first.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('other', metadata.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('main', `${metadata.nextCursor}x`)).rejects.toMatchObject({ code: 'schedule-changed' });
+    f.invalidate(); expect((await f.service.operations('main', metadata.nextCursor)).operations).toHaveLength(50);
+    saved.metadata.records[0].state = 'observed'; fs.writeFileSync(saved.path, JSON.stringify(saved.metadata));
+    await expect(f.service.operations('main', metadata.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    const fresh = await f.service.operations('main'); vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60001);
+    await expect(f.service.operations('main', fresh.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' }); vi.useRealTimers();
+    await expect(fixture().service.operations('main', fresh.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(f.manager.start).not.toHaveBeenCalled(); expect(f.manager.request).not.toHaveBeenCalled();
+  });
+  it('shares_the_100_cursor_capacity_between_native_and_recovery_continuations', async () => {
+    const f = fixture(Array.from({ length: 51 }, (_, i) => native(`job-${i}`))); writeRecovery(f.directory);
+    const first = await f.service.read('main');
+    for (let i = 0; i < 100; i++) await f.service.operations('main');
+    await expect(f.service.read('main', first.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('main', first.operationsCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
   });
   it('synchronously_closes_admission_and_manager_then_awaits_admitted_reads', async () => {
     const f = fixture(); let settle!: (value: unknown) => void; let aborted = false;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseScheduleConfirmation, parseScheduleDraft, parseScheduleIntent, parseScheduleOperation,
-  parseScheduleSnapshot, parseScheduleSubmit,
+  parseScheduleSnapshot, parseScheduleSubmit, parseScheduleOperationsPage,
 } from './controlSchedules';
 
 const operationId = '9c17ed7a-3ed6-4e8b-bec9-f65c2636857d';
@@ -70,6 +70,21 @@ describe('closed private scheduling contract', () => {
   it('parses operation states without implying task completion', () => {
     for (const state of ['confirmed', 'observed', 'changed', 'unknown', 'not-sent']) expect(parseScheduleOperation({ ...operation, state, jobId: 'job' })).not.toBeNull();
     for (const extra of [{ state: 'completed' }, { action: 'delete' }, { message: 'private' }, { operationId: 'arbitrary' }]) expect(parseScheduleOperation({ ...operation, ...extra })).toBeNull();
+  });
+  it('separates_closed_bounded_recovery_pages_from_native_continuation', () => {
+    const page = { agentId: 'custom-id', operations: [operation], nextCursor: 'opaque-recovery' };
+    expect(parseScheduleOperationsPage(page)).toEqual(page);
+    expect(parseScheduleOperationsPage({ ...page, operations: Array(50).fill(operation) })).not.toBeNull();
+    for (const extra of [{ agentId: '' }, { operations: Array(51).fill(operation) }, { operations: [{ ...operation, agentId: 'foreign' }] },
+      { operations: [] }, { nextCursor: '' }, { nextCursor: 'x'.repeat(2049) }, { cursor: 'other' }, { declarationKey: 'private' }, JSON.parse('{"__proto__":{}}')]) {
+      expect(parseScheduleOperationsPage({ ...page, ...extra })).toBeNull();
+    }
+    expect(parseScheduleOperationsPage({ agentId: 'custom-id', operations: [] })).toEqual({ agentId: 'custom-id', operations: [] });
+    expect(parseScheduleSnapshot({ ...snapshot, operationsCursor: 'opaque-recovery', nextCursor: 'opaque-native' })).not.toBeNull();
+    expect(parseScheduleSnapshot({ ...snapshot, operations: Array(50).fill(operation), operationsCursor: 'opaque-recovery' })).not.toBeNull();
+    for (const extra of [{ operations: Array(51).fill(operation) }, { operations: [], operationsCursor: 'opaque-recovery' }, { operationsCursor: '' }, { operationsCursor: 'x'.repeat(2049) }]) {
+      expect(parseScheduleSnapshot({ ...snapshot, ...extra })).toBeNull();
+    }
   });
   it('accepts absent next-run facts and projects only closed bounded DTOs', () => {
     expect(parseScheduleSnapshot(snapshot)).toEqual(snapshot);

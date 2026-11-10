@@ -17,10 +17,11 @@ export interface ScheduleOperation {
   operationId: string; agentId: string; action: ScheduleIntent['kind'];
   state: 'confirmed' | 'observed' | 'changed' | 'unknown' | 'not-sent'; jobId?: string;
 }
+export interface ScheduleOperationsPage { agentId: string; operations: ScheduleOperation[]; nextCursor?: string }
 export interface ScheduleManagement { configured: boolean; state: ControlGatewayState; canManage: boolean; epoch: string | null; reason: string | null }
 export interface ScheduleSnapshot {
   agentId: string; source: ControlSource; management: ScheduleManagement; jobs: ScheduleRow[];
-  operations: ScheduleOperation[]; scanned: number; truncated: boolean; nextCursor?: string;
+  operations: ScheduleOperation[]; operationsCursor?: string; scanned: number; truncated: boolean; nextCursor?: string;
 }
 
 const INVALID = Symbol('invalid-schedule-field');
@@ -102,6 +103,11 @@ export function parseScheduleOperation(value: unknown): ScheduleOperation | null
     state: oneOf(['confirmed', 'observed', 'changed', 'unknown', 'not-sent']), jobId: optional(text(200)),
   });
 }
+export function parseScheduleOperationsPage(value: unknown): ScheduleOperationsPage | null {
+  const page = object<ScheduleOperationsPage>(value, { agentId, operations: list(parseScheduleOperation, 50), nextCursor: optional(text(2048)) });
+  return page && page.operations.every(operation => operation.agentId === page.agentId)
+    && (!page.nextCursor || page.operations.length > 0) ? page : null;
+}
 function parseRow(value: unknown): ScheduleRow | null {
   const row = object<ScheduleRow>(value, {
     id: text(200), agentId, name, enabled: bool, revision: nullable(text(128)), scheduleKind: text(128), draft: nullable(child(parseScheduleDraft)),
@@ -125,10 +131,11 @@ function parseManagement(value: unknown): ScheduleManagement | null {
 export function parseScheduleSnapshot(value: unknown): ScheduleSnapshot | null {
   const snapshot = object<ScheduleSnapshot>(value, {
     agentId, source: child(value => object(value, { state: oneOf(['current', 'stale']), observedAt: timestamp })),
-    management: child(parseManagement), jobs: list(parseRow, 2000), operations: list(parseScheduleOperation, 500),
+    management: child(parseManagement), jobs: list(parseRow, 2000), operations: list(parseScheduleOperation, 50), operationsCursor: optional(text(2048)),
     scanned: value => integer(value) !== INVALID && (value as number) <= 2000 ? value : INVALID,
     truncated: bool, nextCursor: optional(text(2048)),
   });
   return snapshot && snapshot.jobs.every(job => job.agentId === snapshot.agentId)
-    && snapshot.operations.every(operation => operation.agentId === snapshot.agentId) ? snapshot : null;
+    && snapshot.operations.every(operation => operation.agentId === snapshot.agentId)
+    && (!snapshot.operationsCursor || snapshot.operations.length > 0) ? snapshot : null;
 }

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import express from 'express';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
@@ -36,7 +37,7 @@ describe('private agent schedule routes', () => {
     }
     expect(f.manager.start).not.toHaveBeenCalled(); expect(f.reader.request).not.toHaveBeenCalled();
     const operations = await request(f.app).get(`${path}/operations`).auth('synthetic-schedule-key', { type: 'bearer' });
-    expect(operations.body).toEqual([]); expect(operations.headers['cache-control']).toBe('no-store'); expect(f.manager.start).not.toHaveBeenCalled();
+    expect(operations.body).toEqual({ agentId: 'main', operations: [] }); expect(operations.headers['cache-control']).toBe('no-store'); expect(f.manager.start).not.toHaveBeenCalled();
     const result = await request(f.app).get(path).auth('synthetic-schedule-key', { type: 'bearer' });
     expect(result.status).toBe(200); expect(result.body).toMatchObject({ agentId: 'main', jobs: [], management: { state: 'pairing-required', canManage: false } });
     expect(result.headers['cache-control']).toBe('no-store'); expect(f.manager.start).toHaveBeenCalledTimes(1);
@@ -61,6 +62,25 @@ describe('private agent schedule routes', () => {
     expect(result.status).toBe(503); expect(result.body.code).toBe('disabled'); expect(disabled.reader.request).not.toHaveBeenCalled();
     for (const endpoint of [path, `${path}/create`, `${path}/rpc`, `${path}/operations`]) expect((await request(f.app).post(endpoint).auth('synthetic-schedule-key', { type: 'bearer' }).send({})).status).toBe(404);
     expect(f.manager.request).not.toHaveBeenCalled();
+  });
+  it('pages_private_recovery_without_native_or_management_io_and_validates_its_cursor', async () => {
+    const f = fixture(true, true); const directory = join(f.directory, 'control-schedules'); fs.mkdirSync(directory, { mode: 0o700 });
+    const installationId = randomUUID(); const records = Array.from({ length: 51 }, () => {
+      const operationId = randomUUID(); return { operationId, agentId: 'main', declarationKey: `pixel-agents:${installationId}:${operationId}`,
+        requestDigest: 'a'.repeat(64), bindingDigest: 'b'.repeat(64), createdAt: 1700000000000, state: 'uncertain' };
+    });
+    fs.writeFileSync(join(directory, 'journal.json'), JSON.stringify({ version: 1, installationId, records }), { mode: 0o600 });
+    const first = await request(f.app).get(`${path}/operations`).auth('synthetic-schedule-key', { type: 'bearer' });
+    expect(first.status).toBe(200); expect(first.body.agentId).toBe('main'); expect(first.body.operations).toHaveLength(50); expect(first.body.nextCursor).toEqual(expect.any(String));
+    const last = await request(f.app).get(`${path}/operations`).query({ cursor: first.body.nextCursor }).auth('synthetic-schedule-key', { type: 'bearer' });
+    expect(last.status).toBe(200); expect(last.body.operations.map((row: { operationId: string }) => row.operationId)).toEqual([records[50].operationId]); expect(last.body.nextCursor).toBeUndefined();
+    expect(last.headers['cache-control']).toBe('no-store');
+    for (const query of ['cursor=', 'cursor=a&cursor=b', 'offset=1', `cursor=${'x'.repeat(2049)}`]) {
+      expect((await request(f.app).get(`${path}/operations?${query}`).auth('synthetic-schedule-key', { type: 'bearer' })).status).toBe(400);
+    }
+    expect((await request(f.app).get(`${path}/operations?cursor=unknown`).auth('synthetic-schedule-key', { type: 'bearer' })).status).toBe(409);
+    expect(f.reader.request).not.toHaveBeenCalled(); expect(f.manager.start).not.toHaveBeenCalled(); expect(f.manager.request).not.toHaveBeenCalled();
+    expect(fs.readdirSync(directory)).toEqual(['journal.json']);
   });
   it.each([false, true])('uses_real_app_origin_and_close_wiring_without_startServer_or_real_host_configuration (disposal rejection: %s)', async failClose => {
     const f = fixture(true, true); vi.resetModules();
