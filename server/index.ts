@@ -1911,6 +1911,9 @@ async function shutdown(signal: string) {
     await io.close();
     logger.info({ subsystem: "server" }, "socket.io connections closed");
     await httpClosed;
+    // The HTTP close hook starts disposal; await its idempotent promise so
+    // admitted mutations and the journal tail finish before a successful exit.
+    await controlSchedules.close();
     return false;
   })();
 

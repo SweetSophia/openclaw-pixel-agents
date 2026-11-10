@@ -14,7 +14,7 @@ type Frame = { id: string; method: string; params: Record<string, any> };
 
 // A protocol-boundary fixture, not a scheduler: only the office's actual signed
 // connections and native requests can populate this declaration.
-async function signedHost() {
+async function signedHost(holdAddReply = false) {
   const frames: Frame[] = []; const signatures: boolean[] = []; const sockets = new Set<Duplex>();
   let nativeJob: Record<string, any> | undefined;
   const encode = (value: unknown) => {
@@ -55,7 +55,8 @@ async function signedHost() {
           nativeJob = { ...frame.params, id: 'restart-job', configRevision: 'revision-1', state: {} };
           // Accept the declaration, then lose the reply. A replay here would
           // overwrite the second operator's later edit, just like native upsert.
-          socket.destroy(); continue;
+          if (!holdAddReply) socket.destroy();
+          continue;
         } else if (frame.method === 'cron.get') payload = nativeJob;
         else if (frame.method === 'cron.list') {
           const offset = frame.params.offset;
@@ -73,8 +74,8 @@ async function signedHost() {
     async close() { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 
-it('dropped_create_reply_then_native_edit_and_restart_never_upserts_again', async () => {
-  const host = await signedHost(); const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-process-restart-'));
+it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_upserts_again (disconnect during admitted work: %s)', async holdAddReply => {
+  const host = await signedHost(holdAddReply); const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-process-restart-'));
   const children: ChildProcess[] = []; const sockets: Socket[] = []; const logs: string[] = [];
   const stop = async (child: ChildProcess) => {
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -97,9 +98,9 @@ it('dropped_create_reply_then_native_edit_and_restart_never_upserts_again', asyn
           CONTROL_SCHEDULES_MANAGE_ENABLED: 'true', OPENCLAW_SCHEDULES_GATEWAY_TOKEN: 'restart-bootstrap-manager' }, stdio: ['ignore', 'pipe', 'pipe'] });
       children.push(child); child.on('error', error => { logs[index] += error.message; });
       for (const stream of [child.stdout, child.stderr]) stream!.on('data', chunk => { logs[index] += String(chunk); });
-      const call = (suffix: string, body?: unknown) => fetch(`${origin}/api/control/agents/main/schedules${suffix}`, {
+      const call = (suffix: string, body?: unknown, signal = AbortSignal.timeout(5000)) => fetch(`${origin}/api/control/agents/main/schedules${suffix}`, {
         method: body === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer restart-office', Origin: origin,
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(5000) });
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal });
       await vi.waitFor(async () => {
         expect(child.exitCode, logs[index]).toBeNull();
         const response = await call(''); expect(response.status).toBe(200); expect((await response.json()).management.canManage).toBe(true);
@@ -112,7 +113,17 @@ it('dropped_create_reply_then_native_edit_and_restart_never_upserts_again', asyn
     const intent = { kind: 'create', draft: { name: 'Restart qualification', message: 'Synthetic restart prompt', schedule: { kind: 'every', everyMs: 60000 } } };
     const prepare = await first.call('/prepare', { intent }); expect(prepare.status).toBe(200);
     const confirmation = await prepare.json(); const input = { operationId: confirmation.operationId, intent };
-    const submit = await first.call('/submit', input); expect(submit.status).toBe(200); expect((await submit.json()).state).toBe('unknown');
+    if (holdAddReply) {
+      const controller = new AbortController();
+      const disconnected = first.call('/submit', input, controller.signal).then(() => false, () => true);
+      await vi.waitFor(() => expect(host.frames.filter(frame => frame.method === 'cron.add')).toHaveLength(1));
+      controller.abort(); expect(await disconnected).toBe(true);
+      // The native request has no receipt and remains admitted after this HTTP
+      // client disconnects; SIGTERM must drain disposal before reporting success.
+      expect(fs.readFileSync(join(directory, 'control-schedules', 'journal.json'), 'utf8')).toContain('uncertain');
+    } else {
+      const submit = await first.call('/submit', input); expect(submit.status).toBe(200); expect((await submit.json()).state).toBe('unknown');
+    }
     expect(host.job()).toMatchObject({ enabled: false, sessionTarget: 'isolated', delivery: { mode: 'none' }, failureAlert: false });
     await stop(first.child);
     await vi.waitFor(() => expect(sockets[0].connected).toBe(false));
