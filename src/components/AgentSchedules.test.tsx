@@ -21,7 +21,8 @@ beforeEach(() => {
     if (path.endsWith('/status')) return { configured: true, state: 'ready', canRead: true, canSend: false };
     if (path.endsWith('/sessions')) return { sessions: [], source: snapshot.source };
     const input = init?.body ? JSON.parse(String(init.body)) : {};
-    if (path.endsWith('/prepare')) return { operationId: `11111111-1111-4111-8111-${String(++confirmationNumber).padStart(12, '0')}`, agentId: agent.id, epoch: 'epoch-1', expiresAt: 1, intent: input.intent, currentEnabled: input.intent.kind === 'create' ? null : snapshot.jobs[0]?.enabled ?? false };
+    if (path.endsWith('/prepare')) return { operationId: `11111111-1111-4111-8111-${String(++confirmationNumber).padStart(12, '0')}`, agentId: agent.id, epoch: 'epoch-1', expiresAt: 1, intent: input.intent, currentEnabled: input.intent.kind === 'create' ? null : snapshot.jobs[0]?.enabled ?? false,
+      current: input.intent.kind === 'create' ? null : structuredClone(snapshot.jobs.find(row => row.id === input.intent.jobId) ?? null) };
     if (path.endsWith('/submit')) {
       submissions.push(input.intent);
       if (input.intent.kind === 'create') snapshot = { ...snapshot, jobs: [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: false, revision: 'r1', scheduleKind: 'every', draft, readOnlyReason: null }] };
@@ -55,6 +56,10 @@ it('creates_disabled_then_enables_only_after_second_confirmation', async () => {
   const review = await screen.findByRole('region', { name: 'Review schedule change' });
   expect(review).toHaveFocus();
   expect(within(review).getByText(/Agent: cylena/)).toBeInTheDocument();
+  expect(within(review).getByText('Current state: Not created')).toBeInTheDocument();
+  expect(within(review).getByText('Resulting state: Paused (disabled)')).toBeInTheDocument();
+  expect(within(review).getByText(draft.message)).toBeInTheDocument();
+  expect(within(review).queryByRole('region', { name: 'Current native definition' })).toBeNull();
   expect(within(review).getByText(/Created disabled/)).toBeInTheDocument(); expect(submissions).toHaveLength(0);
   fireEvent.click(within(review).getByRole('button', { name: 'Create disabled schedule' }));
   await screen.findByText(/Native change acknowledged/); expect(submissions).toEqual([{ kind: 'create', draft }]);
@@ -74,6 +79,17 @@ it('enabled_edit_warns_future_runs_change and cancel restores its trigger', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Review edit' }));
   const review = await screen.findByRole('region', { name: 'Review schedule change' });
   expect(within(review).getByText(/Job: job-1/)).toBeInTheDocument();
+  const current = within(review).getByRole('region', { name: 'Current native definition' });
+  const resulting = within(review).getByRole('region', { name: 'Resulting definition' });
+  for (const definition of [current, resulting]) {
+    expect(within(definition).getByText('Name: Synthetic check')).toBeInTheDocument();
+    expect(within(definition).getByText(draft.message)).toBeInTheDocument();
+    expect(within(definition).getByText('Every 60 seconds')).toBeInTheDocument();
+  }
+  expect(within(review).getByText('Current state: Enabled')).toBeInTheDocument();
+  expect(within(review).getByText('Resulting state: Enabled')).toBeInTheDocument();
+  expect(within(current).getByText('Native interval anchor: 1000 ms')).toBeInTheDocument();
+  expect(within(resulting).queryByText(/Native interval anchor/)).toBeNull();
   fireEvent.click(within(review).getByRole('button', { name: 'Cancel confirmation' }));
   expect(screen.getByRole('button', { name: 'Review edit' })).toHaveFocus(); expect(submissions).toHaveLength(0);
   fireEvent.click(screen.getByRole('button', { name: 'Cancel editing' })); expect(edit).toHaveFocus();
@@ -110,6 +126,53 @@ it('keeps incomplete fields across mounted tabs and clears them on generation an
 it.each(['disabled', 'pairing-required'] as const)('keeps readable schedules with management %s', async state => {
   snapshot.management = { configured: state !== 'disabled', state, canManage: false, epoch: null, reason: state };
   await open(); expect(screen.getByText(new RegExp(`Management: ${state}`))).toBeInTheDocument(); expect(screen.getByRole('button', { name: 'New schedule' })).toBeDisabled();
+});
+it('default-off readers inspect the compatible prompt and verified revision without edit authority', async () => {
+  snapshot.management = { configured: false, state: 'disabled', canManage: false, epoch: null, reason: 'disabled' };
+  snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: false, revision: 'r1', scheduleKind: 'every', draft, readOnlyReason: null }];
+  await open();
+  const list = screen.getByRole('list', { name: 'Native schedules' });
+  expect(within(list).getByText(draft.message)).toBeInTheDocument();
+  expect(within(list).getByText(/Verified revision: r1/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit Synthetic check' })).toBeDisabled();
+  expect(screen.queryByRole('textbox', { name: 'Task prompt' })).toBeNull();
+  expect(access.request.mock.calls.some(([path]) => /\/(prepare|submit)$/.test(path))).toBe(false);
+});
+it.each([false, true])('Enable/Pause reviews the frozen full preflight definition and both enabled states (current %s)', async enabled => {
+  const cron = { name: draft.name, message: 'Exact revision-bound prompt', schedule: { kind: 'cron' as const, expr: '0 9 * * *', tz: 'Europe/Berlin' } };
+  snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: cron.name, enabled, revision: 'r1', scheduleKind: 'cron', draft: cron, readOnlyReason: null, timingMetadata: { staggerMs: 5000 } }];
+  await open();
+  const trigger = screen.getByRole('button', { name: `${enabled ? 'Pause' : 'Enable'} Synthetic check` });
+  fireEvent.click(trigger);
+  const review = await screen.findByRole('region', { name: 'Review schedule change' });
+  expect(review).toHaveFocus();
+  expect(within(review).getByText('Exact revision-bound prompt')).toBeInTheDocument();
+  expect(within(review).getByText(/Name: Synthetic check/)).toBeInTheDocument();
+  expect(within(review).getByText(/0 9 \* \* \* · Europe\/Berlin/)).toBeInTheDocument();
+  expect(within(review).getByText(/Job: job-1 · Revision: r1/)).toBeInTheDocument();
+  expect(within(review).getByText(`Current state: ${enabled ? 'Enabled' : 'Paused'}`)).toBeInTheDocument();
+  expect(within(review).getByText(`Resulting state: ${enabled ? 'Paused' : 'Enabled'}`)).toBeInTheDocument();
+  expect(within(review).getByText(/Native stagger: 5000 ms/)).toBeInTheDocument();
+  fireEvent.click(within(review).getByRole('button', { name: 'Cancel confirmation' }));
+  expect(trigger).toHaveFocus(); expect(submissions).toHaveLength(0);
+});
+it('Enable confirmation uses its preflight definition even when browse data differs at the same revision', async () => {
+  snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: false, revision: 'r1', scheduleKind: 'every', draft, readOnlyReason: null, timingMetadata: { anchorMs: 1000 } }];
+  const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation(async (path, init) => {
+    const response = await original(path, init);
+    if (!path.endsWith('/prepare')) return response;
+    return { ...response, current: { ...snapshot.jobs[0], name: 'Preflight name', timingMetadata: { anchorMs: 9999 },
+      draft: { ...draft, name: 'Preflight name', message: 'Preflight-only prompt' } } };
+  });
+  const view = await open(); fireEvent.click(screen.getByRole('button', { name: 'Enable Synthetic check' }));
+  const review = await screen.findByRole('region', { name: 'Review schedule change' });
+  expect(within(review).getByText('Name: Preflight name')).toBeInTheDocument();
+  expect(within(review).getByText('Preflight-only prompt')).toBeInTheDocument();
+  expect(within(review).getByText('Native interval anchor: 9999 ms')).toBeInTheDocument();
+  expect(review.textContent).not.toContain(draft.message); expect(review.textContent).not.toContain('1000 ms');
+  access.generation++; view.rerender(<AgentDetailPanel agent={agent} onClose={vi.fn()} />);
+  expect(document.body.textContent).not.toContain('Preflight-only prompt'); expect(submissions).toHaveLength(0);
 });
 it('metadata read errors block creation without hiding native rows or edits', async () => {
   snapshot.operationsError = 'storage-unavailable'; snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: false, revision: 'r1', scheduleKind: 'every', draft, readOnlyReason: null }];

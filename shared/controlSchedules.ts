@@ -5,7 +5,7 @@ export interface ScheduleDraft { name: string; message: string; schedule: Schedu
 export type ScheduleIntent = { kind: 'create'; draft: ScheduleDraft }
   | { kind: 'edit'; jobId: string; revision: string; draft: ScheduleDraft }
   | { kind: 'enabled'; jobId: string; revision: string; enabled: boolean };
-export interface ScheduleConfirmation { operationId: string; agentId: string; intent: ScheduleIntent; expiresAt: number; epoch: string; currentEnabled: boolean | null }
+export interface ScheduleConfirmation { operationId: string; agentId: string; intent: ScheduleIntent; expiresAt: number; epoch: string; currentEnabled: boolean | null; current: ScheduleRow | null }
 export interface ScheduleSubmit { operationId: string; intent: ScheduleIntent }
 export interface ScheduleRow {
   id: string; agentId: string; name: string; enabled: boolean; revision: string | null;
@@ -91,9 +91,14 @@ export function parseScheduleIntent(value: unknown): ScheduleIntent | null {
 }
 export function parseScheduleConfirmation(value: unknown): ScheduleConfirmation | null {
   const confirmation = object<ScheduleConfirmation>(value, {
-    operationId: uuid, agentId, intent: child(parseScheduleIntent), expiresAt: timestamp, epoch: text(128), currentEnabled: nullable(bool),
+    operationId: uuid, agentId, intent: child(parseScheduleIntent), expiresAt: timestamp, epoch: text(128), currentEnabled: nullable(bool), current: nullable(child(parseRow)),
   });
-  return confirmation && (confirmation.intent.kind === 'create' ? confirmation.currentEnabled === null : typeof confirmation.currentEnabled === 'boolean') ? confirmation : null;
+  if (!confirmation) return null;
+  if (confirmation.intent.kind === 'create') return confirmation.currentEnabled === null && confirmation.current === null ? confirmation : null;
+  const current = confirmation.current;
+  return current && current.readOnlyReason === null && current.draft !== null && current.agentId === confirmation.agentId
+    && current.id === confirmation.intent.jobId && current.revision === confirmation.intent.revision
+    && current.enabled === confirmation.currentEnabled ? confirmation : null;
 }
 export function parseScheduleSubmit(value: unknown): ScheduleSubmit | null {
   return object(value, { operationId: uuid, intent: child(parseScheduleIntent) });
@@ -123,7 +128,7 @@ function parseRow(value: unknown): ScheduleRow | null {
     timingMetadata: optional(child(value => object(value, { anchorMs: optional(integer), staggerMs: optional(integer) }))),
     nextRunAt: optional(timestamp), lastRunAt: optional(timestamp), lastRunStatus: optional(oneOf(['ok', 'error', 'skipped'])),
   });
-  if (!row || (row.readOnlyReason === null ? !row.draft || !row.revision || row.scheduleKind !== row.draft.schedule.kind : row.draft !== null)) return null;
+  if (!row || (row.readOnlyReason === null ? !row.draft || !row.revision || row.name !== row.draft.name || row.scheduleKind !== row.draft.schedule.kind : row.draft !== null)) return null;
   return row;
 }
 function parseManagement(value: unknown): ScheduleManagement | null {

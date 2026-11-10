@@ -14,7 +14,8 @@ const snapshot = (changes: Partial<ScheduleSnapshot> = {}): ScheduleSnapshot => 
   management: { configured: true, state: 'ready', canManage: true, epoch: 'epoch-1', reason: null },
   jobs: [{ id: 'job-1', agentId: 'cylena', name: draft.name, enabled: false, revision: 'revision-1', scheduleKind: 'every', draft, readOnlyReason: null }],
   operations: [], scanned: 1, truncated: false, ...changes });
-const confirmation = (input: ScheduleIntent = intent): ScheduleConfirmation => ({ operationId: id, agentId: 'cylena', intent: input, expiresAt: 1, epoch: 'epoch-1', currentEnabled: input.kind === 'create' ? null : false });
+const confirmation = (input: ScheduleIntent = intent): ScheduleConfirmation => ({ operationId: id, agentId: 'cylena', intent: input, expiresAt: 1, epoch: 'epoch-1', currentEnabled: input.kind === 'create' ? null : false,
+  current: input.kind === 'create' ? null : structuredClone(latest.jobs.find(row => row.id === input.jobId) ?? null) });
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const submits = () => access.request.mock.calls.filter(([path]) => String(path).endsWith('/submit'));
 const reads = () => access.request.mock.calls.filter(([path]) => /\/schedules(?:\?|$)/.test(String(path)));

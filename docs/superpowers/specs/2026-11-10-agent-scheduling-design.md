@@ -172,6 +172,12 @@ Private routes use `/api/control/agents/:agentId/schedules`: GET snapshot, GET
 `ScheduleSnapshot`, `ScheduleOperationsPage`, `ScheduleConfirmation` and
 `ScheduleOperation` parsers are the closed DTO contract. No raw native RPC is exposed.
 
+`ScheduleConfirmation.current` is required: null for creation, otherwise the
+compatible projected row from the existing management preflight, bound to the
+exact agent/job/revision and current enabled state. Confirmations inspect that
+frozen definition, not a browse-cache substitute; submit remains only operation
+ID and intent. Compatible prompts/revisions remain inspectable with management off.
+
 Three cursors are distinct: snapshot `nextCursor` browses native positions;
 snapshot `operationsCursor` / metadata-page `nextCursor` pages retained journal
 records; operation `recovery.nextCursor` continues that operation's explicit native

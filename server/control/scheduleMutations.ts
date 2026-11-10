@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { CONTROL_LIMITS, controlByteSize, controlRecord } from '../../shared/control';
-import { parseScheduleIntent, parseScheduleSubmit, type ScheduleConfirmation, type ScheduleIntent, type ScheduleOperation, type ScheduleRow, type ScheduleSubmit } from '../../shared/controlSchedules';
+import { parseScheduleConfirmation, parseScheduleIntent, parseScheduleSubmit, type ScheduleConfirmation, type ScheduleIntent, type ScheduleOperation, type ScheduleRow, type ScheduleSubmit } from '../../shared/controlSchedules';
 import { GatewayRequestError, type ScheduleGateway } from './gatewayClient';
 import type { ScheduleJournal, ScheduleReservation } from './scheduleJournal';
 import { ControlError } from './errors';
@@ -236,8 +236,9 @@ export function createScheduleMutations(options: {
         const intent = parseScheduleIntent(value); if (!intent) throw new ControlError('invalid-request');
         const current = intent.kind === 'create' ? undefined : await preflight(agentId, intent, binding, readSignal);
         authority(agentId, binding, readSignal); prune();
-        const confirmation: ScheduleConfirmation = { operationId: randomUUID(), agentId, intent, expiresAt: Date.now() + 60000,
-          epoch: binding.epoch, currentEnabled: current?.enabled ?? null };
+        const confirmation = parseScheduleConfirmation({ operationId: randomUUID(), agentId, intent, expiresAt: Date.now() + 60000,
+          epoch: binding.epoch, currentEnabled: current?.enabled ?? null, current: current?.row ?? null });
+        if (!confirmation) throw new ControlError('invalid-source');
         tickets.set(confirmation.operationId, { confirmation: structuredClone(confirmation), binding, definition: current?.definition });
         while (tickets.size > 100) tickets.delete(tickets.keys().next().value!);
         return confirmation;

@@ -109,7 +109,6 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
   const confirmation = schedules.confirmation; const intent = confirmation?.intent;
   const currentTarget = editor?.target ? snapshot?.jobs.find(row => row.id === editor.target!.id) : undefined;
   const targetChanged = !!editor?.target && (!currentTarget || currentTarget.revision !== editor.target.revision || currentTarget.readOnlyReason !== null);
-  const reviewedRow = intent && intent.kind !== 'create' ? snapshot?.jobs.find(row => row.id === intent.jobId) : undefined;
   const operations = [...new Map([...(snapshot?.operations ?? []), ...(schedules.operation ? [schedules.operation] : [])].map(operation => [operation.operationId, operation])).values()];
   const fieldError = (field: keyof FormFields) => errors[field] && <p id={`${id}-${field}-error`} role="alert">{errors[field]}</p>;
   const fieldProps = (field: keyof FormFields) => ({ id: `${id}-${field}`, 'aria-invalid': !!errors[field], 'aria-describedby': errors[field] ? `${id}-${field}-error` : undefined });
@@ -134,7 +133,7 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
       <ul className="schedule-list" aria-label="Native schedules">
         {snapshot?.jobs.map(row => <li key={row.id}>
           <h4>{row.name}</h4><p>Job: {row.id} · {row.enabled ? 'Enabled' : 'Paused'}</p>
-          {row.draft && <p>{timing(row.draft)}</p>}{nativeTiming(row)}
+          {row.draft && <section aria-label={`Definition for ${row.name}`}><p>{timing(row.draft)}</p><p>Verified revision: {row.revision}</p><p className="task-text">{row.draft.message}</p></section>}{nativeTiming(row)}
           {row.nextRunAt !== undefined && <p>Native next run: {new Date(row.nextRunAt).toLocaleString()}</p>}
           {row.lastRunAt !== undefined && <p>Native last run: {new Date(row.lastRunAt).toLocaleString()}{row.lastRunStatus ? ` · ${row.lastRunStatus}` : ''}</p>}
           {row.readOnlyReason ? <p>Read-only: {row.readOnlyReason}. Unsupported native payloads are not shown.</p> : <div className="schedule-actions">
@@ -176,8 +175,13 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
       {confirmation && intent && <section className="schedule-review task-notice" aria-label="Review schedule change" tabIndex={-1} ref={reviewRef}>
         <h4>Review schedule change</h4><p>Agent: {confirmation.agentId}</p>
         {intent.kind !== 'create' && <p>Job: {intent.jobId} · Revision: {intent.revision}</p>}
-        {intent.kind !== 'enabled' && <><p>Name: {intent.draft.name}</p><p>{timing(intent.draft)}</p><p className="task-text">{intent.draft.message}</p></>}
-        {reviewedRow && nativeTiming(reviewedRow)}
+        <p>Current state: {confirmation.currentEnabled === null ? 'Not created' : confirmation.currentEnabled ? 'Enabled' : 'Paused'}</p>
+        {confirmation.current?.draft && <section aria-label="Current native definition"><h4>Current native definition</h4>
+          <p>Name: {confirmation.current.draft.name}</p><p>{timing(confirmation.current.draft)}</p><p className="task-text">{confirmation.current.draft.message}</p>
+          {nativeTiming(confirmation.current)}
+        </section>}
+        {intent.kind !== 'enabled' && <section aria-label="Resulting definition"><h4>Resulting definition</h4><p>Name: {intent.draft.name}</p><p>{timing(intent.draft)}</p><p className="task-text">{intent.draft.message}</p></section>}
+        <p>Resulting state: {intent.kind === 'create' ? 'Paused (disabled)' : (intent.kind === 'enabled' ? intent.enabled : confirmation.currentEnabled) ? 'Enabled' : 'Paused'}</p>
         {intent.kind === 'create' ? <p>Created disabled in an isolated session; no announcements or failure alerts. Enabling requires a separate review and confirmation.</p>
           : intent.kind === 'enabled' ? intent.enabled ? <p>Enabling permits future execution. Ordinary tools can act externally despite no announcements or failure alerts. Native default staggering may apply.</p> : <p>Pausing stops future scheduling; existing runs may continue.</p>
             : <p>{confirmation.currentEnabled ? 'This enabled schedule changes future runs.' : 'The schedule remains paused.'} Changing interval timing can reanchor the schedule; cron retains native default staggering.</p>}

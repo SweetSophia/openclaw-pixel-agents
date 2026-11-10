@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { controlByteSize } from '../../shared/control';
-import { parseScheduleOperationsPage, parseScheduleSnapshot, type ScheduleManagement } from '../../shared/controlSchedules';
+import { parseScheduleConfirmation, parseScheduleOperationsPage, parseScheduleSnapshot, type ScheduleManagement } from '../../shared/controlSchedules';
 import { createScheduleService, type ScheduleService } from './scheduleService';
 import type { ControlGateway, GatewayEvent, ScheduleGateway } from './gatewayClient';
 import { openScheduleJournal } from './scheduleJournal';
@@ -37,7 +37,7 @@ function fixture(rows = [native('one')], enabled = false) {
       const offset = params.offset as number; const jobs = rows.slice(offset, offset + 50); const next = offset + jobs.length;
       return { jobs, snapshotRevision: revision, total: rows.length, offset, limit: 50, hasMore: next < rows.length, nextOffset: next < rows.length ? next : null };
     }) };
-  const manager: ScheduleGateway = { start: vi.fn(), close: vi.fn(), status: () => management, connection: () => null, request: vi.fn(async () => { throw Error('Admin must not read'); }) };
+  const manager: ScheduleGateway = { start: vi.fn(), close: vi.fn(), status: () => management, connection: vi.fn(() => null), request: vi.fn(async () => { throw Error('Admin must not read'); }) };
   const service = createScheduleService({ reader, manager, config: { enabled, deviceDirectory: join(directory, 'control-schedules') }, registeredAgents: () => new Set(['main', 'other', 'Upper']) });
   services.push(service);
   return { service, reader, manager, directory, rows,
@@ -48,6 +48,24 @@ function fixture(rows = [native('one')], enabled = false) {
 afterEach(async () => { vi.useRealTimers(); for (const service of services.splice(0)) await service.close(); for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 
 describe('bounded private schedule browsing', () => {
+  it('confirmation carries only the exact management preflight projection, never the browse definition', async () => {
+    const f = fixture([native('one', 'main', 'Older browse prompt')], true);
+    f.setManagement({ configured: true, state: 'ready', canManage: true, epoch: 'epoch-1', reason: null });
+    vi.mocked(f.manager.connection).mockReturnValue({ epoch: 'epoch-1', gatewayUrl: 'ws://127.0.0.1:9/', deviceId: 'synthetic-device' });
+    const fresh = { ...native('one', 'main', 'Fresh management prompt'), name: 'Fresh manager name',
+      schedule: { kind: 'cron', expr: '0 9 * * *', tz: 'Europe/Berlin', staggerMs: 5000 } };
+    vi.mocked(f.manager.request).mockResolvedValue(fresh);
+    const browse = await f.service.read('main');
+    expect(browse.jobs[0].draft?.message).toBe('Older browse prompt');
+    const confirmation = await f.service.prepare('main', { kind: 'enabled', jobId: 'one', revision: 'revision-1', enabled: true });
+    expect(confirmation).toMatchObject({ currentEnabled: false, current: { id: 'one', agentId: 'main', revision: 'revision-1', enabled: false,
+      name: 'Fresh manager name', draft: { name: 'Fresh manager name', message: 'Fresh management prompt', schedule: { kind: 'cron', expr: '0 9 * * *', tz: 'Europe/Berlin' } },
+      timingMetadata: { staggerMs: 5000 }, readOnlyReason: null } });
+    expect(parseScheduleConfirmation(confirmation)).toEqual(confirmation);
+    expect(JSON.stringify(confirmation)).not.toMatch(/Older browse prompt|sessionTarget|declarationKey|payload/);
+    expect(f.reader.request).toHaveBeenCalledTimes(1);
+    expect(f.manager.request).toHaveBeenCalledExactlyOnceWith('cron.get', { id: 'one' }, expect.any(AbortSignal));
+  });
   it('filters_owned_jobs_but_tracks_scanned_native_rows', async () => {
     const f = fixture(Array.from({ length: 251 }, (_, i) => native(`job-${i}`, i === 199 || i === 250 ? 'main' : 'foreign')));
     const first = await f.service.read('main');

@@ -60,11 +60,31 @@ describe('closed private scheduling contract', () => {
     expect(parseScheduleIntent({ kind: 'enabled', jobId: 'job', revision: 'r', enabled: 'false' })).toBeNull();
   });
   it('requires server UUIDs, bounded epochs/timestamps and explicit confirmation enabled state', () => {
-    const confirmation = { operationId, agentId: 'custom-id', intent, expiresAt: 1700000060000, epoch: 'e1', currentEnabled: null };
+    const confirmation = { operationId, agentId: 'custom-id', intent, expiresAt: 1700000060000, epoch: 'e1', currentEnabled: null, current: null };
     expect(parseScheduleConfirmation(confirmation)).toEqual(confirmation);
     expect(parseScheduleSubmit({ operationId, intent })).toEqual({ operationId, intent });
     for (const extra of [{ operationId: 'browser-id' }, { epoch: 'e'.repeat(129) }, { expiresAt: Infinity }, { expiresAt: -1 }, { expiresAt: 1.5 }, { currentEnabled: undefined }, { native: {} }]) {
       expect(parseScheduleConfirmation({ ...confirmation, ...extra })).toBeNull();
+    }
+  });
+  it('requires a closed preflight definition bound to the exact confirmation target', () => {
+    const create = { operationId, agentId: 'custom-id', intent, expiresAt: 1700000060000, epoch: 'e1', currentEnabled: null, current: null };
+    expect(parseScheduleConfirmation(create)).toEqual(create);
+    expect(parseScheduleConfirmation({ ...create, current: undefined })).toBeNull();
+    expect(parseScheduleConfirmation({ ...create, current: row })).toBeNull();
+    for (const kind of ['edit', 'enabled']) {
+      const selected = kind === 'edit' ? { kind, jobId: 'native-job', revision: 'opaque:1', draft: { ...draft, message: 'Resulting prompt' } }
+        : { kind, jobId: 'native-job', revision: 'opaque:1', enabled: true };
+      const confirmation = { ...create, intent: selected, currentEnabled: false, current: row };
+      expect(parseScheduleConfirmation(confirmation)).toEqual(confirmation);
+      for (const current of [undefined, null, { ...row, agentId: 'foreign' }, { ...row, id: 'other' }, { ...row, revision: 'opaque:2' },
+        { ...row, enabled: true }, { ...row, draft: null, readOnlyReason: 'unsupported-definition' }, { ...row, name: 'Contradictory' },
+        { ...row, scheduleKind: 'cron' }, { ...row, payload: { kind: 'script' } }, { ...row, draft: { ...draft, message: 'x'.repeat(16385) } },
+        { ...row, timingMetadata: { staggerMs: -1 } }, JSON.parse('{"__proto__":{}}')]) {
+        expect(parseScheduleConfirmation({ ...confirmation, current })).toBeNull();
+      }
+      expect(parseScheduleConfirmation({ ...confirmation, currentEnabled: null })).toBeNull();
+      expect(parseScheduleSubmit({ operationId, intent: selected, current: row })).toBeNull();
     }
   });
   it('parses operation states without implying task completion', () => {

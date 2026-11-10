@@ -1900,20 +1900,20 @@ async function shutdown(signal: string) {
   let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   const gracefulClose = (async (): Promise<false> => {
-    // Stop accepting first, but dispose upgraded office sockets before waiting
-    // for HTTP close: those connections can otherwise hold it open indefinitely.
+    // Fence scheduling admission immediately, including connected submit preflights.
+    // The HTTP close hook shares this idempotent disposal for non-startServer users.
+    const schedulesClosed = controlSchedules.close();
+    // Stop accepting, then drain HTTP and upgraded office sockets together.
     const httpClosed = new Promise<void>((resolve) =>
       server.close(() => {
         logger.info({ subsystem: "server" }, "http server closed");
         resolve();
       }),
     );
-    await io.close();
+    // A connected submit can become idle only after scheduling disposal settles.
+    const schedulesDrained = schedulesClosed.finally(() => server.closeIdleConnections());
+    await Promise.all([httpClosed, schedulesDrained, io.close()]);
     logger.info({ subsystem: "server" }, "socket.io connections closed");
-    await httpClosed;
-    // The HTTP close hook starts disposal; await its idempotent promise so
-    // admitted mutations and the journal tail finish before a successful exit.
-    await controlSchedules.close();
     return false;
   })();
 

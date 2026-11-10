@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
-import { createServer } from 'node:http';
+import { Agent, createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -14,8 +14,9 @@ type Frame = { id: string; method: string; params: Record<string, any> };
 
 // A protocol-boundary fixture, not a scheduler: only the office's actual signed
 // connections and native requests can populate this declaration.
-async function signedHost(holdAddReply = false) {
+async function signedHost(holdAddReply = false, connectedPreflight = false) {
   const frames: Frame[] = []; const signatures: boolean[] = []; const sockets = new Set<Duplex>();
+  const timers = new Set<ReturnType<typeof setTimeout>>(); let delayGet = false; let delayedGets = 0;
   let nativeJob: Record<string, any> | undefined;
   const encode = (value: unknown) => {
     const data = Buffer.from(JSON.stringify(value)); const header = Buffer.alloc(data.length < 126 ? 2 : 4); header[0] = 0x81;
@@ -55,9 +56,20 @@ async function signedHost(holdAddReply = false) {
           nativeJob = { ...frame.params, id: 'restart-job', configRevision: 'revision-1', state: {} };
           // Accept the declaration, then lose the reply. A replay here would
           // overwrite the second operator's later edit, just like native upsert.
-          if (!holdAddReply) socket.destroy();
-          continue;
-        } else if (frame.method === 'cron.get') payload = nativeJob;
+          if (!connectedPreflight) { if (!holdAddReply) socket.destroy(); continue; }
+          payload = { created: true, job: nativeJob };
+        } else if (frame.method === 'cron.get') {
+          payload = nativeJob;
+          if (delayGet) {
+            delayGet = false; delayedGets++;
+            const timer = setTimeout(() => { timers.delete(timer); socket.write(encode({ type: 'res', id: frame.id, ok: true, payload })); }, 4000);
+            timers.add(timer); continue;
+          }
+        } else if (frame.method === 'cron.update') {
+          nativeJob = { ...nativeJob, ...frame.params.patch, configRevision: 'revision-updated' }; payload = nativeJob;
+          const timer = setTimeout(() => { timers.delete(timer); socket.write(encode({ type: 'res', id: frame.id, ok: true, payload })); }, 2000);
+          timers.add(timer); continue;
+        }
         else if (frame.method === 'cron.list') {
           const offset = frame.params.offset;
           payload = { jobs: nativeJob && offset === 0 ? [nativeJob] : [], snapshotRevision: 'restart-snapshot', total: nativeJob ? 1 : 0, offset, limit: 50, hasMore: false, nextOffset: null };
@@ -69,13 +81,17 @@ async function signedHost(holdAddReply = false) {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address();
   if (!address || typeof address === 'string') throw Error('Missing synthetic address');
   return { frames, signatures, url: `ws://127.0.0.1:${address.port}/`,
+    delayNextGet() { delayGet = true; }, delayedGets: () => delayedGets,
     job: () => nativeJob!,
     changeJob() { nativeJob = { ...nativeJob, payload: { kind: 'agentTurn', message: 'Changed by another operator' }, configRevision: 'revision-2' }; },
-    async close() { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); } };
+    async close() { for (const timer of timers) clearTimeout(timer); for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 
-it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_upserts_again (disconnect during admitted work: %s)', async holdAddReply => {
-  const host = await signedHost(holdAddReply); const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-process-restart-'));
+async function processRestart(mode: boolean | 'connected-preflight' | 'connected-keepalive') {
+  const holdAddReply = mode === true; const connectedPreflight = typeof mode === 'string';
+  const keepAlive = mode === 'connected-keepalive'; const httpAgent = new Agent({ keepAlive: true, maxSockets: 1 });
+  let polling: ReturnType<typeof setInterval> | undefined; let pollsStarted = 0; let pollReplies = 0;
+  const host = await signedHost(holdAddReply, connectedPreflight); const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-process-restart-'));
   const children: ChildProcess[] = []; const sockets: Socket[] = []; const logs: string[] = [];
   const stop = async (child: ChildProcess) => {
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -107,7 +123,15 @@ it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_
       }, { timeout: 10000, interval: 100 });
       const socket = connectSocket(origin, { transports: ['websocket'], extraHeaders: { Origin: origin }, reconnection: false }); sockets.push(socket);
       await vi.waitFor(() => expect(socket.connected).toBe(true));
-      return { child, call };
+      const keepAliveCall = (path: string, body?: unknown) => new Promise<number>((resolve, reject) => {
+        const encoded = body === undefined ? undefined : JSON.stringify(body);
+        const request = httpRequest(origin + path, { agent: httpAgent, method: encoded === undefined ? 'GET' : 'POST',
+          headers: { Authorization: 'Bearer restart-office', Origin: origin, ...(encoded === undefined ? {} : { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(encoded) }) } }, response => {
+          response.resume(); response.once('end', () => resolve(response.statusCode!)); response.once('error', reject);
+        });
+        request.once('error', reject); request.end(encoded);
+      });
+      return { child, call, keepAliveCall };
     }
     const first = await office();
     const intent = { kind: 'create', draft: { name: 'Restart qualification', message: 'Synthetic restart prompt', schedule: { kind: 'every', everyMs: 60000 } } };
@@ -122,9 +146,30 @@ it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_
       // client disconnects; SIGTERM must drain disposal before reporting success.
       expect(fs.readFileSync(join(directory, 'control-schedules', 'journal.json'), 'utf8')).toContain('uncertain');
     } else {
-      const submit = await first.call('/submit', input); expect(submit.status).toBe(200); expect((await submit.json()).state).toBe('unknown');
+      const submit = await first.call('/submit', input); expect(submit.status).toBe(200); expect((await submit.json()).state).toBe(connectedPreflight ? 'confirmed' : 'unknown');
     }
     expect(host.job()).toMatchObject({ enabled: false, sessionTarget: 'isolated', delivery: { mode: 'none' }, failureAlert: false });
+    if (connectedPreflight) {
+      const edit = { kind: 'edit', jobId: 'restart-job', revision: 'revision-1', draft: { ...intent.draft, message: 'Must not dispatch during shutdown' } };
+      const prepared = await first.call('/prepare', { intent: edit }); expect(prepared.status).toBe(200);
+      const ticket = await prepared.json(); host.delayNextGet(); let settled = false;
+      const connected = (keepAlive ? first.keepAliveCall('/api/control/agents/main/schedules/submit', { operationId: ticket.operationId, intent: edit })
+        : first.call('/submit', { operationId: ticket.operationId, intent: edit }, AbortSignal.timeout(12000)))
+        .then(response => { settled = true; return response; }, () => { settled = true; return null; });
+      await vi.waitFor(() => expect(host.delayedGets()).toBe(1));
+      expect(settled).toBe(false);
+      console.info('Synthetic connected shutdown: submit HTTP remains pending at delayed cron.get before SIGTERM.');
+      if (keepAlive) {
+        // A queued public poll reuses the still-active submit connection once
+        // its response settles, just as the connected production browser does.
+        const poll = () => { pollsStarted++; void first.keepAliveCall('/api/agents').then(() => { pollReplies++; }, () => {}); };
+        poll(); polling = setInterval(poll, 250);
+      }
+      await stop(first.child); await connected;
+      clearInterval(polling); polling = undefined;
+      if (keepAlive) expect(pollsStarted).toBeGreaterThan(0);
+      expect(host.frames.filter(frame => frame.method === 'cron.update')).toHaveLength(0);
+    }
     await stop(first.child);
     await vi.waitFor(() => expect(sockets[0].connected).toBe(false));
     const journal = join(directory, 'control-schedules', 'journal.json');
@@ -142,14 +187,26 @@ it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_
     expect(nativeJob.payload.message).toBe('Changed by another operator');
     expect(frames.filter(frame => frame.method === 'cron.update')).toHaveLength(0);
     expect(host.signatures.length).toBeGreaterThanOrEqual(4); expect(host.signatures.every(Boolean)).toBe(true);
+    if (connectedPreflight) {
+      // Reopen the same journal normally; no lock deletion/reset or replay is allowed.
+      const different = { kind: 'create', draft: { ...intent.draft, name: 'Explicit unrelated declaration', message: 'Distinct synthetic intent after restart' } };
+      const ticket = await (await second.call('/prepare', { intent: different })).json();
+      expect((await (await second.call('/submit', { operationId: ticket.operationId, intent: different })).json()).state).toBe('confirmed');
+      expect(frames.filter(frame => frame.method === 'cron.add')).toHaveLength(2);
+    }
     await stop(second.child); expect(fs.existsSync(join(directory, 'control-schedules', 'journal.lock'))).toBe(false);
     await vi.waitFor(() => expect(sockets[1].connected).toBe(false));
     expect(logs.join('')).not.toContain('forced shutdown');
     expect(logs.join('')).not.toContain('Synthetic restart prompt');
-    console.info(`Synthetic OS restart verified: PIDs ${first.child.pid} -> ${second.child.pid}; signed handshakes ${host.signatures.length}; cron.add=1; changed job preserved; clean SIGTERM exits.`);
+    console.info(`Synthetic OS restart verified: PIDs ${first.child.pid} -> ${second.child.pid}; signed handshakes ${host.signatures.length}; cron.add=${connectedPreflight ? 2 : 1}; changed job preserved; clean SIGTERM exits.`);
   } finally {
+    if (connectedPreflight) console.info(`Connected-preflight evidence: exit=${children[0]?.exitCode}; updates=${host.frames.filter(frame => frame.method === 'cron.update').length}; lock=${fs.existsSync(join(directory, 'control-schedules', 'journal.lock'))}; forced=${logs.join('').includes('forced shutdown')}; keepAlivePolls=${pollsStarted}; replies=${pollReplies}`);
+    clearInterval(polling); httpAgent.destroy();
     for (const child of children) await stop(child);
     for (const socket of sockets) socket.disconnect();
     await host.close(); fs.rmSync(directory, { recursive: true, force: true });
   }
-}, 30000);
+}
+it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_upserts_again (disconnect during admitted work: %s)', processRestart, 30000);
+it('still_connected_submit_preflight_is_fenced_at_SIGTERM_and_releases_the_same_journal_for_restart', () => processRestart('connected-preflight'), 30000);
+it('still_connected_keepalive_polling_drains_after_preflight_shutdown_without_late_update_or_replay', () => processRestart('connected-keepalive'), 30000);
