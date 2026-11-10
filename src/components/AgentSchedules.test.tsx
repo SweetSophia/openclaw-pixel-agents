@@ -72,6 +72,26 @@ it('creates_disabled_then_enables_only_after_second_confirmation', async () => {
   fireEvent.click(within(second).getByRole('button', { name: 'Confirm enable' }));
   await waitFor(() => expect(submissions).toHaveLength(2)); expect(submissions[1]).toEqual({ kind: 'enabled', jobId: 'job-1', revision: 'r1', enabled: true });
 });
+
+it.each(['creation', 'edit', 'enable'] as const)('restores the %s trigger after confirmed receipt, editor removal and fresh browse', async action => {
+  if (action !== 'creation') snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: false, revision: 'r1', scheduleKind: 'every', draft, readOnlyReason: null }];
+  await open();
+  const trigger = screen.getByRole('button', { name: action === 'creation' ? 'New schedule' : action === 'edit' ? 'Edit Synthetic check' : 'Enable Synthetic check' });
+  if (action === 'creation') fill(); else fireEvent.click(trigger);
+  if (action !== 'enable') fireEvent.click(screen.getByRole('button', { name: action === 'creation' ? 'Review disabled creation' : 'Review edit' }));
+  await screen.findByRole('region', { name: 'Review schedule change' });
+  let finish!: () => void; const fresh = new Promise<void>(resolve => { finish = resolve; });
+  const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation(async (path, init) => {
+    if (/\/schedules$/.test(path)) await fresh;
+    return original(path, init);
+  });
+  fireEvent.click(screen.getByRole('button', { name: action === 'creation' ? 'Create disabled schedule' : action === 'edit' ? 'Confirm edit' : 'Confirm enable' }));
+  await screen.findByText(/Native change acknowledged/);
+  await waitFor(() => expect(screen.queryByRole('form', { name: action === 'creation' ? 'New schedule' : 'Edit schedule' })).toBeNull());
+  await act(async () => { finish(); });
+  await waitFor(() => expect(trigger).toBeEnabled()); expect(trigger).toHaveFocus(); expect(submissions).toHaveLength(1);
+});
 it('enabled_edit_warns_future_runs_change and cancel restores its trigger', async () => {
   snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: true, revision: 'r1', scheduleKind: 'every', draft, readOnlyReason: null, timingMetadata: { anchorMs: 1000, staggerMs: 5000 } }];
   await open(); const edit = screen.getByRole('button', { name: 'Edit Synthetic check' }); fireEvent.click(edit);
@@ -186,6 +206,26 @@ it('local invalid cron/timezone fields prevent prepare and show labeled errors',
   fireEvent.click(screen.getByRole('button', { name: 'Review disabled creation' }));
   expect(screen.getByText(/Enter exactly five cron fields/)).toBeInTheDocument(); expect(screen.getByText(/Enter a valid IANA timezone/)).toBeInTheDocument();
   expect(access.request.mock.calls.some(([path]) => path.endsWith('/prepare'))).toBe(false);
+});
+
+it.each(['creation', 'edit'] as const)('preserves a 64001 ms interval through %s review', async action => {
+  const precise = { ...draft, schedule: { kind: 'every' as const, everyMs: 64001 } };
+  if (action === 'edit') snapshot.jobs = [{ id: 'job-1', agentId: agent.id, name: draft.name, enabled: false, revision: 'r1', scheduleKind: 'every', draft: precise, readOnlyReason: null }];
+  await open();
+  if (action === 'creation') { fill(); fireEvent.change(screen.getByLabelText('Interval (seconds)'), { target: { value: '64.001' } }); }
+  else { fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic check' })); expect(screen.getByLabelText('Interval (seconds)')).toHaveValue(64.001); }
+  fireEvent.click(screen.getByRole('button', { name: action === 'creation' ? 'Review disabled creation' : 'Review edit' }));
+  const review = await screen.findByRole('region', { name: 'Review schedule change' });
+  expect(within(within(review).getByRole('region', { name: 'Resulting definition' })).getByText('Every 64.001 seconds')).toBeInTheDocument();
+  const preparation = access.request.mock.calls.find(([path]) => path.endsWith('/prepare'))!;
+  expect(JSON.parse(String(preparation[1].body)).intent.draft.schedule).toEqual({ kind: 'every', everyMs: 64001 }); expect(submissions).toHaveLength(0);
+});
+
+it.each(['60.0001', '64.001000000000001'])('rejects sub-millisecond interval %s without rounding it', async seconds => {
+  await open(); fill(); fireEvent.change(screen.getByLabelText('Interval (seconds)'), { target: { value: seconds } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review disabled creation' }));
+  expect(screen.getByText('Use whole milliseconds (at most three decimal places of seconds).')).toBeInTheDocument();
+  expect(access.request.mock.calls.some(([path]) => path.endsWith('/prepare'))).toBe(false); expect(submissions).toHaveLength(0);
 });
 
 it('incoming_row_revision_does_not_silently_rebase_open_editor', async () => {

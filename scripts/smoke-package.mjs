@@ -156,7 +156,7 @@ try {
   await stop();
   for (const scheduling of [{}, { CONTROL_SCHEDULES_MANAGE_ENABLED: 'true' }]) {
     await start({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:9', PIXEL_CONTROL_TOKEN: firstKey,
-      OPENCLAW_SCHEDULES_GATEWAY_TOKEN: 'synthetic-package-bootstrap', ...scheduling });
+      OPENCLAW_SCHEDULES_GATEWAY_TOKEN: secondKey, ...scheduling });
     const recovery = await fetch(`${origin}/api/control/agents/main/schedules/operations`, { headers: { Authorization: `Bearer ${firstKey}` } });
     assert.equal(recovery.status, 200); assert.deepEqual(await recovery.json(), { agentId: 'main', operations: [] });
     assert(!existsSync(join(generated.DATA_DIR, 'control-schedules')), 'Startup/recovery read paired scheduling without an authenticated native browse');

@@ -60,8 +60,9 @@ it('real provider/private API creates disabled only after review and clears priv
     expect(fs.readFileSync(join(directory, 'control-schedules/journal.json'), 'utf8')).not.toContain('SYNTHETIC PRIVATE INTEGRATION PROMPT');
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await screen.findByRole('button', { name: 'Enable Synthetic integration' });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic integration' }));
-    expect(screen.getByLabelText('Task prompt')).toHaveValue('SYNTHETIC PRIVATE INTEGRATION PROMPT');
+    const edit = screen.getByRole('button', { name: 'Edit Synthetic integration' });
+    await waitFor(() => expect(edit).toBeEnabled()); fireEvent.click(edit);
+    expect(await screen.findByLabelText('Task prompt')).toHaveValue('SYNTHETIC PRIVATE INTEGRATION PROMPT');
     fireEvent.click(screen.getByRole('button', { name: 'Lock' }));
     await waitFor(() => expect(screen.queryByLabelText('Task prompt')).toBeNull());
     expect(document.body.textContent).not.toContain('SYNTHETIC PRIVATE INTEGRATION PROMPT');

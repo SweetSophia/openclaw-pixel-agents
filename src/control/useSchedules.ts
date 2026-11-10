@@ -73,9 +73,10 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
     invalidate(); update(old => ({ ...old, confirmation: null, loading: true }));
     const selected = context.current.owner; const epoch = lifecycle.current; const controller = startRead('browse');
     const dispose = controlReadDeadline(controller);
+    const applicable = () => current(selected, epoch) && readers.current.get('browse') === controller;
     try {
       const snapshot = parseScheduleSnapshot(await context.current.access.request(`${path()}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { signal: controller.signal }));
-      if (!current(selected, epoch)) return;
+      if (!applicable()) return;
       if (controller.signal.aborted) throw controller.signal.reason;
       if (!snapshot || snapshot.agentId !== context.current.agentId || (!more && snapshot.scanned > 200)
         || (more && (snapshot.management.epoch !== previous!.management.epoch || snapshot.scanned <= previous!.scanned))) throw new ControlApiError('invalid-source');
@@ -92,7 +93,7 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
         ...(more ? { operationsCursor: old.snapshot?.operationsCursor, operationsError: snapshot.operationsError ?? old.snapshot?.operationsError } : {}) },
         stale: snapshot.source.state !== 'current', error: null }));
     } catch (error) {
-      if (!current(selected, epoch)) return;
+      if (!applicable()) return;
       const failure = controlReadError(controller, error);
       if (more) { freshRequired.current = true; update(old => ({ ...old, snapshot: old.snapshot ? { ...old.snapshot, nextCursor: undefined } : null })); }
       fail(failure);
@@ -131,6 +132,7 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
     invalidate(); update(old => ({ ...old, confirmation: null }));
     const selected = context.current.owner; const epoch = lifecycle.current; const draft = draftVersion.current; const history = context.current.historical;
     // Explicit preparation refreshes authority even when dirty edits have paused background reads.
+    cancelRead('browse');
     await refresh();
     if (!current(selected, epoch) || draft !== draftVersion.current || !canManage(intent) || readers.current.has('browse')) return;
     const management = data.current.snapshot!.management.epoch!; const started = performance.now();
@@ -174,7 +176,12 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
       if (operation.state === 'unknown') update(old => ({ ...old, error: new ControlApiError('schedule-outcome-unknown') }));
     } catch (error) {
       if (!current(selected, epoch) || versions.current.get(confirmation.operationId) !== version) return;
-      const failure = error instanceof ControlApiError && ['schedule-changed', 'schedule-denied', 'schedule-storage-unavailable', 'locked', 'scope-required', 'pairing-required'].includes(error.code)
+      // These REST rejections precede native mutation dispatch; reservation/native failures do not prove that.
+      const notSent = !controller.signal.aborted && error instanceof ControlApiError && ['rate-limited', 'invalid-request', 'invalid-target'].includes(error.code);
+      if (notSent) {
+        uncertainIntents.current.delete(confirmation.operationId); applyOperation({ ...unknown, state: 'not-sent' }, version);
+      }
+      const failure = error instanceof ControlApiError && (notSent || ['schedule-changed', 'schedule-denied', 'schedule-storage-unavailable', 'locked', 'scope-required', 'pairing-required'].includes(error.code))
         ? error : new ControlApiError('schedule-outcome-unknown');
       fail(failure);
     } finally { dispose(); if (mutation.current === controller) mutation.current = null; }
@@ -222,6 +229,7 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
   useEffect(() => {
     if (!permitted() || !visible) return;
     const automatic = () => {
+      if (binding.current && performance.now() < binding.current.expires) return;
       if (context.current.editing || freshRequired.current || data.current.draft || binding.current || mutation.current || readers.current.size || data.current.operation?.state === 'unknown') {
         update(old => ({ ...old, stale: true })); return;
       }

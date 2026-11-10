@@ -15,7 +15,7 @@ export interface ScheduleMutations {
 type Binding = NonNullable<ReturnType<ScheduleGateway['connection']>>;
 interface Ticket { confirmation: ScheduleConfirmation; binding: Binding; definition?: string }
 interface Attempt { agentId: string; digest: string; binding?: Binding; action: ScheduleIntent['kind']; jobId?: string; expected?: string; result?: ScheduleOperation; promise: Promise<ScheduleOperation> }
-interface RecoveryCursor { agentId: string; operationId: string; binding: Binding; scanned: number; expires: number }
+interface RecoveryCursor { agentId: string; operationId: string; binding: Binding; scanned: number; revision: string; expires: number }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const sameBinding = (a: Binding, b: Binding) => a.epoch === b.epoch && a.gatewayUrl === b.gatewayUrl && a.deviceId === b.deviceId;
 const configuration = (row: ScheduleRow, declarationKey: unknown) => hash({ draft: row.draft, enabled: row.enabled, declarationKey: declarationKey ?? null });
@@ -23,9 +23,9 @@ const definition = (value: unknown, agentId: string): string | undefined => {
   const row = projectScheduleJob(value, agentId); const job = controlRecord(value);
   return row && row.readOnlyReason === null ? hash({ id: row.id, draft: row.draft, enabled: row.enabled, revision: row.revision, declarationKey: job?.declarationKey ?? null }) : undefined;
 };
-function operation(record: ScheduleReservation): ScheduleOperation {
+export function projectScheduleOperation(record: ScheduleReservation): ScheduleOperation {
   return { operationId: record.operationId, agentId: record.agentId, action: 'create',
-    state: record.state === 'observed' || record.state === 'changed' ? record.state : 'unknown',
+    state: record.state === 'acknowledged' ? 'confirmed' : record.state === 'observed' || record.state === 'changed' ? record.state : 'unknown',
     ...(record.jobId === undefined ? {} : { jobId: record.jobId }) };
 }
 function addJob(value: unknown): Record<string, unknown> | null {
@@ -124,7 +124,7 @@ export function createScheduleMutations(options: {
       const previous = storage().list(agentId).find(row => row.operationId === input.operationId);
       if (previous) {
         if (previous.requestDigest !== scheduleCreateDigest(agentId, input.intent.draft)) throw new ControlError('schedule-changed');
-        bound(previous, authority(agentId)); return operation(previous);
+        bound(previous, authority(agentId)); return projectScheduleOperation(previous);
       }
     }
     const ticket = tickets.get(input.operationId); if (!ticket) throw new ControlError('schedule-changed');
@@ -142,7 +142,7 @@ export function createScheduleMutations(options: {
         try { reservation = await store.reserve({ operationId: input.operationId, agentId, requestDigest: scheduleCreateDigest(agentId, input.intent.draft) }); }
         catch (error) { if (error instanceof ControlError) throw error; throw new ControlError('schedule-storage-unavailable'); }
         // An existing uncertain reservation is recovery metadata, never permission to send again.
-        if (!('reserved' in reservation) || reservation.reserved !== true) return operation(reservation);
+        if (!('reserved' in reservation) || reservation.reserved !== true) return projectScheduleOperation(reservation);
         params = buildScheduleCreate(agentId, reservation.declarationKey, input.intent.draft);
         try { reviewed(ticket, agentId, input); } catch { return unknown; }
       } else {
@@ -192,8 +192,8 @@ export function createScheduleMutations(options: {
     const previous = token === undefined ? undefined : cursors.get(token);
     if (token !== undefined && (!previous || previous.operationId !== operationId || previous.agentId !== agentId || !sameBinding(previous.binding, binding))) throw new ControlError('schedule-changed');
     if (token !== undefined) cursors.delete(token);
-    let scanned = previous?.scanned ?? 0; let more = false;
-    const unknown: ScheduleOperation = { ...operation(record), state: 'unknown' };
+    let scanned = previous?.scanned ?? 0; let revision = previous?.revision; let more = false;
+    const unknown: ScheduleOperation = { ...projectScheduleOperation(record), state: 'unknown' };
     async function found(job: Record<string, unknown>): Promise<ScheduleOperation | undefined> {
       if (job.declarationKey !== record!.declarationKey) return;
       const row = projectScheduleJob(job, agentId);
@@ -215,7 +215,10 @@ export function createScheduleMutations(options: {
     while (scanned - initial < 200 && scanned < 2000) {
       const response = await manager.request('cron.list', { agentId, includeDisabled: true, includeDeliveryPreviews: false, limit: 50, offset: scanned }, signal);
       authority(agentId, binding, signal);
-      const page = parseScheduleNativePage(response, scanned); more = page.hasMore;
+      // A native deletion may clamp the offset before page validation; require a fresh scan instead.
+      const responseRevision = controlRecord(response)?.snapshotRevision;
+      if (revision && typeof responseRevision === 'string' && revision !== responseRevision) throw new ControlError('schedule-changed');
+      const page = parseScheduleNativePage(response, scanned); revision = page.snapshotRevision; more = page.hasMore;
       for (let i = 0; i < page.jobs.length; i++) {
         scanned++; const job = page.jobs[i];
         const result = await found(job); if (result) return result;
@@ -225,7 +228,7 @@ export function createScheduleMutations(options: {
     const recovery: NonNullable<ScheduleOperation['recovery']> = { scanned, truncated: more };
     if (more && scanned < 2000) {
       recovery.nextCursor = randomBytes(32).toString('base64url');
-      cursors.set(recovery.nextCursor, { agentId, operationId, binding, scanned, expires: previous?.expires ?? Date.now() + 60000 });
+      cursors.set(recovery.nextCursor, { agentId, operationId, binding, scanned, revision: revision!, expires: previous?.expires ?? Date.now() + 60000 });
       while (cursors.size > 100) cursors.delete(cursors.keys().next().value!);
     }
     return { ...unknown, recovery };

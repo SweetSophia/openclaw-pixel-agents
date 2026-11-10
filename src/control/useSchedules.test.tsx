@@ -103,12 +103,65 @@ it('preserves_draft_on_revision_conflict and refresh invalidates old confirmatio
   expect(result.current.draft).toEqual(draft);
 });
 
+it.each(['rate-limited', 'invalid-request'] as const)('a definite %s rejection is not-sent and permits a new explicit review without replay', async code => {
+  const { result } = await prepared(); access.request.mockRejectedValueOnce(new ControlApiError(code));
+  await act(() => result.current.submit());
+  expect(result.current.error?.code).toBe(code); expect(result.current.operation?.state).toBe('not-sent');
+  expect(result.current.snapshot?.operations.find(row => row.operationId === id)?.state).toBe('not-sent'); expect(result.current.draft).toEqual(draft);
+  const original = access.request.getMockImplementation()!; const nextId = '22222222-2222-4222-8222-222222222222';
+  access.request.mockImplementation(async (path, init) => path.endsWith('/prepare') ? { ...confirmation(), operationId: nextId } : original(path, init));
+  await act(() => result.current.submit()); expect(submits()).toHaveLength(1);
+  await act(() => result.current.prepare(intent)); expect(result.current.confirmation?.operationId).toBe(nextId); expect(submits()).toHaveLength(1);
+});
+
+it('a definite invalid-target submit rejection clears private state instead of leaving phantom uncertainty', async () => {
+  const { result } = await prepared(); access.request.mockRejectedValueOnce(new ControlApiError('invalid-target'));
+  await act(() => result.current.submit());
+  expect(result.current.error?.code).toBe('invalid-target'); expect(result.current.snapshot).toBeNull(); expect(result.current.draft).toBeNull(); expect(result.current.operation).toBeNull();
+  expect(submits()).toHaveLength(1);
+});
+
+it.each(['schedule-storage-unavailable', 'schedule-denied', 'schedule-changed'] as const)('does not release an uncertain intent on %s without non-dispatch proof', async code => {
+  const { result } = await prepared(); access.request.mockRejectedValueOnce(new ControlApiError(code));
+  await act(() => result.current.submit());
+  expect(result.current.error?.code).toBe(code); expect(result.current.operation?.state).toBe('unknown');
+  const count = access.request.mock.calls.length; await act(() => result.current.prepare(intent));
+  expect(access.request).toHaveBeenCalledTimes(count); expect(result.current.confirmation).toBeNull(); expect(submits()).toHaveLength(1);
+});
+
+it('a post-deadline rejection cannot release an uncertain intent as not-sent', async () => {
+  const { result } = await prepared(); vi.useFakeTimers(); const delayed = deferred<never>();
+  access.request.mockImplementationOnce(() => delayed.promise);
+  let pending!: Promise<void>; act(() => { pending = result.current.submit(); }); const signal = lastRequest()[1]!.signal!;
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); }); expect(signal.aborted).toBe(true);
+  await act(async () => { delayed.reject(new ControlApiError('rate-limited')); await pending; });
+  expect(result.current.operation?.state).toBe('unknown'); expect(result.current.error?.code).toBe('schedule-outcome-unknown');
+  const count = access.request.mock.calls.length; await act(() => result.current.prepare(intent));
+  expect(access.request).toHaveBeenCalledTimes(count); expect(result.current.confirmation).toBeNull(); expect(submits()).toHaveLength(1);
+});
+
 it('refreshing a changed native revision prevents an edit confirmation', async () => {
   const { result } = await ready(); act(() => result.current.setDraft(draft));
   const edit: ScheduleIntent = { kind: 'edit', jobId: 'job-1', revision: 'revision-1', draft };
   await act(() => result.current.prepare(edit)); expect(result.current.confirmation).not.toBeNull();
   latest = snapshot({ jobs: [{ ...latest.jobs[0], revision: 'revision-2' }] }); await act(() => result.current.refresh());
   await act(() => result.current.submit()); expect(submits()).toHaveLength(0); expect(result.current.confirmation).toBeNull(); expect(result.current.draft).toEqual(draft);
+});
+
+it.each(['response', 'rejection'] as const)('explicit preparation replaces an in-flight browse and fences its late %s', async completion => {
+  const { result } = await ready(); const delayed = deferred<ScheduleSnapshot>();
+  access.request.mockImplementationOnce(() => delayed.promise);
+  let previous!: Promise<void>; act(() => { previous = result.current.refresh(); });
+  const signal = lastRequest()[1]!.signal!;
+  act(() => result.current.setDraft(draft)); await act(() => result.current.prepare(intent));
+  expect(result.current.confirmation?.intent).toEqual(intent); expect(signal.aborted).toBe(true); expect(reads()).toHaveLength(3);
+  await act(async () => {
+    if (completion === 'response') delayed.resolve(snapshot({ management: { ...latest.management, epoch: 'old-reply-epoch' } }));
+    else delayed.reject(new ControlApiError('locked'));
+    await previous;
+  });
+  expect(result.current.confirmation?.intent).toEqual(intent); expect(result.current.snapshot?.management.epoch).toBe('epoch-1');
+  expect(result.current.draft).toEqual(draft); expect(result.current.stale).toBe(false); expect(result.current.error).toBeNull(); expect(result.current.loading).toBe(false);
 });
 
 it.each(['unavailable', 'invalid-source', 'timed-out'] as const)('unknown_submit_never_replays_on_remount after %s', async code => {
@@ -195,6 +248,22 @@ it('uses local monotonic expiry despite server/browser wall-clock skew', async (
   let monotonic = 100; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
   const { result } = await prepared(); vi.spyOn(Date, 'now').mockReturnValue(-1000000);
   monotonic = 60101; await act(() => result.current.submit()); expect(submits()).toHaveLength(0); expect(result.current.confirmation).toBeNull();
+});
+
+it.each(['create', 'edit', 'enabled'] as const)('background polling preserves an unexpired %s confirmation', async kind => {
+  vi.useFakeTimers(); let monotonic = 100; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+  const { result } = renderHook(() => useSchedules({ agentId: 'cylena', active: true, historical: false }));
+  await act(async () => {});
+  const selected: ScheduleIntent = kind === 'create' ? intent : kind === 'edit'
+    ? { kind, jobId: 'job-1', revision: 'revision-1', draft }
+    : { kind, jobId: 'job-1', revision: 'revision-1', enabled: true };
+  if (kind !== 'enabled') act(() => result.current.setDraft(draft));
+  await act(() => result.current.prepare(selected)); const count = reads().length;
+  monotonic = 59100; await act(async () => { await vi.advanceTimersByTimeAsync(59000); });
+  expect(result.current.stale).toBe(false); expect(result.current.confirmation?.intent).toEqual(selected); expect(reads()).toHaveLength(count);
+  const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation(async (path, init) => path.endsWith('/submit') ? { ...outcome('confirmed'), action: kind, ...(kind === 'create' ? {} : { jobId: 'job-1' }) } : original(path, init));
+  await act(() => result.current.submit()); expect(submits()).toHaveLength(1); expect(result.current.operation?.state).toBe('confirmed');
 });
 
 it('clones draft and confirmation bindings so retained caller objects cannot change submitted intent', async () => {

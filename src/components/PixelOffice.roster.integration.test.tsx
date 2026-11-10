@@ -51,6 +51,8 @@ it('keeps a sub-prefixed ordinary agent alive and selectable across updates', as
   expect(getAgentCharacter('sub-worker')?.down[0].canvas.width).toBeGreaterThan(0);
 });
 it('retains actual sub-agents with non-prefixed identities and does not select them', async () => {
+  // Spawn right of the parent; diagonal rounding can overlap its inclusive pick box.
+  vi.spyOn(Math, 'random').mockReturnValue(0);
   const add = vi.spyOn(GameEngine.prototype, 'addCharacter'); const click = vi.fn();
   const child = { id: 'agent:main:subagent:fixture', name: 'Child', spawnedAt: 1, status: 'running' as const };
   const parent = { ...agent('main'), subAgents: [child] };

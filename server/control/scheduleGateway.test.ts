@@ -181,14 +181,43 @@ describe('separate signed scheduling authority', () => {
     expect(devices.readDeviceGrantDetails(configured.deviceDirectory, host.url, identity.deviceId)?.scopes).toEqual(['operator.read']);
     expect(host.frames).toHaveLength(1);
   });
-  it('revocation_invalidates_epoch', async () => {
+  it.each(['cron.get', 'cron.update'] as const)('revocation_invalidates_epoch_and_never_automatically_reconnects: %s', async method => {
     let connections = 0;
     const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect'
       ? ++connections === 1 ? hello(frame) : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN' } }
       : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN', message: 'private denial' } })));
     const gateway = client(config(host.url)); await ready(gateway); const epoch = gateway.status().epoch; expect(epoch).not.toBeNull();
-    await expect(gateway.request('cron.update', {})).rejects.toMatchObject({ code: 'schedule-denied' });
+    await expect(gateway.request(method, {})).rejects.toMatchObject({ code: 'schedule-denied' });
     expect(gateway.status()).toMatchObject({ canManage: false, epoch: null, reason: 'permission' }); expect(gateway.connection()).toBeNull();
+    await vi.waitFor(() => expect(host.sockets.size).toBe(0));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); await vi.advanceTimersByTimeAsync(30001);
+    expect(connections).toBe(1); expect(host.frames.map(frame => frame.method)).toEqual(['connect', method]);
+  });
+  it('native_per_object_not_found_is_invalid_request_and_preserves_the_management_channel', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame)
+      : frame.method === 'cron.get' ? { type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', details: { code: 'CRON_JOB_NOT_FOUND' } } }
+        : { type: 'res', id: frame.id, ok: true, payload: { ok: true } })));
+    const gateway = client(config(host.url)); await ready(gateway); const epoch = gateway.status().epoch;
+    await expect(gateway.request('cron.get', { id: 'missing' })).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(gateway.status()).toMatchObject({ state: 'ready', canManage: true, epoch });
+    await expect(gateway.request('cron.list', {})).resolves.toEqual({ ok: true });
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'cron.get', 'cron.list']);
+  });
+  it('forbidden_read_invalidates_pending_mutations_without_replay_or_automatic_regrant', async () => {
+    const host = await fixture((frame, socket) => {
+      if (frame.method === 'connect') socket.write(encode(hello(frame)));
+      else if (frame.method === 'cron.get') socket.write(encode({ type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN' } }));
+    });
+    const gateway = client(config(host.url)); await ready(gateway);
+    const pending = gateway.request('cron.add', {}).catch(error => error);
+    await vi.waitFor(() => expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'cron.add']));
+    await expect(gateway.request('cron.get', {})).rejects.toMatchObject({ code: 'schedule-denied' });
+    expect(await pending).toMatchObject({ code: 'schedule-outcome-unknown' });
+    expect(gateway.status()).toMatchObject({ state: 'auth-error', canManage: false, epoch: null });
+    await expect(gateway.request('cron.add', {})).rejects.toMatchObject({ code: 'unavailable' });
+    await vi.waitFor(() => expect(host.sockets.size).toBe(0));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); await vi.advanceTimersByTimeAsync(30001);
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'cron.add', 'cron.get']);
   });
   it.each([
     [{ code: 'INVALID_REQUEST', details: { code: 'CRON_JOB_CHANGED' } }, 'schedule-changed'],

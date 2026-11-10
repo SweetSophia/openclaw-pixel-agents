@@ -204,6 +204,77 @@ describe('durable metadata-only schedule journal', () => {
     await first.record(request.operationId, 'observed');
   });
 
+  it.each(['before-open', 'after-open'] as const)('recovery survives the active writer atomic rename %s', async window => {
+    const dir = directory(); const journal = open(dir); const request = input(); await journal.reserve(request);
+    const path = join(dir, 'journal.json'); const realRename = fs.renameSync;
+    const realStat = fs.lstatSync; const realOpen = fs.openSync;
+    let rename: (() => void) | undefined;
+    let recovery: Promise<{ rows?: ScheduleReservation[]; error?: unknown }> | undefined;
+    const replace = () => { const action = rename; rename = undefined; action?.(); };
+    vi.spyOn(fs, 'lstatSync').mockImplementation((...args: Parameters<typeof fs.lstatSync>) => {
+      const stat = realStat(...args);
+      if (window === 'before-open' && args[0] === path) replace();
+      return stat;
+    });
+    vi.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+      const fd = realOpen(...args);
+      if (window === 'after-open' && args[0] === path) replace();
+      return fd;
+    });
+    vi.spyOn(fs, 'renameSync').mockImplementation((source, destination) => {
+      if (destination !== path) return realRename(source, destination);
+      // Run the real writer's already-fsynced replacement in the reader's syscall gap.
+      rename = () => realRename(source, destination);
+      recovery = readScheduleRecovery(dir, 'main').then(rows => ({ rows }), error => ({ error }));
+    });
+    await journal.record(request.operationId, 'observed');
+    expect(rename).toBeUndefined();
+    expect(await recovery).toMatchObject({ rows: [{ operationId: request.operationId, state: 'observed' }] });
+    expect(fs.existsSync(join(dir, 'journal.lock'))).toBe(true);
+    vi.restoreAllMocks();
+    await journal.reserve(input('writer-remains-healthy'));
+  });
+
+  it('bounds recovery restarts and closes every descriptor under repeated atomic replacement', async () => {
+    const dir = directory(); const journal = open(dir); await journal.reserve(input());
+    const path = join(dir, 'journal.json'); const raw = fs.readFileSync(path);
+    const realStat = fs.lstatSync; const realOpen = fs.openSync; const descriptors: number[] = []; let replacements = 0;
+    vi.spyOn(fs, 'lstatSync').mockImplementation((...args: Parameters<typeof fs.lstatSync>) => {
+      const stat = realStat(...args);
+      if (args[0] === path) {
+        const next = join(dir, `replacement-${replacements++}`);
+        fs.writeFileSync(next, raw, { mode: 0o600 }); fs.renameSync(next, path);
+      }
+      return stat;
+    });
+    vi.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+      const fd = realOpen(...args); if (args[0] === path) descriptors.push(fd); return fd;
+    });
+    await expect(readScheduleRecovery(dir, 'main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+    expect(replacements).toBe(3); expect(descriptors).toHaveLength(3);
+    for (const fd of descriptors) expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: 'EBADF' }));
+    expect(fs.readFileSync(path)).toEqual(raw);
+  });
+
+  it.each(['symlink', 'hardlink', 'permissions'] as const)('recovery restart refuses an unsafe replacement: %s', async kind => {
+    const dir = directory(); const journal = open(dir); await journal.reserve(input());
+    const path = join(dir, 'journal.json'); const outside = join(dir, 'outside'); const raw = fs.readFileSync(path);
+    fs.writeFileSync(outside, raw, { mode: kind === 'permissions' ? 0o644 : 0o600 });
+    const next = join(dir, 'replacement');
+    if (kind === 'symlink') fs.symlinkSync(outside, next);
+    else if (kind === 'hardlink') fs.linkSync(outside, next);
+    else fs.copyFileSync(outside, next);
+    const realStat = fs.lstatSync; let replaced = false;
+    vi.spyOn(fs, 'lstatSync').mockImplementation((...args: Parameters<typeof fs.lstatSync>) => {
+      const stat = realStat(...args);
+      if (args[0] === path && !replaced) { replaced = true; fs.renameSync(next, path); }
+      return stat;
+    });
+    await expect(readScheduleRecovery(dir, 'main')).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+    expect(fs.readFileSync(outside)).toEqual(raw);
+    expect(fs.readFileSync(join(dir, 'journal.lock'), 'utf8')).not.toBe('');
+  });
+
   it('never steals an abandoned lock and still permits side-effect-free recovery', async () => {
     const dir = directory(); const journal = open(dir); const request = input(); const { reserved: _admission, ...original } = await journal.reserve(request);
     await journal.close(); fs.writeFileSync(join(dir, 'journal.lock'), 'abandoned-unverified-owner', { mode: 0o600 });

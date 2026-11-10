@@ -1898,11 +1898,15 @@ async function shutdown(signal: string) {
   // can `clearTimeout` once the race resolves, preventing a delayed forced-shutdown
   // log from firing after a successful graceful exit.
   let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let disposalFailed = false;
 
   const gracefulClose = (async (): Promise<false> => {
     // Fence scheduling admission immediately, including connected submit preflights.
     // The HTTP close hook shares this idempotent disposal for non-startServer users.
-    const schedulesClosed = controlSchedules.close();
+    const schedulesClosed = controlSchedules.close().catch(() => {
+      disposalFailed = true;
+      logger.error({ subsystem: "control-schedules", code: "unavailable" }, "private scheduling disposal failed");
+    });
     // Stop accepting, then drain HTTP and upgraded office sockets together.
     const httpClosed = new Promise<void>((resolve) =>
       server.close(() => {
@@ -1934,11 +1938,12 @@ async function shutdown(signal: string) {
     process.exit(1);
   }
 
-  logger.info({ subsystem: "server" }, "shutdown complete");
+  if (disposalFailed) logger.error({ subsystem: "server" }, "shutdown complete (failed)");
+  else logger.info({ subsystem: "server" }, "shutdown complete");
   // Best-effort drain of buffered pino lines; flush is fire-and-forget here
   // because `process.exit` is synchronous and there is no awaiting wrapper.
   logger.flush?.();
-  process.exit(0);
+  process.exit(disposalFailed ? 1 : 0);
 }
 
 function startServer(): void {

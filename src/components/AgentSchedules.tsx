@@ -18,8 +18,12 @@ function validate(fields: FormFields): { errors: Errors; draft: ScheduleDraft | 
   const errors: Errors = {};
   if (!fields.name.trim() || fields.name.length > 128) errors.name = 'Enter a schedule name of 1–128 characters.';
   if (!fields.message.trim() || new TextEncoder().encode(fields.message).byteLength > 16384) errors.message = 'Enter a task prompt up to 16 KiB UTF-8.';
-  const everyMs = Number(fields.seconds) * 1000;
-  if (fields.kind === 'every' && (!fields.seconds.trim() || !Number.isSafeInteger(everyMs) || everyMs < 60000 || everyMs > 31536000000)) errors.seconds = 'Enter an interval from 60 through 31,536,000 seconds (one minute to 365 days).';
+  const seconds = fields.seconds.trim(); const parts = /^(\d+)(?:\.(\d{1,3})0*)?$/.exec(seconds);
+  const everyMs = parts ? Number(parts[1]) * 1000 + Number((parts[2] ?? '').padEnd(3, '0')) : NaN;
+  if (fields.kind === 'every') {
+    if (!seconds || !Number.isFinite(Number(seconds)) || Number(seconds) < 60 || Number(seconds) > 31536000) errors.seconds = 'Enter an interval from 60 through 31,536,000 seconds (one minute to 365 days).';
+    else if (!Number.isSafeInteger(everyMs)) errors.seconds = 'Use whole milliseconds (at most three decimal places of seconds).';
+  }
   if (fields.kind === 'cron') {
     if (!fields.expr.trim() || fields.expr.length > 128 || fields.expr.trim().split(/\s+/).length !== 5) errors.expr = 'Enter exactly five cron fields, up to 128 characters.';
     try { if (!fields.tz || !/^[A-Za-z][A-Za-z0-9_+\/-]*$/.test(fields.tz)) throw Error(); new Intl.DateTimeFormat('en', { timeZone: fields.tz }); }
@@ -65,7 +69,7 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
     const fallback = rootRef.current?.closest('[role="dialog"]')?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
     (element?.isConnected && !element.disabled ? element : newRef.current && !newRef.current.disabled ? newRef.current : fallback)?.focus();
   };
-  useLayoutEffect(() => { if (pendingFocus.current) { restore(pendingFocus.current); pendingFocus.current = null; } });
+  useLayoutEffect(() => { if (pendingFocus.current && !schedules.loading) { restore(pendingFocus.current); pendingFocus.current = null; } });
   useEffect(() => {
     if (previousHistorical.current && !historical && active) void schedules.refresh();
     previousHistorical.current = historical;
@@ -75,7 +79,11 @@ export function AgentSchedules({ agentId, active, historical, onReturnToLive }: 
     const receipt = submitted.current;
     if (receipt && schedules.operation?.operationId === receipt.operationId && schedules.operation.state === 'confirmed') {
       submitted.current = null;
-      if (editor === receipt.editor) { setEditor(null); setErrors({}); schedules.setDraft(null); restore(editorTrigger.current); }
+      if (editor === receipt.editor) {
+        pendingFocus.current = receipt.editor ? editorTrigger.current : confirmTrigger.current;
+        setEditor(null); setErrors({}); schedules.setDraft(null);
+        void schedules.refresh();
+      }
     }
   }, [schedules.operation, editor]); // A receipt closes only its unchanged submitted editor.
   useEffect(() => { if (active && editor) rootRef.current?.querySelector<HTMLInputElement>('[data-schedule-name]')?.focus(); }, [editor?.target?.id, editor !== null]);

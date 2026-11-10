@@ -83,21 +83,28 @@ function parseMetadata(value: unknown): Metadata {
 }
 function readMetadata(directory: string): Metadata | undefined {
   const path = join(directory, 'journal.json');
-  let stat: fs.Stats;
-  try { stat = fs.lstatSync(path); } catch (error) { if (missing(error)) return undefined; throw error; }
-  privateFile(stat);
-  const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-  try {
-    const opened = fs.fstatSync(fd); privateFile(opened);
-    if (!sameFile(stat, opened) || opened.size > MAX_BYTES) throw unavailable();
-    const buffer = Buffer.alloc(MAX_BYTES + 1); let length = 0;
-    while (length < buffer.length) {
-      const count = fs.readSync(fd, buffer, length, buffer.length - length, null);
-      if (!count) break; length += count;
-    }
-    if (length > MAX_BYTES) throw unavailable();
-    return parseMetadata(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length))));
-  } finally { fs.closeSync(fd); }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let stat: fs.Stats;
+    try { stat = fs.lstatSync(path); } catch (error) { if (missing(error)) return undefined; throw error; }
+    privateFile(stat);
+    const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+      const opened = fs.fstatSync(fd);
+      // Atomic writer replacement can change the inode or detach an already-open file.
+      // Never read either descriptor: close it and repeat all path/descriptor checks.
+      if (!sameFile(stat, opened) || opened.nlink === 0) continue;
+      privateFile(opened);
+      if (opened.size > MAX_BYTES) throw unavailable();
+      const buffer = Buffer.alloc(MAX_BYTES + 1); let length = 0;
+      while (length < buffer.length) {
+        const count = fs.readSync(fd, buffer, length, buffer.length - length, null);
+        if (!count) break; length += count;
+      }
+      if (length > MAX_BYTES) throw unavailable();
+      return parseMetadata(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length))));
+    } finally { fs.closeSync(fd); }
+  }
+  throw unavailable();
 }
 
 /** Existing metadata only: never creates a directory, installation, identity, or lock. */

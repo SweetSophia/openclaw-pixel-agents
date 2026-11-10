@@ -6,7 +6,7 @@ import { ControlError } from './errors';
 import type { ScheduleConfig } from './scheduleConfig';
 import { openScheduleJournal, readScheduleRecovery, type ScheduleJournal } from './scheduleJournal';
 import { isCanonicalScheduleAgentId, parseScheduleNativePage, projectScheduleJob } from './scheduleProjection';
-import { createScheduleMutations } from './scheduleMutations';
+import { createScheduleMutations, projectScheduleOperation } from './scheduleMutations';
 
 export interface ScheduleService {
   read(agentId: string, cursor?: string, signal?: AbortSignal): Promise<ScheduleSnapshot>;
@@ -98,10 +98,9 @@ export function createScheduleService(options: {
     if (token !== undefined && (!previous || previous.purpose !== 'recovery' || previous.agentId !== agentId || previous.revision !== revision)) throw new ControlError('schedule-changed');
     const offset = previous?.offset ?? 0; const selected = records.slice(offset, offset + PAGE);
     if (token !== undefined && !selected.length) throw new ControlError('schedule-changed');
+    if (token !== undefined) cursors.delete(token);
     // This read-only slice never resolves uncertainty with a new identity or replays an add.
-    const result: ScheduleOperationsPage = { agentId, operations: selected.map(row => ({ operationId: row.operationId, agentId: row.agentId, action: 'create',
-      state: row.state === 'observed' ? 'observed' : row.state === 'changed' ? 'changed' : 'unknown',
-      ...(row.jobId === undefined ? {} : { jobId: row.jobId }) })) };
+    const result: ScheduleOperationsPage = { agentId, operations: selected.map(projectScheduleOperation) };
     if (offset + selected.length < records.length) {
       result.nextCursor = randomBytes(32).toString('base64url');
       retainCursor(result.nextCursor, { purpose: 'recovery', agentId, offset: offset + selected.length, revision, expires: previous?.expires ?? Date.now() + 60000 });
@@ -120,6 +119,7 @@ export function createScheduleService(options: {
     if (token === undefined) return { purpose: 'native', agentId, epoch: expected, offset: 0, scanned: 0, revision: '', expires: now + 60000 };
     const row = cursors.get(token);
     if (!row || row.purpose !== 'native' || row.agentId !== agentId || row.epoch !== expected) throw new ControlError('schedule-changed');
+    cursors.delete(token);
     return { ...row };
   }
   return {

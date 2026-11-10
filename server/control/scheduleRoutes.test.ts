@@ -78,7 +78,7 @@ async function signedScheduleHost() {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address();
   if (!address || typeof address === 'string') throw Error('Missing synthetic address');
   cleanups.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  return { url: `ws://127.0.0.1:${address.port}/`, frames, signatures, pendingAdds,
+  return { url: `ws://127.0.0.1:${address.port}/`, frames, signatures, pendingAdds, sockets, currentJob: () => job,
     changeJob() { job = { ...job, name: 'Edited natively after lost reply', enabled: true, configRevision: 'revision-2' }; } };
 }
 
@@ -114,11 +114,19 @@ describe('private agent schedule routes', () => {
     await vi.waitFor(() => expect(host.pendingAdds).toHaveLength(1));
     const duplicate = first.call('/submit', input); controller.abort(); await lost;
     const metadata = await (await first.call('/operations')).json(); expect(metadata.operations).toMatchObject([{ operationId: input.operationId, state: 'unknown' }]);
+    const disconnectedEpoch = first.manager.status().epoch;
     for (const socket of host.pendingAdds) socket.destroy();
     expect((await (await duplicate).json()).state).toBe('unknown');
+    // CI can finish the legitimate backoff reconnect before HTTP keep-alive shutdown completes.
+    // Exercise that path deterministically instead of assuming shutdown wins the timer race.
+    await vi.waitFor(() => {
+      expect(first.manager.status().canManage).toBe(true);
+      expect(first.manager.status().epoch).not.toBe(disconnectedEpoch);
+    });
     const journalPath = join(directory, 'control-schedules', 'journal.json');
     expect(fs.readFileSync(journalPath, 'utf8')).not.toContain('Synthetic integration sentinel');
     await first.stop(); expect(fs.existsSync(join(directory, 'control-schedules', 'journal.lock'))).toBe(false);
+    await vi.waitFor(() => expect(host.sockets.size).toBe(0));
     host.changeJob(); const second = await runtime(); await second.call(''); await vi.waitFor(() => expect(second.manager.status().canManage).toBe(true));
     expect((await (await second.call('/submit', input)).json()).state).toBe('unknown');
     const reconciled = await (await second.call(`/operations/${input.operationId}/reconcile`, {})).json();
@@ -126,8 +134,20 @@ describe('private agent schedule routes', () => {
     expect((await (await second.call('/submit', input)).json()).state).toBe('changed');
     expect(host.frames.filter(frame => frame.method === 'cron.add')).toHaveLength(1);
     expect(host.frames.some(frame => frame.method === 'cron.update')).toBe(false);
-    expect(host.signatures).toHaveLength(4); expect(host.signatures.every(Boolean)).toBe(true);
+    expect(host.currentJob()).toMatchObject({ name: 'Edited natively after lost reply', enabled: true, configRevision: 'revision-2' });
+    const connections = host.frames.filter(frame => frame.method === 'connect');
+    expect(host.signatures).toHaveLength(5); expect(host.signatures.every(Boolean)).toBe(true);
+    expect(connections.map(frame => frame.params.scopes)).toEqual([
+      ['operator.read'], ['operator.read', 'operator.admin'], ['operator.read', 'operator.admin'],
+      ['operator.read'], ['operator.read', 'operator.admin'],
+    ]);
+    const readerDevice = connections[0].params.device.id; const managerDevice = connections[1].params.device.id;
+    expect(readerDevice).not.toBe(managerDevice);
+    expect(connections.map(frame => frame.params.device.id)).toEqual([readerDevice, managerDevice, managerDevice, readerDevice, managerDevice]);
     await second.stop(); expect(fs.existsSync(join(directory, 'control-schedules', 'journal.lock'))).toBe(false);
+    await vi.waitFor(() => expect(host.sockets.size).toBe(0));
+    expect(first.reader.status().canRead).toBe(false); expect(first.manager.connection()).toBeNull();
+    expect(second.reader.status().canRead).toBe(false); expect(second.manager.connection()).toBeNull();
   }, 15000);
   it('validates_private_confirmation_submit_and_explicit_reconciliation_bodies', async () => {
     const f = fixture(true, true); const draft = { name: 'Synthetic', message: 'Private synthetic prompt', schedule: { kind: 'every', everyMs: 60000 } };

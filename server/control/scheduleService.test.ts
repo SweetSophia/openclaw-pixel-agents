@@ -207,9 +207,51 @@ describe('bounded private schedule browsing', () => {
       all.push(...page.operations); cursor = page.nextCursor; pages++; expect(pages).toBeLessThanOrEqual(10);
     }
     expect(all.map(row => row.operationId)).toEqual(saved.metadata.records.map(row => row.operationId)); expect(pages).toBe(10);
-    expect(all.every(row => row.state === 'unknown' && row.jobId === '界'.repeat(200))).toBe(true);
+    expect(all.every(row => row.state === 'confirmed' && row.jobId === '界'.repeat(200))).toBe(true);
     expect(f.reader.request).toHaveBeenCalledTimes(1); expect(f.manager.start).toHaveBeenCalledTimes(1); expect(f.manager.request).not.toHaveBeenCalled();
     expect(fs.readdirSync(saved.directory)).toEqual(['journal.json']); expect(JSON.parse(fs.readFileSync(saved.path, 'utf8'))).toEqual(saved.metadata);
+  });
+  it('projects_durable_acknowledgement_as_confirmation_without_execution_claims', async () => {
+    const f = fixture(); const saved = writeRecovery(f.directory, 4);
+    saved.metadata.records[1].state = 'uncertain'; saved.metadata.records[2].state = 'observed'; saved.metadata.records[3].state = 'changed';
+    fs.writeFileSync(saved.path, JSON.stringify(saved.metadata));
+    const operations = await f.service.operations('main'); const snapshot = await f.service.read('main');
+    expect(operations.operations.map(row => row.state)).toEqual(['confirmed', 'unknown', 'observed', 'changed']);
+    expect(snapshot.operations).toEqual(operations.operations);
+    expect(operations.operations[0]).toEqual({ operationId: saved.metadata.records[0].operationId, agentId: 'main', action: 'create', state: 'confirmed', jobId: '界'.repeat(200) });
+    expect(parseScheduleOperationsPage(operations)).toEqual(operations);
+    expect(f.manager.request).not.toHaveBeenCalled();
+  });
+  it('consumes_native_and_recovery_cursors_only_after_validating_their_scope', async () => {
+    const f = fixture(Array.from({ length: 51 }, (_, i) => native(`job-${i}`))); writeRecovery(f.directory, 51);
+    const first = await f.service.read('main'); const nativeCursor = first.nextCursor!; const recoveryCursor = first.operationsCursor!;
+    await expect(f.service.read('other', nativeCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('main', nativeCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('other', recoveryCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.read('main', recoveryCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect((await f.service.read('main', nativeCursor)).jobs.map(row => row.id)).toEqual(['job-50']);
+    expect((await f.service.operations('main', recoveryCursor)).operations).toHaveLength(1);
+    await expect(f.service.read('main', nativeCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    await expect(f.service.operations('main', recoveryCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+  });
+  it.each(['native', 'recovery'] as const)('consumed_%s_pages_do_not_evict_another_live_native_cursor', async purpose => {
+    const f = fixture(Array.from({ length: purpose === 'native' ? 1000 : 51 }, (_, i) => native(`job-${i}`)));
+    if (purpose === 'recovery') writeRecovery(f.directory);
+    const retained = (await f.service.read('main')).nextCursor!;
+    for (let browse = 0; browse < (purpose === 'native' ? 6 : 12); browse++) {
+      let cursor: string | undefined;
+      do {
+        cursor = purpose === 'native' ? (await f.service.read('main', cursor)).nextCursor : (await f.service.operations('main', cursor)).nextCursor;
+      } while (cursor);
+    }
+    const continued = await f.service.read('main', retained);
+    expect(continued.jobs[0].id).toBe('job-50'); expect(continued.scanned).toBe(purpose === 'native' ? 100 : 51);
+  });
+  it('a_consumed_recovery_cursor_cannot_repeat_a_metadata_page', async () => {
+    const f = fixture(); writeRecovery(f.directory, 51);
+    const first = await f.service.operations('main'); const last = await f.service.operations('main', first.nextCursor);
+    expect(last.operations).toHaveLength(1); expect(last.nextCursor).toBeUndefined();
+    await expect(f.service.operations('main', first.nextCursor)).rejects.toMatchObject({ code: 'schedule-changed' });
   });
   it('isolates_recovery_cursors_by_purpose_agent_metadata_revision_expiry_and_restart', async () => {
     const f = fixture(Array.from({ length: 51 }, (_, i) => native(`job-${i}`))); const saved = writeRecovery(f.directory);

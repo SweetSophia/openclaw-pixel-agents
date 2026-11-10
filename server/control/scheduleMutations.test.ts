@@ -91,6 +91,17 @@ describe('confirmed native schedule mutations without replay', () => {
     await expect(submit(f)).rejects.toMatchObject({ code: 'schedule-changed' });
     expect(f.manager.request).toHaveBeenCalledTimes(1);
   });
+  it.each(['invalid-request', 'schedule-denied', 'unavailable'] as const)('post_reservation_%s_is_conservative_and_never_releases_creation_for_replay', async code => {
+    const f = fixture(); vi.mocked(f.manager.request).mockRejectedValueOnce(new GatewayRequestError(code));
+    const confirmation = await f.service.prepare('main', intent); const input = { operationId: confirmation.operationId, intent };
+    expect(await f.service.submit('main', input)).toMatchObject({ state: 'unknown' });
+    expect(f.journal.list('main')[0].state).toBe('uncertain');
+    const restarted = await f.restart();
+    expect(await restarted.submit('main', input)).toMatchObject({ state: 'unknown' });
+    const next = await restarted.prepare('main', intent);
+    await expect(restarted.submit('main', { operationId: next.operationId, intent })).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(vi.mocked(f.manager.request).mock.calls.map(call => call[0])).toEqual(['cron.add']);
+  });
   it('lost_add_reply_after_restart_is_reads_only', async () => {
     const f = fixture(); vi.mocked(f.manager.request).mockRejectedValueOnce(new GatewayRequestError('schedule-outcome-unknown'));
     const confirmation = await f.service.prepare('main', intent); const input = { operationId: confirmation.operationId, intent };
@@ -100,6 +111,14 @@ describe('confirmed native schedule mutations without replay', () => {
       ? { jobs: [native(f.journal.list('main')[0].declarationKey)], snapshotRevision: 's1', total: 1, offset: 0, limit: 50, hasMore: false, nextOffset: null } : native());
     expect(await restarted.reconcile('main', confirmation.operationId)).toMatchObject({ state: 'observed', jobId: 'job-1' });
     expect(vi.mocked(f.manager.request).mock.calls.filter(call => call[0] === 'cron.add')).toHaveLength(1);
+  });
+  it('durable_acknowledgement_remains_confirmed_on_duplicate_submission_after_restart', async () => {
+    const f = fixture(); const confirmation = await f.service.prepare('main', intent); const input = { operationId: confirmation.operationId, intent };
+    expect(await f.service.submit('main', input)).toEqual({ operationId: input.operationId, agentId: 'main', action: 'create', state: 'confirmed', jobId: 'job-1' });
+    const restarted = await f.restart();
+    expect(await restarted.submit('main', input)).toEqual({ operationId: input.operationId, agentId: 'main', action: 'create', state: 'confirmed', jobId: 'job-1' });
+    expect(vi.mocked(f.manager.request).mock.calls.map(call => call[0])).toEqual(['cron.add']);
+    expect(f.journal.list('main')[0].state).toBe('acknowledged');
   });
   it('native_edit_race_returns_conflict_without_rebase', async () => {
     const f = fixture(); const edit: ScheduleIntent = { kind: 'edit', jobId: 'job-1', revision: 'revision-1', draft: { ...draft, name: 'Changed' } };
@@ -196,6 +215,39 @@ describe('confirmed native schedule mutations without replay', () => {
     expect(result.recovery).toEqual({ scanned: 2000, truncated: true });
     await expect(f.service.reconcile('main', operationId, first)).rejects.toMatchObject({ code: 'schedule-changed' });
     expect(vi.mocked(f.manager.request).mock.calls.every(call => call[0] === 'cron.list' && call[1].limit === 50)).toBe(true);
+  });
+  it('reconciliation_rejects_changed_native_revisions_between_automatic_pages_before_observing_a_job', async () => {
+    const f = fixture(); const operationId = randomUUID();
+    const reserved = await f.journal.reserve({ operationId, agentId: 'main', requestDigest: scheduleCreateDigest('main', draft) });
+    vi.mocked(f.manager.request).mockImplementation(async (_method, params) => {
+      const offset = params.offset as number;
+      return { jobs: Array.from({ length: 50 }, (_, i) => native(offset && i === 0 ? reserved.declarationKey : `other:${offset + i}`)),
+        snapshotRevision: offset ? 'snapshot-2' : 'snapshot-1', total: 100, offset, limit: 50, hasMore: offset === 0, nextOffset: offset === 0 ? 50 : null };
+    });
+    await expect(f.service.reconcile('main', operationId)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(f.journal.list('main')[0].state).toBe('uncertain');
+    expect(vi.mocked(f.manager.request).mock.calls.map(call => call[1].offset)).toEqual([0, 50]);
+    vi.mocked(f.manager.request).mockResolvedValue({ jobs: [native(reserved.declarationKey)], snapshotRevision: 'snapshot-2', total: 1, offset: 0, limit: 50, hasMore: false, nextOffset: null });
+    expect(await f.service.reconcile('main', operationId)).toMatchObject({ state: 'observed', jobId: 'job-1', recovery: { scanned: 1, truncated: false } });
+    expect(vi.mocked(f.manager.request).mock.calls.every(call => call[0] === 'cron.list')).toBe(true);
+  });
+  it.each([false, true])('reconciliation_cursor_retains_native_revision_and_rejects_changed_or_clamped_offsets (clamped: %s)', async clamped => {
+    const f = fixture(); const operationId = randomUUID();
+    await f.journal.reserve({ operationId, agentId: 'main', requestDigest: scheduleCreateDigest('main', draft) });
+    vi.mocked(f.manager.request).mockImplementation(async (_method, params) => {
+      const offset = params.offset as number;
+      return { jobs: Array.from({ length: 50 }, (_, i) => native(`other:${offset + i}`)), snapshotRevision: 'snapshot-1', total: 250,
+        offset, limit: 50, hasMore: offset < 200, nextOffset: offset < 200 ? offset + 50 : null };
+    });
+    const first = await f.service.reconcile('main', operationId); const cursor = first.recovery!.nextCursor!;
+    expect(first.recovery).toMatchObject({ scanned: 200, truncated: true });
+    vi.mocked(f.manager.request).mockResolvedValue(clamped
+      ? { jobs: [], snapshotRevision: 'snapshot-2', total: 0, offset: 0, limit: 50, hasMore: false, nextOffset: null }
+      : { jobs: Array.from({ length: 49 }, (_, i) => native(`remaining:${i}`)), snapshotRevision: 'snapshot-2', total: 249, offset: 200, limit: 50, hasMore: false, nextOffset: null });
+    await expect(f.service.reconcile('main', operationId, cursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(f.journal.list('main')[0].state).toBe('uncertain');
+    await expect(f.service.reconcile('main', operationId, cursor)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(vi.mocked(f.manager.request).mock.calls.map(call => call[1].offset)).toEqual([0, 50, 100, 150, 200]);
   });
   it('update_uncertainty_reconciles_without_creation_storage_or_replay', async () => {
     const f = fixture(); const selected: ScheduleIntent = { kind: 'enabled', jobId: 'job-1', revision: 'revision-1', enabled: true };
@@ -328,7 +380,7 @@ describe('confirmed native schedule mutations without replay', () => {
     vi.setSystemTime(start + 500 * 60001);
     expect((await submit(f, { kind: 'enabled', jobId: 'job-1', revision: 'revision-1', enabled: true })).state).toBe('confirmed');
     expect(f.journal.list('main')).toHaveLength(500);
-    expect(await f.service.submit('main', { operationId: first.operationId, intent: first.intent })).toMatchObject({ state: 'unknown' });
+    expect(await f.service.submit('main', { operationId: first.operationId, intent: first.intent })).toMatchObject({ state: uncertain ? 'unknown' : 'confirmed' });
     expect(vi.mocked(f.manager.request).mock.calls.filter(call => call[0] === 'cron.add')).toHaveLength(500);
   });
   it('retains_unknown_update_recovery_at_capacity_and_admits_new_work_after_explicit_resolution', async () => {

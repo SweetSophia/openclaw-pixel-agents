@@ -87,18 +87,20 @@ async function signedHost(holdAddReply = false, connectedPreflight = false) {
     async close() { for (const timer of timers) clearTimeout(timer); for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); } };
 }
 
-async function processRestart(mode: boolean | 'connected-preflight' | 'connected-keepalive') {
+async function processRestart(mode: boolean | 'connected-preflight' | 'connected-keepalive' | 'close-failure' | 'close-failure-timeout') {
   const holdAddReply = mode === true; const connectedPreflight = typeof mode === 'string';
-  const keepAlive = mode === 'connected-keepalive'; const httpAgent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const forceTimeout = mode === 'close-failure-timeout'; const closeFailure = mode === 'close-failure' || forceTimeout;
+  const keepAlive = mode === 'connected-keepalive' || closeFailure; const httpAgent = new Agent({ keepAlive: true, maxSockets: 1 });
   let polling: ReturnType<typeof setInterval> | undefined; let pollsStarted = 0; let pollReplies = 0;
+  let unfinishedRequest: ReturnType<typeof httpRequest> | undefined;
   const host = await signedHost(holdAddReply, connectedPreflight); const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-process-restart-'));
   const children: ChildProcess[] = []; const sockets: Socket[] = []; const logs: string[] = [];
-  const stop = async (child: ChildProcess) => {
+  const stop = async (child: ChildProcess, expectedCode = 0) => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const ended = once(child, 'exit'); child.kill('SIGTERM');
     const force = setTimeout(() => child.kill('SIGKILL'), 7000);
     try { await ended; } finally { clearTimeout(force); }
-    expect(child.exitCode).toBe(0); expect(child.signalCode).toBeNull();
+    expect(child.exitCode, logs.join('')).toBe(expectedCode); expect(child.signalCode).toBeNull();
   };
   try {
     async function office() {
@@ -131,7 +133,7 @@ async function processRestart(mode: boolean | 'connected-preflight' | 'connected
         });
         request.once('error', reject); request.end(encoded);
       });
-      return { child, call, keepAliveCall };
+      return { child, call, keepAliveCall, origin };
     }
     const first = await office();
     const intent = { kind: 'create', draft: { name: 'Restart qualification', message: 'Synthetic restart prompt', schedule: { kind: 'every', everyMs: 60000 } } };
@@ -165,10 +167,50 @@ async function processRestart(mode: boolean | 'connected-preflight' | 'connected
         const poll = () => { pollsStarted++; void first.keepAliveCall('/api/agents').then(() => { pollReplies++; }, () => {}); };
         poll(); polling = setInterval(poll, 250);
       }
-      await stop(first.child); await connected;
+      const journalDirectory = join(directory, 'control-schedules');
+      const displacedDirectory = join(directory, 'refused-private-shutdown-location');
+      const journalBefore = closeFailure ? fs.readFileSync(join(journalDirectory, 'journal.json'), 'utf8') : undefined;
+      const lockBefore = closeFailure ? fs.readFileSync(join(journalDirectory, 'journal.lock'), 'utf8') : undefined;
+      if (closeFailure) {
+        // A real filesystem boundary refusal makes the memoized journal/service close reject.
+        // No test-only seam or production process/configuration is involved.
+        fs.renameSync(journalDirectory, displacedDirectory); fs.symlinkSync(displacedDirectory, journalDirectory);
+      }
+      if (forceTimeout) {
+        // An accepted but unfinished HTTP body must not be destroyed by idle-only draining.
+        unfinishedRequest = httpRequest(`${first.origin}/api/agents`, { method: 'GET', headers: {
+          'Content-Type': 'application/json', 'Content-Length': 1024, Expect: '100-continue',
+        } });
+        unfinishedRequest.on('error', () => {});
+        const accepted = once(unfinishedRequest, 'continue'); unfinishedRequest.write('{'); await accepted;
+      }
+      const shutdownAt = Date.now();
+      await stop(first.child, closeFailure ? 1 : 0); await connected;
       clearInterval(polling); polling = undefined;
       if (keepAlive) expect(pollsStarted).toBeGreaterThan(0);
       expect(host.frames.filter(frame => frame.method === 'cron.update')).toHaveLength(0);
+      if (closeFailure) {
+        const elapsed = Date.now() - shutdownAt; expect(elapsed).toBeLessThan(6500);
+        if (forceTimeout) expect(elapsed).toBeGreaterThanOrEqual(4900);
+        await vi.waitFor(() => expect(sockets[0].connected).toBe(false));
+        expect(fs.readFileSync(join(displacedDirectory, 'journal.json'), 'utf8')).toBe(journalBefore);
+        expect(fs.readFileSync(join(displacedDirectory, 'journal.lock'), 'utf8')).toBe(lockBefore);
+        expect(fs.lstatSync(journalDirectory).isSymbolicLink()).toBe(true);
+        const output = logs.join('');
+        expect(output).toContain('private scheduling disposal failed');
+        expect(output).toContain(forceTimeout ? 'shutdown complete (forced)' : 'shutdown complete (failed)');
+        if (!forceTimeout) {
+          expect(output).toContain('http server closed'); expect(output).toContain('socket.io connections closed');
+          expect(output).not.toContain('forced shutdown');
+        }
+        expect(output).not.toMatch(/unhandledRejection|uncaughtException|refused-private-shutdown-location|Synthetic restart prompt/);
+        const failures = output.split('\n').filter(Boolean).map(line => JSON.parse(line))
+          .filter(row => row.subsystem === 'control-schedules' && row.code === 'unavailable');
+        expect(failures.length).toBeGreaterThan(0);
+        expect(failures.every(row => !('err' in row))).toBe(true);
+        expect(host.frames.filter(frame => frame.method === 'cron.add')).toHaveLength(1);
+        return;
+      }
     }
     await stop(first.child);
     await vi.waitFor(() => expect(sockets[0].connected).toBe(false));
@@ -177,8 +219,10 @@ async function processRestart(mode: boolean | 'connected-preflight' | 'connected
     expect(fs.existsSync(join(directory, 'control-schedules', 'journal.lock'))).toBe(false);
     host.changeJob();
     const second = await office(); expect(second.child.pid).not.toBe(first.child.pid);
-    const metadata = await (await second.call('/operations')).json(); expect(metadata.operations).toMatchObject([{ operationId: input.operationId, state: 'unknown' }]);
-    expect((await (await second.call('/submit', input)).json()).state).toBe('unknown');
+    // The connected fixture received a validated creation receipt; the lost-reply fixture did not.
+    const creationState = connectedPreflight ? 'confirmed' : 'unknown';
+    const metadata = await (await second.call('/operations')).json(); expect(metadata.operations).toMatchObject([{ operationId: input.operationId, state: creationState }]);
+    expect((await (await second.call('/submit', input)).json()).state).toBe(creationState);
     const recovery = await (await second.call(`/operations/${input.operationId}/reconcile`, {})).json();
     expect(recovery).toMatchObject({ state: 'changed', jobId: 'restart-job' }); expect(recovery.state).not.toBe('confirmed');
     expect((await (await second.call('/submit', input)).json()).state).toBe('changed');
@@ -201,7 +245,7 @@ async function processRestart(mode: boolean | 'connected-preflight' | 'connected
     console.info(`Synthetic OS restart verified: PIDs ${first.child.pid} -> ${second.child.pid}; signed handshakes ${host.signatures.length}; cron.add=${connectedPreflight ? 2 : 1}; changed job preserved; clean SIGTERM exits.`);
   } finally {
     if (connectedPreflight) console.info(`Connected-preflight evidence: exit=${children[0]?.exitCode}; updates=${host.frames.filter(frame => frame.method === 'cron.update').length}; lock=${fs.existsSync(join(directory, 'control-schedules', 'journal.lock'))}; forced=${logs.join('').includes('forced shutdown')}; keepAlivePolls=${pollsStarted}; replies=${pollReplies}`);
-    clearInterval(polling); httpAgent.destroy();
+    clearInterval(polling); unfinishedRequest?.destroy(); httpAgent.destroy();
     for (const child of children) await stop(child);
     for (const socket of sockets) socket.disconnect();
     await host.close(); fs.rmSync(directory, { recursive: true, force: true });
@@ -210,3 +254,5 @@ async function processRestart(mode: boolean | 'connected-preflight' | 'connected
 it.each([false, true])('dropped_create_reply_then_native_edit_and_restart_never_upserts_again (disconnect during admitted work: %s)', processRestart, 30000);
 it('still_connected_submit_preflight_is_fenced_at_SIGTERM_and_releases_the_same_journal_for_restart', () => processRestart('connected-preflight'), 30000);
 it('still_connected_keepalive_polling_drains_after_preflight_shutdown_without_late_update_or_replay', () => processRestart('connected-keepalive'), 30000);
+it('journal_close_rejection_drains_connected_preflight_and_exits_nonzero_without_unhandled_or_private_error_logs', () => processRestart('close-failure'), 30000);
+it('journal_close_rejection_keeps_the_five_second_bound_without_aborting_an_active_HTTP_body', () => processRestart('close-failure-timeout'), 30000);
