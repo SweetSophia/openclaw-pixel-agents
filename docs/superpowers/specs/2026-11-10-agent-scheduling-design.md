@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-Status: approved on 2026-11-10 with subagent-driven implementation authorized. Tasks 1–7 are implemented/reviewed; Task 8 operator docs and whole-delivery local qualification are in progress. Independent final whole-branch review, protected PR/CI and merge remain controller-owned pending gates. No live pairing, new live grants, real tasks, deployment or publication is authorized.
+Status: approved on 2026-11-10 with subagent-driven implementation authorized. Tasks 1–7 are implemented/reviewed; Task 8 source implementation and local qualification are complete at product commit `467ac5c` (tree `637e0be4c5b7d65f1d43d466e26fc57690f001cc`). Independent Task 8/final whole-branch review, protected PR/CI and merge remain controller-owned pending gates. No live pairing, new live grants, real tasks, deployment or publication is authorized.
 
 ## Purpose and chosen approach
 
@@ -191,5 +191,17 @@ identity storage retains its established private-permission flow. The actual
 process-restart regression is distinct from same-process service-instance tests,
 and does not simulate physical power loss. Operator setup/recovery is documented
 in [the scheduling guide](../../schedules.md). This branch is not a published/live release.
+
+Local qualification passed 2,363 tests in 148 files, typecheck, all four coverage
+floors, build, installed-tarball/default-off smoke, both zero-vulnerability audits,
+and synthetic Docker startup/roster checks. Actual OS-process restart with an active
+public office socket exposed and fixed shutdown disposal ordering; a dropped add
+reply followed by another operator's edit and restart leaves one add and preserves
+the changed definition. Synthetic production-browser qualification covered seven
+viewport sizes, doubled text, keyboard/focus/hit geometry, partial/unknown recovery,
+private-state clearing and delayed-read/admitted-mutation fences. Explicit history
+and document-visibility inputs are not OS-window/background-tab acceptance. The
+browser required a synthetic-only no-sandbox launch on this host. None of this proves
+physical power-loss durability, live pairing, real execution or npm publication.
 
 After approval of this written design, produce an incremental implementation plan with tests before behavior changes. Builder discretion covers internal names, component layout and ordinary implementation details, not the permission boundary, ownership rules, disabled-first workflow, native CAS, recovery/no-replay guarantees, or exclusions above.

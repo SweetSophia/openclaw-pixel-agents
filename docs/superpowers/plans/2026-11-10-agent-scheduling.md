@@ -13,14 +13,26 @@
 ## Execution status (2026-11-10)
 
 The user approved this plan and chose subagent-driven execution. Tasks 1–7 are
-implemented with task-specific independent review. Task 8 is completing operator
-documentation, actual OS-process restart proof and whole-delivery local gates.
+implemented with task-specific independent review. Task 8 operator documentation,
+actual OS-process restart proof and whole-delivery local qualification are complete
+at product commit `467ac5c` (tested tree `637e0be4c5b7d65f1d43d466e26fc57690f001cc`).
 The unchecked original step lists below are the approved task text, not a request
 to re-execute already delivered work. The spec's implemented-interface addendum
 records the ruling-driven DTO/cursor/error distinctions; see [operator guide](../../schedules.md).
 Independent Task 8 and final whole-branch review, protected PR/CI/CodeQL/dependency
 review, review windows and merge remain pending coordinator gates. No live grants,
 tasks, deployment, version bump or npm publication follow from this status.
+
+Local evidence: 2,363 tests / 148 files, types, coverage (statements 87.33%, branches
+85.58%, functions 90.01%, lines 90.18%), build, 200-file installed package smoke,
+both audits (zero vulnerabilities), synthetic Docker startup/roster restart, and
+production-browser keyboard/geometry/privacy/lifecycle/recovery checks. The active
+public-socket process regression demonstrated red/green shutdown ordering repair;
+the changed native declaration is never overwritten by an add replay. Browser
+visibility/history are explicit synthetic inputs; real scheduling HTTP/protocol paths
+against a signed synthetic Gateway and actual office-process restart were exercised. No OS-window or physical power-loss
+qualification is claimed. This completion addendum changes only unshipped status
+docs after the tested product tree; full gates were not rerun solely for prose.
 
 ## Global Constraints
 
