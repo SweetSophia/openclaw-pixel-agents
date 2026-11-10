@@ -158,8 +158,13 @@ export function openScheduleJournal(options: { directory: string; binding: { gat
     try {
       if (ownsLock()) { checkLocation(); fs.unlinkSync(lockPath); fs.fsyncSync(directoryFd!); }
     } finally {
-      if (lockFd !== undefined) { fs.closeSync(lockFd); lockFd = undefined; }
+      const fd = lockFd; lockFd = undefined;
+      if (fd !== undefined) fs.closeSync(fd);
     }
+  }
+  function closeDirectory(): void {
+    const fd = directoryFd; directoryFd = undefined;
+    if (fd !== undefined) fs.closeSync(fd);
   }
   try {
     const binding = closed(options.binding, ['gatewayUrl', 'deviceId']);
@@ -189,7 +194,7 @@ export function openScheduleJournal(options: { directory: string; binding: { gat
     }
   } catch {
     try { releaseLock(); } catch { /* never release another instance's lock */ }
-    if (directoryFd !== undefined) fs.closeSync(directoryFd);
+    try { closeDirectory(); } catch { /* preserve the typed storage failure */ }
     throw unavailable();
   }
   function enqueue<T>(action: () => T): Promise<T> {
@@ -238,9 +243,11 @@ export function openScheduleJournal(options: { directory: string; binding: { gat
       if (closePromise) return closePromise;
       closing = true;
       closePromise = tail.then(() => {
-        try { releaseLock(); }
+        try {
+          try { releaseLock(); }
+          finally { closedAlready = true; closeDirectory(); }
+        }
         catch { throw unavailable(); }
-        finally { closedAlready = true; if (directoryFd !== undefined) { fs.closeSync(directoryFd); directoryFd = undefined; } }
       });
       return closePromise;
     },

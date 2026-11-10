@@ -113,6 +113,76 @@ describe('durable metadata-only schedule journal', () => {
     expect(open(dir).list('main')[0].state).toBe('uncertain');
   });
 
+  it.each([false, true])('normalizes directory-close failures without closing a reused fd or removing a foreign lock (replaced lock: %s)', async replacedLock => {
+    const dir = directory(); const journal = open(dir); await journal.reserve(input());
+    const lockPath = join(dir, 'journal.lock');
+    if (replacedLock) {
+      fs.renameSync(lockPath, join(dir, 'original.lock'));
+      fs.writeFileSync(lockPath, 'foreign-lock', { mode: 0o600 });
+    }
+    const realClose = fs.closeSync; let reusedFd: number | undefined;
+    vi.spyOn(fs, 'closeSync').mockImplementation(fd => {
+      if (reusedFd === undefined && fs.fstatSync(fd).isDirectory()) {
+        realClose(fd);
+        reusedFd = fs.openSync(join(dir, 'unrelated-file'), 'w+', 0o600);
+        expect(reusedFd).toBe(fd);
+        throw Object.assign(new Error('synthetic directory close failure'), { code: 'EIO' });
+      }
+      realClose(fd);
+    });
+    try {
+      await expect(journal.close()).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+      if (!replacedLock) fs.writeFileSync(lockPath, 'foreign-lock', { mode: 0o600 });
+      await expect(journal.close()).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+      expect(fs.fstatSync(reusedFd!).isFile()).toBe(true);
+      expect(fs.readFileSync(lockPath, 'utf8')).toBe('foreign-lock');
+      await expect(journal.reserve(input('closed'))).rejects.toMatchObject({ code: 'schedule-storage-unavailable' });
+    } finally {
+      vi.restoreAllMocks(); if (reusedFd !== undefined) realClose(reusedFd);
+    }
+  });
+
+  it('preserves the typed initialization failure when directory cleanup also fails', () => {
+    const dir = directory(); const lockPath = join(dir, 'journal.lock');
+    fs.writeFileSync(lockPath, 'foreign-lock', { mode: 0o600 });
+    const realClose = fs.closeSync;
+    vi.spyOn(fs, 'closeSync').mockImplementation(fd => {
+      const isDirectory = fs.fstatSync(fd).isDirectory(); realClose(fd);
+      if (isDirectory) throw Object.assign(new Error('synthetic directory close failure'), { code: 'EIO' });
+    });
+    expect(() => open(dir)).toThrow(expect.objectContaining({ code: 'schedule-storage-unavailable' }));
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe('foreign-lock');
+  });
+
+  it('clears lock-fd ownership before a failing close so read-only fallback cannot close a reused descriptor', async () => {
+    const dir = directory(); const original = open(dir); await original.reserve(input()); await original.close();
+    const lockPath = join(dir, 'journal.lock'); const realSync = fs.fsyncSync; const realClose = fs.closeSync;
+    let failedLockFd: number | undefined; let reusedFd: number | undefined;
+    vi.spyOn(fs, 'fsyncSync').mockImplementation(fd => {
+      if (!fs.fstatSync(fd).isDirectory() && failedLockFd === undefined) {
+        failedLockFd = fd; throw Object.assign(new Error('synthetic lock sync failure'), { code: 'EIO' });
+      }
+      realSync(fd);
+    });
+    vi.spyOn(fs, 'closeSync').mockImplementation(fd => {
+      realClose(fd);
+      if (fd === failedLockFd && reusedFd === undefined) {
+        reusedFd = fs.openSync(join(dir, 'unrelated-file'), 'w+', 0o600);
+        expect(reusedFd).toBe(fd);
+        throw Object.assign(new Error('synthetic lock close failure'), { code: 'EIO' });
+      }
+    });
+    try {
+      const readonly = open(dir); vi.restoreAllMocks();
+      fs.writeFileSync(lockPath, 'foreign-lock', { mode: 0o600 });
+      await readonly.close();
+      expect(fs.fstatSync(reusedFd!).isFile()).toBe(true);
+      expect(fs.readFileSync(lockPath, 'utf8')).toBe('foreign-lock');
+    } finally {
+      vi.restoreAllMocks(); if (reusedFd !== undefined) { try { realClose(reusedFd); } catch { /* regression closes the foreign fd */ } }
+    }
+  });
+
   it('keeps active writer lock intact when a second instance reads or closes', async () => {
     const dir = directory(); const first = open(dir); const request = input(); const record = await first.reserve(request);
     const lock = fs.readFileSync(join(dir, 'journal.lock'), 'utf8'); const second = open(dir);
