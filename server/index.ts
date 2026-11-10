@@ -1900,16 +1900,17 @@ async function shutdown(signal: string) {
   let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   const gracefulClose = (async (): Promise<false> => {
-    // Close HTTP server (stops accepting new connections)
-    await new Promise<void>((resolve) =>
+    // Stop accepting first, but dispose upgraded office sockets before waiting
+    // for HTTP close: those connections can otherwise hold it open indefinitely.
+    const httpClosed = new Promise<void>((resolve) =>
       server.close(() => {
         logger.info({ subsystem: "server" }, "http server closed");
         resolve();
       }),
     );
-    // Close Socket.IO connections (awaited so log lines land in order).
     await io.close();
     logger.info({ subsystem: "server" }, "socket.io connections closed");
+    await httpClosed;
     return false;
   })();
 

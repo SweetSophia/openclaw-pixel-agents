@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-Status: written design approved by the user on 2026-11-10; implementation planning authorized. Execution follows review of the implementation plan. No live pairing, new live grants, or real scheduled tasks are authorized.
+Status: approved on 2026-11-10 with subagent-driven implementation authorized. Tasks 1–7 are implemented/reviewed; Task 8 operator docs and whole-delivery local qualification are in progress. Independent final whole-branch review, protected PR/CI and merge remain controller-owned pending gates. No live pairing, new live grants, real tasks, deployment or publication is authorized.
 
 ## Purpose and chosen approach
 
@@ -162,5 +162,34 @@ Reinspect the native contract and current main before implementation. If the sup
 The old unmerged `feat/schedules` draft predates recent control and roster work. It is prior art only, not approved implementation or passing evidence. Do not cherry-pick it wholesale.
 
 ## Handoff
+
+### Implemented private interface addendum (2026-11-10)
+
+Private routes use `/api/control/agents/:agentId/schedules`: GET snapshot, GET
+`/operations`, POST `/prepare` with `{ intent }`, POST `/submit` with
+`{ operationId, intent }`, and explicit read-only POST
+`/operations/:operationId/reconcile` with `{}` or `{ cursor }`. The shared
+`ScheduleSnapshot`, `ScheduleOperationsPage`, `ScheduleConfirmation` and
+`ScheduleOperation` parsers are the closed DTO contract. No raw native RPC is exposed.
+
+Three cursors are distinct: snapshot `nextCursor` browses native positions;
+snapshot `operationsCursor` / metadata-page `nextCursor` pages retained journal
+records; operation `recovery.nextCursor` continues that operation's explicit native
+reconciliation. Automatic refresh is one bounded GET, never cursor-following.
+`operationsError: 'storage-unavailable'` blocks creation without discarding valid
+native rows/edits. A writer-only `schedule-storage-unavailable` rejection preserves
+readable metadata and does not imply a metadata read failure. Journal preview
+incompleteness does not globally prohibit explicitly unrelated new intents.
+Confirmation expiry is fenced using a conservative client monotonic deadline;
+operation-local response fences prevent older submit replies replacing newer
+explicit reconciliation. Partial form editing pauses automatic refresh only.
+The UI retains an editor's original job revision until explicit current-definition
+review. These clarify implementation, not broader native authority.
+
+The journal owns atomic durability/exclusive writer locking; existing device
+identity storage retains its established private-permission flow. The actual
+process-restart regression is distinct from same-process service-instance tests,
+and does not simulate physical power loss. Operator setup/recovery is documented
+in [the scheduling guide](../../schedules.md). This branch is not a published/live release.
 
 After approval of this written design, produce an incremental implementation plan with tests before behavior changes. Builder discretion covers internal names, component layout and ordinary implementation details, not the permission boundary, ownership rules, disabled-first workflow, native CAS, recovery/no-replay guarantees, or exclusions above.

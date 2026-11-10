@@ -10,6 +10,18 @@
 
 **Spec:** [Approved scheduling design](../specs/2026-11-10-agent-scheduling-design.md). Read it before executing any task.
 
+## Execution status (2026-11-10)
+
+The user approved this plan and chose subagent-driven execution. Tasks 1–7 are
+implemented with task-specific independent review. Task 8 is completing operator
+documentation, actual OS-process restart proof and whole-delivery local gates.
+The unchecked original step lists below are the approved task text, not a request
+to re-execute already delivered work. The spec's implemented-interface addendum
+records the ruling-driven DTO/cursor/error distinctions; see [operator guide](../../schedules.md).
+Independent Task 8 and final whole-branch review, protected PR/CI/CodeQL/dependency
+review, review windows and merge remain pending coordinator gates. No live grants,
+tasks, deployment, version bump or npm publication follow from this status.
+
 ## Global Constraints
 
 - Management is opt-in: `CONTROL_SCHEDULES_MANAGE_ENABLED=false` by default; separate `DATA_DIR/control-schedules/` identity and `OPENCLAW_SCHEDULES_GATEWAY_TOKEN` / `OPENCLAW_SCHEDULES_GATEWAY_PASSWORD` bootstrap credentials.
