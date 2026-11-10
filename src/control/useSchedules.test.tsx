@@ -354,3 +354,20 @@ it('an aborted snapshot-derived reconciliation rejection cannot restore an old e
   expect(result.current.snapshot?.management.epoch).toBe('epoch-2'); expect(result.current.stale).toBe(false); expect(result.current.error).toBeNull();
   await act(() => result.current.refresh()); expect(result.current.snapshot?.operations[0].state).toBe('changed'); expect(result.current.operation).toBeNull();
 });
+
+it.each([false, true])('canceling preparation without replacement recomputes loading with another read active: %s', async otherRead => {
+  latest = snapshot({ operations: [outcome()], operationsCursor: 'metadata-50' }); const { result } = await ready();
+  const preparation = deferred<ScheduleConfirmation>(); const metadata = deferred<unknown>(); const original = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.endsWith('/prepare') ? preparation.promise : path.includes('/operations?') ? metadata.promise : original(path, init));
+  act(() => result.current.setDraft(draft)); let pending!: Promise<void>;
+  act(() => { pending = result.current.prepare(intent); });
+  await waitFor(() => expect(lastRequest()[0]).toMatch(/\/prepare$/)); const signal = lastRequest()[1]!.signal!;
+  let otherPending: Promise<void> | undefined; if (otherRead) act(() => { otherPending = result.current.loadMoreOperations(); });
+  const replacement = { ...draft, message: 'Retained draft without replacement preparation' };
+  act(() => result.current.setDraft(replacement)); expect(signal.aborted).toBe(true); const afterCancel = result.current.loading;
+  await act(async () => { preparation.reject(new ControlApiError('locked')); await pending; });
+  expect(afterCancel).toBe(otherRead); expect(result.current.loading).toBe(otherRead);
+  expect(result.current.draft).toEqual(replacement); expect(result.current.confirmation).toBeNull(); expect(result.current.error).toBeNull();
+  if (otherRead) await act(async () => { metadata.resolve({ agentId: 'cylena', operations: [] }); await otherPending; });
+  expect(result.current.loading).toBe(false);
+});

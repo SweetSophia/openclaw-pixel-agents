@@ -122,7 +122,7 @@ export function useSchedules(options: { agentId: string; active: boolean; histor
   const setDraft = useCallback((value: ScheduleDraft | null) => {
     if (context.current.access.state !== 'unlocked' || scope.current !== context.current.owner) return;
     const draft = value === null ? null : parseScheduleDraft(value); draftVersion.current++; invalidate(); cancelRead('prepare');
-    update(old => ({ ...old, draft, confirmation: null }));
+    update(old => ({ ...old, draft, confirmation: null, loading: loading() }));
   }, [update]);
   const prepare = useCallback(async (input: ScheduleIntent) => {
     const intent = parseScheduleIntent(input);
