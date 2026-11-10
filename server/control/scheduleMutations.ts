@@ -44,7 +44,7 @@ export function createScheduleMutations(options: {
 }): ScheduleMutations {
   const { manager, journal, registeredAgents, readerReady } = options;
   const tickets = new Map<string, Ticket>(); const attempts = new Map<string, Attempt>(); const pending = new Map<string, Attempt>();
-  const cursors = new Map<string, RecoveryCursor>(); const readers = new Set<AbortController>(); const activeAgents = new Set<string>();
+  const cursors = new Map<string, RecoveryCursor>(); const readers = new Set<AbortController>(); const waiters = new Set<AbortController>(); const activeAgents = new Set<string>();
   const work = new Set<Promise<unknown>>(); let recent: number[] = []; let closed = false; let closePromise: Promise<void> | undefined;
   function registered(agentId: string): void {
     if (closed) throw new ControlError('unavailable');
@@ -62,9 +62,28 @@ export function createScheduleMutations(options: {
   function prune(): void {
     for (const [id, row] of tickets) if (row.confirmation.expiresAt <= Date.now()) tickets.delete(id);
     for (const [id, row] of cursors) if (row.expires <= Date.now()) cursors.delete(id);
+    for (const [id, row] of attempts) {
+      if (attempts.size < 500) break;
+      // Consumed tickets prevent update replay; durable creation metadata remains in the journal.
+      if (!pending.has(id) && (row.action === 'create' || row.result?.state !== 'unknown')) attempts.delete(id);
+    }
   }
   function track<T>(promise: Promise<T>): Promise<T> {
     work.add(promise); void promise.then(() => work.delete(promise), () => work.delete(promise)); return promise;
+  }
+  function waitForDispatch(attempt: Attempt, signal?: AbortSignal): Promise<void> {
+    if (waiters.size >= 4) return Promise.reject(new ControlError('rate-limited'));
+    const controller = new AbortController(); waiters.add(controller);
+    const abort = () => controller.abort(); signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, 5000); timer.unref?.();
+    return track(new Promise<void>((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); waiters.delete(controller); signal?.removeEventListener('abort', abort); controller.signal.removeEventListener('abort', cancelled); };
+      const cancelled = () => { cleanup(); reject(new ControlError('unavailable')); };
+      const settled = () => { cleanup(); resolve(); };
+      controller.signal.addEventListener('abort', cancelled, { once: true });
+      if (signal?.aborted || closed) cancelled();
+      else void attempt.promise.then(settled, settled);
+    }));
   }
   function read<T>(agentId: string, action: (signal: AbortSignal, binding: Binding) => Promise<T>, signal?: AbortSignal): Promise<T> {
     let binding: Binding; let release: () => void;
@@ -113,7 +132,7 @@ export function createScheduleMutations(options: {
     recent = recent.filter(time => Date.now() - time < 60000);
     if (activeAgents.has(agentId) || activeAgents.size >= 4 || recent.length >= 10 || attempts.size >= 500) throw new ControlError('rate-limited');
     // Reserve the minute slot synchronously with agent/global admission, before any preflight or durable await.
-    activeAgents.add(agentId); recent.push(Date.now());
+    activeAgents.add(agentId); recent.push(Date.now()); attempts.set(input.operationId, attempt);
     const unknown: ScheduleOperation = { operationId: input.operationId, agentId, action: input.intent.kind, state: 'unknown',
       ...(input.intent.kind === 'create' ? {} : { jobId: input.intent.jobId }) };
     try {
@@ -122,7 +141,6 @@ export function createScheduleMutations(options: {
         const store = storage();
         try { reservation = await store.reserve({ operationId: input.operationId, agentId, requestDigest: scheduleCreateDigest(agentId, input.intent.draft) }); }
         catch (error) { if (error instanceof ControlError) throw error; throw new ControlError('schedule-storage-unavailable'); }
-        attempts.set(input.operationId, attempt);
         // An existing uncertain reservation is recovery metadata, never permission to send again.
         if (!('reserved' in reservation) || reservation.reserved !== true) return operation(reservation);
         params = buildScheduleCreate(agentId, reservation.declarationKey, input.intent.draft);
@@ -135,7 +153,6 @@ export function createScheduleMutations(options: {
         attempt.expected = configuration({ ...current.row, draft: input.intent.kind === 'edit' ? input.intent.draft : current.row.draft,
           enabled: input.intent.kind === 'enabled' ? input.intent.enabled : current.enabled }, current.declarationKey);
         attempt.jobId = input.intent.jobId;
-        attempts.set(input.operationId, attempt);
       }
       tickets.delete(input.operationId); attempt.binding = ticket.binding;
       try {
@@ -238,7 +255,13 @@ export function createScheduleMutations(options: {
       void attempt.promise.then(result => { attempt.result = structuredClone(result); pending.delete(input.operationId); }, () => pending.delete(input.operationId));
       return attempt.promise.then(result => structuredClone(result));
     },
-    reconcile(agentId, operationId, cursor, signal) {
+    async reconcile(agentId, operationId, cursor, signal) {
+      const binding = authority(agentId, undefined, signal); const inflight = pending.get(operationId);
+      if (inflight) {
+        if (inflight.agentId !== agentId) throw new ControlError('schedule-changed');
+        // Wait before acquiring a read lease: dispatch may itself need the shared preflight budget.
+        await waitForDispatch(inflight, signal); authority(agentId, binding, signal);
+      }
       return read(agentId, (readSignal, binding) => reconcile(agentId, operationId, cursor, readSignal, binding), signal).then(result => {
         const attempt = attempts.get(operationId); if (attempt) attempt.result = structuredClone(result); return result;
       });
@@ -246,6 +269,7 @@ export function createScheduleMutations(options: {
     close() {
       if (closePromise) return closePromise;
       closed = true; tickets.clear(); cursors.clear(); for (const controller of readers) controller.abort();
+      for (const controller of waiters) controller.abort();
       closePromise = Promise.allSettled([...work]).then(() => {}); return closePromise;
     },
   };

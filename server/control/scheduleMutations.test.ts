@@ -16,7 +16,7 @@ const directories: string[] = []; const mutations: ScheduleMutations[] = []; con
 function native(declarationKey = 'external:synthetic') {
   return { ...buildScheduleCreate('main', declarationKey, draft), id: 'job-1', effectiveAgentId: 'main', configRevision: 'revision-1', state: {} };
 }
-function fixture() {
+function fixture(acquireRead: () => () => void = () => () => {}) {
   const directory = fs.mkdtempSync(join(tmpdir(), 'pixel-schedule-mutations-')); directories.push(directory);
   const connection = { epoch: 'epoch-1', gatewayUrl: 'ws://127.0.0.1:9/', deviceId: 'synthetic-device' };
   let management: ScheduleManagement = { configured: true, state: 'ready', canManage: true, epoch: 'epoch-1', reason: null };
@@ -31,7 +31,7 @@ function fixture() {
       return { jobs: [], snapshotRevision: 'snapshot-1', total: 0, offset: params.offset, limit: 50, hasMore: false, nextOffset: null };
     }) };
   function open() {
-    const result = createScheduleMutations({ manager, journal: () => journal, registeredAgents: () => registered, readerReady: () => readable, acquireRead: () => () => {} });
+    const result = createScheduleMutations({ manager, journal: () => journal, registeredAgents: () => registered, readerReady: () => readable, acquireRead });
     mutations.push(result); return result;
   }
   const service = open();
@@ -300,5 +300,122 @@ describe('confirmed native schedule mutations without replay', () => {
     expect(await f.service.reconcile('main', operationId)).toMatchObject({ state: 'unknown', jobId: 'job-1' });
     expect(f.journal.list('main')[0].state).toBe('uncertain');
     expect(JSON.parse(fs.readFileSync(join(f.directory, 'journal.json'), 'utf8')).records[0].state).toBe('uncertain');
+  });
+  it('resolved_updates_retire_without_a_permanent_500_operation_admission_limit_or_replay', async () => {
+    const f = fixture(); vi.useFakeTimers(); const start = Date.now();
+    const enabled: ScheduleIntent = { kind: 'enabled', jobId: 'job-1', revision: 'revision-1', enabled: false };
+    const first = await f.service.prepare('main', enabled); const input = { operationId: first.operationId, intent: first.intent };
+    expect((await f.service.submit('main', input)).state).toBe('confirmed');
+    for (let i = 1; i <= 500; i++) {
+      vi.setSystemTime(start + i * 60001); expect((await submit(f, enabled)).state).toBe('confirmed');
+    }
+    expect(f.journal.list('main')).toHaveLength(0);
+    await expect(f.service.submit('main', input)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(vi.mocked(f.manager.request).mock.calls.filter(call => call[0] === 'cron.update')).toHaveLength(501);
+  });
+  it.each([false, true])('500_accumulated_create_attempts_do_not_block_safe_updates_or_allow_old_add_replay (uncertain: %s)', async uncertain => {
+    const f = fixture(); vi.useFakeTimers(); const start = Date.now(); let first!: ScheduleConfirmation;
+    const original = vi.mocked(f.manager.request).getMockImplementation()!;
+    if (uncertain) vi.mocked(f.manager.request).mockImplementation(async (...args) => {
+      if (args[0] === 'cron.add') throw new GatewayRequestError('schedule-outcome-unknown'); return original(...args);
+    });
+    for (let i = 0; i < 500; i++) {
+      vi.setSystemTime(start + i * 60001);
+      const confirmation = await f.service.prepare('main', { kind: 'create', draft: { ...draft, name: `Synthetic ${i}` } });
+      if (!i) first = confirmation;
+      expect((await f.service.submit('main', { operationId: confirmation.operationId, intent: confirmation.intent })).state).toBe(uncertain ? 'unknown' : 'confirmed');
+    }
+    vi.setSystemTime(start + 500 * 60001);
+    expect((await submit(f, { kind: 'enabled', jobId: 'job-1', revision: 'revision-1', enabled: true })).state).toBe('confirmed');
+    expect(f.journal.list('main')).toHaveLength(500);
+    expect(await f.service.submit('main', { operationId: first.operationId, intent: first.intent })).toMatchObject({ state: 'unknown' });
+    expect(vi.mocked(f.manager.request).mock.calls.filter(call => call[0] === 'cron.add')).toHaveLength(500);
+  });
+  it('retains_unknown_update_recovery_at_capacity_and_admits_new_work_after_explicit_resolution', async () => {
+    const f = fixture(); vi.useFakeTimers(); const start = Date.now(); const inputs: ScheduleConfirmation[] = [];
+    const original = vi.mocked(f.manager.request).getMockImplementation()!;
+    vi.mocked(f.manager.request).mockImplementation(async (...args) => {
+      if (args[0] === 'cron.update') throw new GatewayRequestError('schedule-outcome-unknown'); return original(...args);
+    });
+    const enabled: ScheduleIntent = { kind: 'enabled', jobId: 'job-1', revision: 'revision-1', enabled: false };
+    for (let i = 0; i < 500; i++) {
+      vi.setSystemTime(start + i * 60001); const confirmation = await f.service.prepare('main', enabled); inputs.push(confirmation);
+      expect((await f.service.submit('main', { operationId: confirmation.operationId, intent: enabled })).state).toBe('unknown');
+    }
+    vi.setSystemTime(start + 500 * 60001);
+    await expect(submit(f, enabled)).rejects.toMatchObject({ code: 'rate-limited' });
+    expect((await f.service.submit('main', { operationId: inputs[1].operationId, intent: enabled })).state).toBe('unknown');
+    expect((await f.service.reconcile('main', inputs[0].operationId)).state).toBe('observed');
+    vi.mocked(f.manager.request).mockImplementation(original); expect((await submit(f, enabled)).state).toBe('confirmed');
+    expect(vi.mocked(f.manager.request).mock.calls.filter(call => call[0] === 'cron.update')).toHaveLength(501);
+  });
+  it('delayed_add_receipt_cannot_overwrite_a_newer_independent_edit_observed_by_reconciliation', async () => {
+    const f = fixture(); let release!: () => void; let current: Record<string, unknown>;
+    vi.mocked(f.manager.request).mockImplementation(async (method, params) => {
+      if (method === 'cron.add') {
+        const receipt = { created: true, job: { ...params, id: 'job-1', configRevision: 'revision-1', state: {} } };
+        current = { ...receipt.job, name: 'Changed independently', enabled: true, configRevision: 'revision-2' };
+        return new Promise(resolve => { release = () => resolve(receipt); });
+      }
+      if (method === 'cron.get') return current;
+      return { jobs: [current], snapshotRevision: 'snapshot-2', total: 1, offset: 0, limit: 50, hasMore: false, nextOffset: null };
+    });
+    const confirmation = await f.service.prepare('main', intent); const input = { operationId: confirmation.operationId, intent };
+    const submitted = f.service.submit('main', input); await vi.waitFor(() => expect(release).toEqual(expect.any(Function)));
+    const reconciled = f.service.reconcile('main', confirmation.operationId); setTimeout(() => release(), 0);
+    const [, result] = await Promise.all([submitted, reconciled]);
+    expect(result).toMatchObject({ state: 'changed', jobId: 'job-1' });
+    expect(f.journal.list('main')[0].state).toBe('changed');
+    expect((await f.service.submit('main', input)).state).toBe('changed');
+    await expect(submit(f)).rejects.toMatchObject({ code: 'schedule-changed' });
+    expect(vi.mocked(f.manager.request).mock.calls.filter(call => call[0] === 'cron.add')).toHaveLength(1);
+  });
+  it('cancelling_a_reconciliation_wait_uses_no_read_lease_and_does_not_cancel_admitted_creation', async () => {
+    let leases = 0; const f = fixture(() => { leases++; return () => { leases--; }; }); let release!: () => void;
+    vi.mocked(f.manager.request).mockImplementation(async (_method, params) => new Promise(resolve => {
+      release = () => resolve({ created: true, job: { ...params, id: 'job-1', configRevision: 'revision-1', state: {} } });
+    }));
+    const confirmation = await f.service.prepare('main', intent);
+    const admitted = f.service.submit('main', { operationId: confirmation.operationId, intent });
+    await vi.waitFor(() => expect(release).toEqual(expect.any(Function))); const controller = new AbortController();
+    try {
+      const reconciliation = f.service.reconcile('main', confirmation.operationId, undefined, controller.signal);
+      expect(leases).toBe(0); controller.abort();
+      await expect(reconciliation).rejects.toMatchObject({ code: 'unavailable' });
+      expect(vi.mocked(f.manager.request).mock.calls.map(call => call[0])).toEqual(['cron.add']);
+      expect(vi.mocked(f.manager.request).mock.calls[0][2]).toBeUndefined();
+    } finally { release(); }
+    expect((await admitted).state).toBe('confirmed'); expect(leases).toBe(0);
+    expect(f.journal.list('main')[0].state).toBe('acknowledged');
+  });
+  it('bounds_and_cancels_dispatch_waiters_on_close_without_native_replay_or_read_lease_deadlock', async () => {
+    let leases = 0; const f = fixture(() => { leases++; return () => { leases--; }; }); let release!: () => void;
+    vi.mocked(f.manager.request).mockImplementation(async (_method, params) => new Promise(resolve => {
+      release = () => resolve({ created: true, job: { ...params, id: 'job-1', configRevision: 'revision-1', state: {} } });
+    }));
+    const confirmation = await f.service.prepare('main', intent);
+    const admitted = f.service.submit('main', { operationId: confirmation.operationId, intent });
+    await vi.waitFor(() => expect(release).toEqual(expect.any(Function)));
+    const rejections = Array.from({ length: 4 }, () => expect(f.service.reconcile('main', confirmation.operationId)).rejects.toMatchObject({ code: 'unavailable' }));
+    try {
+      await expect(f.service.reconcile('main', confirmation.operationId)).rejects.toMatchObject({ code: 'rate-limited' });
+      expect(leases).toBe(0); const closing = f.service.close(); await Promise.all(rejections);
+      release(); await closing; expect((await admitted).state).toBe('unknown');
+      expect(f.journal.list('main')[0].state).toBe('uncertain');
+    } finally { release(); }
+    expect(vi.mocked(f.manager.request).mock.calls.map(call => call[0])).toEqual(['cron.add']); expect(leases).toBe(0);
+  });
+  it('a_dispatch_wait_deadline_never_retries_or_cancels_the_admitted_native_add', async () => {
+    const f = fixture(); let release!: () => void;
+    vi.mocked(f.manager.request).mockImplementation(async (_method, params) => new Promise(resolve => {
+      release = () => resolve({ created: true, job: { ...params, id: 'job-1', configRevision: 'revision-1', state: {} } });
+    }));
+    const confirmation = await f.service.prepare('main', intent);
+    const admitted = f.service.submit('main', { operationId: confirmation.operationId, intent });
+    await vi.waitFor(() => expect(release).toEqual(expect.any(Function))); vi.useFakeTimers();
+    const rejected = expect(f.service.reconcile('main', confirmation.operationId)).rejects.toMatchObject({ code: 'unavailable' });
+    try { await vi.advanceTimersByTimeAsync(5001); await rejected; }
+    finally { release(); }
+    expect((await admitted).state).toBe('confirmed'); expect(f.manager.request).toHaveBeenCalledTimes(1);
   });
 });
