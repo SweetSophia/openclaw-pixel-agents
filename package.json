@@ -26,6 +26,7 @@
     "collector/systemd/*",
     "docs/task-access-setup.md",
     "docs/configuration.md",
+    "docs/schedules.md",
     "docs/editor.md",
     "docs/releases.md",
     ".env.example"

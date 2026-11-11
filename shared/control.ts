@@ -68,7 +68,8 @@ export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'p
   | 'unsupported' | 'unavailable' | 'invalid-source' | 'invalid-target' | 'session-changed'
   | 'invalid-request' | 'rate-limited' | 'outcome-unknown' | 'command-not-supported'
   | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed' | 'usage-denied' | 'stop-denied'
-  | 'approvals-denied' | 'approval-unavailable' | 'approval-changed' | 'approval-outcome-unknown' | 'model-denied' | 'model-busy';
+  | 'approvals-denied' | 'approval-unavailable' | 'approval-changed' | 'approval-outcome-unknown' | 'model-denied' | 'model-busy'
+  | 'schedule-outcome-unknown' | 'schedule-changed' | 'schedule-denied' | 'schedule-storage-unavailable';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }
 export interface ControlConversationEvent {
   target: ControlTarget; kind: 'messages' | 'invalidated' | 'unavailable'; source: ControlSource; messages?: ControlMessage[];

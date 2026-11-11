@@ -1,6 +1,8 @@
 import { createPublicKey, randomUUID, sign } from 'node:crypto';
 import { controlRecord, type ControlGatewayState, type ControlStatus } from '../../shared/control';
+import type { ScheduleManagement } from '../../shared/controlSchedules';
 import type { ControlConfig } from './config';
+import type { ScheduleConfig } from './scheduleConfig';
 import { loadOrCreateDeviceIdentity, readDeviceGrantDetails, writeDeviceGrant, type DeviceGrant } from './deviceIdentity';
 import { isDeviceStorageError } from './errors';
 
@@ -14,10 +16,14 @@ const USAGE_METHODS = ['sessions.usage'] as const;
 const HISTORY_METHODS = ['audit.activity.list'] as const;
 const APPROVAL_METHODS = ['approval.get', 'approval.resolve'] as const;
 const MODEL_METHODS = ['models.list', 'sessions.patch'] as const;
-export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STOP_METHOD | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number] | typeof APPROVAL_METHODS[number] | typeof MODEL_METHODS[number];
+const SCHEDULE_READ_METHODS = ['cron.list', 'cron.get'] as const;
+const SCHEDULE_METHODS = [...SCHEDULE_READ_METHODS, 'cron.add', 'cron.update'] as const;
+const SCHEDULE_SCOPES = ['operator.read', 'operator.admin'];
+export type ScheduleMethod = typeof SCHEDULE_METHODS[number];
+export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STOP_METHOD | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number] | typeof APPROVAL_METHODS[number] | typeof MODEL_METHODS[number] | typeof SCHEDULE_READ_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable' | 'model-denied' | 'model-busy') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable' | 'model-denied' | 'model-busy' | 'schedule-changed' | 'schedule-denied' | 'schedule-outcome-unknown') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -26,7 +32,14 @@ export interface ControlGateway {
   artifactConnection?(): { id: string; generation: number; gatewayUrl: string } | null;
   modelCapabilities?(): { canRead: boolean; canChange: boolean; disabledReason?: 'unsupported' | 'permission' | null };
 }
-interface Pending { method: ControlMethod; approval: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
+export interface ScheduleGateway {
+  start(): void; close(): void; status(): ScheduleManagement;
+  connection(): { epoch: string; gatewayUrl: string; deviceId: string } | null;
+  request(method: ScheduleMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+}
+type GatewayMethod = ControlMethod | ScheduleMethod;
+type GatewayProfile = { kind: 'control'; config: ControlConfig } | { kind: 'schedules'; config: ScheduleConfig };
+interface Pending { method: GatewayMethod; approval: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
 function retryHintDelay(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return 0;
@@ -38,6 +51,16 @@ export function gatewayReconnectDelay(attempt: number, random: () => number = Ma
   return Math.max(retryHintDelay(retryAfterMs), Math.round(Math.min(30000, 500 * 2 ** Math.min(attempt, 6)) * (0.5 + random() * 0.5)));
 }
 export function createControlGateway(config: ControlConfig): ControlGateway {
+  return createSignedGateway({ kind: 'control', config });
+}
+export function createScheduleGateway(config: ScheduleConfig): ScheduleGateway {
+  const gateway = createSignedGateway({ kind: 'schedules', config });
+  return { start: gateway.start, close: gateway.close, status: gateway.scheduleStatus, connection: gateway.scheduleConnection, request: gateway.request };
+}
+function createSignedGateway(profile: GatewayProfile) {
+  const config = profile.config;
+  const control = profile.kind === 'control' ? profile.config : undefined;
+  const scheduling = profile.kind === 'schedules';
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';
   let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined; let writeGranted = false;
   let negotiatedMethods: string[] = [];
@@ -45,16 +68,20 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
   let modelAdminGranted = false;
   let approvalScopeGranted = false; let approvalsGranted = false;
   let connectionId: string | undefined;
+  let deviceId: string | undefined; let epoch: string | null = null; let manageGranted = false;
+  let scheduleReason: ScheduleManagement['reason'] = config.enabled ? 'unavailable' : 'disabled';
   let memoryGrant: DeviceGrant | undefined;
   let reconnect: ReturnType<typeof setTimeout> | undefined; let handshake: ReturnType<typeof setTimeout> | undefined;
   const pending = new Map<string, Pending>(); const listeners = new Set<(event: GatewayEvent) => void>();
   const emit = (event: GatewayEvent) => { for (const listener of listeners) listener(event); };
   function rejectPending(message: string): void {
-    for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(Error(message)); }
+    for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(scheduling && isScheduleMutation(item.method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message)); }
     pending.clear();
   }
   function fail(next: ControlGatewayState, retryable = false, retryAfterMs?: unknown): void {
     generation++; state = next; writeGranted = false; stopGranted = false; writeScopeGranted = false; approvalScopeGranted = false; approvalsGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
+    epoch = null; deviceId = undefined; manageGranted = false;
+    scheduleReason = next === 'auth-error' ? 'permission' : next === 'pairing-required' ? 'pairing-required' : next === 'unsupported' ? 'unsupported' : next === 'disabled' ? 'disabled' : 'unavailable';
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
     rejectPending('Task source connection changed'); emit({ event: 'source.invalidated', payload: null });
@@ -72,14 +99,17 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       identity = loadOrCreateDeviceIdentity(config.deviceDirectory);
       cached = memoryGrant?.deviceId === identity.deviceId && memoryGrant.endpoint === config.url ? memoryGrant
         : readDeviceGrantDetails(config.deviceDirectory, config.url!, identity.deviceId);
-    } catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); return; }
+    } catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); if (retryable) scheduleReason = 'storage-unavailable'; return; }
     state = 'connecting'; sequence = undefined;
     const current = ++generation; const ws = new WebSocket(config.url!); socket = ws;
     let connectId: string | undefined;
     const readOnlyFallback = !config.token && !config.password && cached?.scopes.includes('operator.read') && !cached.scopes.includes('operator.write');
-    const scopes = config.sendEnabled && !readOnlyFallback ? ['operator.read', 'operator.write'] : ['operator.read'];
+    // Cached scheduling grants bound authority even when bootstrap secrets remain configured.
+    const scopes = scheduling
+      ? cached ? SCHEDULE_SCOPES.filter(scope => cached.scopes.includes(scope)) : [...SCHEDULE_SCOPES]
+      : control?.sendEnabled && !readOnlyFallback ? ['operator.read', 'operator.write'] : ['operator.read'];
     // Device-only reconnects keep their existing grant; opt-in never silently upgrades it.
-    if (config.approvalsEnabled && (config.token || config.password || !cached || cached.scopes.includes('operator.approvals'))) scopes.push('operator.approvals');
+    if (control?.approvalsEnabled && (config.token || config.password || !cached || cached.scopes.includes('operator.approvals'))) scopes.push('operator.approvals');
     const storedToken = cached && scopes.every(scope => cached.scopes.includes(scope)) ? cached.token : undefined;
     const signatureToken = config.token || (!config.password ? storedToken : undefined);
     handshake = setTimeout(() => { if (generation === current) fail('unavailable', true); }, 5000); handshake.unref?.();
@@ -101,8 +131,8 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
           const payload = ['v3', identity.deviceId, 'cli', 'backend', 'operator', scopes.join(','), String(challenge.ts), signatureToken ?? '', challenge.nonce, platform, ''].join('|');
           connectId = randomUUID();
           ws.send(JSON.stringify({ type: 'req', id: connectId, method: 'connect', params: {
-            minProtocol: 4, maxProtocol: 4, client: { id: 'cli', displayName: 'Pixel Agents task details', mode: 'backend', version: '1', platform },
-            role: 'operator', scopes, caps: ['model-selection-policy'],
+            minProtocol: 4, maxProtocol: 4, client: { id: 'cli', displayName: scheduling ? 'Pixel Agents scheduling management' : 'Pixel Agents task details', mode: 'backend', version: '1', platform },
+            role: 'operator', scopes, caps: scheduling ? [] : ['model-selection-policy'],
             auth: { token: config.token || undefined, password: config.password || undefined, deviceToken: !config.token && !config.password ? storedToken : undefined },
             device: { id: identity.deviceId, publicKey: createPublicKey(identity.publicKeyPem).export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64url'),
               signature: sign(null, Buffer.from(payload), identity.privateKeyPem).toString('base64url'), signedAt: challenge.ts, nonce: challenge.nonce },
@@ -130,25 +160,27 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
         if (!hello || hello.type !== 'hello-ok' || hello.protocol !== 4 || !server || typeof server.version !== 'string'
           || typeof server.connId !== 'string' || !controlRecord(hello.snapshot) || !policy || typeof policy.tickIntervalMs !== 'number'
           || policy.tickIntervalMs <= 0 || typeof policy.maxPayload !== 'number' || typeof policy.maxBufferedBytes !== 'number'
-          || !features || !Array.isArray(methods) || !READ_METHODS.every(method => methods.includes(method))
+          || !features || !Array.isArray(methods) || !(scheduling ? SCHEDULE_METHODS : READ_METHODS).every(method => methods.includes(method))
           || !Array.isArray(features.events)) { fail('unsupported'); return; }
         if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !grants.includes('operator.read')) { fail('auth-error'); return; }
-        writeScopeGranted = config.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write');
+        writeScopeGranted = Boolean(control?.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write'));
         modelAdminGranted = grants.includes('operator.admin');
         writeGranted = writeScopeGranted && WRITE_METHODS.every(method => methods.includes(method));
         stopGranted = writeScopeGranted && methods.includes(STOP_METHOD);
-        approvalScopeGranted = config.approvalsEnabled && scopes.includes('operator.approvals') && grants.includes('operator.approvals');
+        approvalScopeGranted = Boolean(control?.approvalsEnabled && scopes.includes('operator.approvals') && grants.includes('operator.approvals'));
         approvalsGranted = approvalScopeGranted && [...APPROVAL_METHODS, ...STREAM_METHODS].every(method => methods.includes(method));
         negotiatedMethods = methods.filter((method): method is string => typeof method === 'string');
         connectionId = server.connId.length > 0 && server.connId.length <= 256 && !/[\u0000-\u001f\u007f]/.test(server.connId) ? server.connId : undefined;
+        manageGranted = scheduling && SCHEDULE_SCOPES.every(scope => scopes.includes(scope) && grants.includes(scope));
         if (typeof auth.deviceToken === 'string' && auth.deviceToken.length > 0 && auth.deviceToken.length <= 16384) {
-          const actualScopes = ['operator.read', 'operator.write', 'operator.approvals'].filter(scope => grants.includes(scope));
-          const retainedScopes = cached?.token === auth.deviceToken ? [...new Set([...cached.scopes, ...actualScopes])] : actualScopes;
+          const actualScopes = (scheduling ? SCHEDULE_SCOPES : ['operator.read', 'operator.write', 'operator.approvals']).filter(scope => grants.includes(scope) && (!scheduling || scopes.includes(scope)));
+          const retainedScopes = !scheduling && cached?.token === auth.deviceToken ? [...new Set([...cached.scopes, ...actualScopes])] : actualScopes;
           // A rotated token may immediately invalidate the old disk token. Keep it for safe I/O retries.
           memoryGrant = { deviceId: identity.deviceId, endpoint: config.url!, token: auth.deviceToken, scopes: retainedScopes };
           try { writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, memoryGrant.token, memoryGrant.scopes); }
-          catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); return; }
+          catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); if (retryable) scheduleReason = 'storage-unavailable'; return; }
         }
+        deviceId = identity.deviceId; epoch = manageGranted ? randomUUID() : null; scheduleReason = manageGranted ? null : 'permission';
         clearTimeout(handshake); handshake = undefined; retry = 0; state = 'ready'; emit({ event: 'source.ready', payload: null }); return;
       }
       const item = pending.get(frame.id); if (!item) return;
@@ -156,6 +188,13 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       if (frame.ok) item.resolve(frame.payload);
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
+        if ((SCHEDULE_METHODS as readonly string[]).includes(item.method)) {
+          const code = error?.code === 'CRON_JOB_CHANGED' || details?.code === 'CRON_JOB_CHANGED' ? 'schedule-changed'
+            : error?.code === 'FORBIDDEN' ? 'schedule-denied' : error?.code === 'INVALID_REQUEST' ? 'invalid-request'
+              : isScheduleMutation(item.method) ? 'schedule-outcome-unknown' : 'unavailable';
+          if (scheduling && code === 'schedule-denied') fail('auth-error');
+          item.reject(new GatewayRequestError(code)); return;
+        }
         const artifact = (ARTIFACT_METHODS as readonly string[]).includes(item.method);
         if ((MODEL_METHODS as readonly string[]).includes(item.method)) {
           item.reject(new GatewayRequestError(error?.code === 'FORBIDDEN' ? 'model-denied'
@@ -189,18 +228,23 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
     start() { if (stopped || !config.enabled || socket || reconnect) return; connect(); },
     status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: state === 'ready' && writeGranted, canStop: state === 'ready' && stopGranted,
       ...(state === 'ready' ? { canReviewApprovals: approvalsGranted } : {}),
-      ...(state === 'ready' && !approvalsGranted ? { approvalsDisabledReason: !config.approvalsEnabled ? 'disabled' as const : !approvalScopeGranted ? 'scope-required' as const : 'unsupported' as const } : {}),
+      ...(state === 'ready' && !approvalsGranted ? { approvalsDisabledReason: !control?.approvalsEnabled ? 'disabled' as const : !approvalScopeGranted ? 'scope-required' as const : 'unsupported' as const } : {}),
       ...(state === 'ready' && !stopGranted ? { stopDisabledReason: writeScopeGranted ? 'unsupported' as const : 'scope-required' as const } : {}) }),
     artifactConnection: () => state === 'ready' && socket?.readyState === WebSocket.OPEN && connectionId && config.url
       ? { id: connectionId, generation, gatewayUrl: config.url } : null,
-    modelCapabilities: () => {
+    modelCapabilities: (): ReturnType<NonNullable<ControlGateway['modelCapabilities']>> => {
       const unsupported = !negotiatedMethods.includes('models.list') || !negotiatedMethods.includes('sessions.patch');
       return { canRead: state === 'ready' && negotiatedMethods.includes('models.list'),
         canChange: state === 'ready' && writeScopeGranted && !modelAdminGranted && !unsupported,
         disabledReason: unsupported ? 'unsupported' : !writeScopeGranted || modelAdminGranted ? 'permission' : null };
     },
-    request(method, params, signal) {
+    scheduleStatus: (): ScheduleManagement => ({ configured: config.enabled, state, canManage: state === 'ready' && manageGranted && epoch !== null, epoch, reason: scheduleReason }),
+    scheduleConnection: () => state === 'ready' && manageGranted && epoch && deviceId && socket?.readyState === WebSocket.OPEN && config.url
+      ? { epoch, gatewayUrl: config.url, deviceId } : null,
+    request(method: GatewayMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+      if (scheduling && !(SCHEDULE_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('schedule-denied'));
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
+      if (scheduling && !manageGranted) return Promise.reject(new GatewayRequestError('schedule-denied'));
       const model = (MODEL_METHODS as readonly string[]).includes(method);
       if (method === 'sessions.patch' && (!writeScopeGranted || modelAdminGranted)) return Promise.reject(new GatewayRequestError('model-denied'));
       if (model && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
@@ -213,10 +257,11 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       const workspace = (WORKSPACE_METHODS as readonly string[]).includes(method);
       const usage = (USAGE_METHODS as readonly string[]).includes(method);
       const history = (HISTORY_METHODS as readonly string[]).includes(method);
-      if ((artifact || workspace || history) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
+      const scheduleRead = (SCHEDULE_READ_METHODS as readonly string[]).includes(method);
+      if ((artifact || workspace || history || scheduleRead) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
       // OpenClaw's read-scoped compatibility usage method is deliberately unadvertised.
       // Keep this one allowlisted probe optional and normalize an unsupported contract.
-      const allowed = (READ_METHODS as readonly string[]).includes(method)
+      const allowed = scheduling || scheduleRead || (READ_METHODS as readonly string[]).includes(method)
         || artifact || workspace || usage || history || model || (approval && approvalsGranted) || (method === STOP_METHOD && stopGranted)
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
@@ -225,15 +270,17 @@ export function createControlGateway(config: ControlConfig): ControlGateway {
       if (pending.size >= 8) return Promise.reject(Error('Too many pending task requests'));
       return new Promise((resolve, reject) => {
         const id = randomUUID();
-        const cancel = () => { const item = pending.get(id); if (!item) return; clearTimeout(item.timer); item.cleanup(); pending.delete(id); reject(Error('Task request cancelled')); };
-        const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(Error('Task request timed out')); }, 5000);
+        const uncertain = (message: string) => scheduling && isScheduleMutation(method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message);
+        const cancel = () => { const item = pending.get(id); if (!item) return; clearTimeout(item.timer); item.cleanup(); pending.delete(id); reject(uncertain('Task request cancelled')); };
+        const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(uncertain('Task request timed out')); }, 5000);
         const cleanup = () => signal?.removeEventListener('abort', cancel);
         pending.set(id, { method, approval, resolve, reject, timer, cleanup }); signal?.addEventListener('abort', cancel, { once: true });
         try { socket!.send(JSON.stringify({ type: 'req', id, method, params })); }
-        catch { clearTimeout(timer); cleanup(); pending.delete(id); reject(Error('Task source unavailable')); }
+        catch { clearTimeout(timer); cleanup(); pending.delete(id); reject(uncertain('Task source unavailable')); }
       });
     },
-    onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    onEvent(listener: (event: GatewayEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     close() { stopped = true; memoryGrant = undefined; clearTimeout(reconnect); fail(config.enabled ? 'unavailable' : 'disabled'); listeners.clear(); },
   };
 }
+function isScheduleMutation(method: GatewayMethod): boolean { return method === 'cron.add' || method === 'cron.update'; }

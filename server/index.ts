@@ -49,7 +49,9 @@ import { atomicWriteFileSync } from "./persistence";
 import { assetCacheHeaders } from "./staticAssets";
 import { FURNITURE_TYPES } from "../shared/furniture";
 import { loadControlConfig } from "./control/config";
-import { createControlGateway } from "./control/gatewayClient";
+import { createControlGateway, createScheduleGateway } from "./control/gatewayClient";
+import { loadScheduleConfig } from "./control/scheduleConfig";
+import { createScheduleService } from "./control/scheduleService";
 import { createTaskService } from "./control/taskService";
 import { createSendService } from "./control/sendService";
 import { createConversationService, mountControlNamespace } from "./control/conversation";
@@ -1823,6 +1825,10 @@ io.on("connection", (socket) => {
 
 const controlConfig = loadControlConfig(process.env, DATA_DIR);
 const controlGateway = createControlGateway(controlConfig);
+const scheduleConfig = loadScheduleConfig(process.env, DATA_DIR, controlConfig);
+const scheduleGateway = createScheduleGateway(scheduleConfig);
+const controlSchedules = createScheduleService({ reader: controlGateway, manager: scheduleGateway, config: scheduleConfig,
+  registeredAgents: () => new Set(AGENT_REGISTRY.keys()) });
 const controlTasks = createTaskService(controlGateway, () => new Set(AGENT_REGISTRY.keys()));
 const controlSends = createSendService(controlGateway, controlTasks);
 const controlRunControls = createRunControlService(controlGateway, controlTasks);
@@ -1835,9 +1841,12 @@ const controlWorkspace = createWorkspaceService(controlGateway, () => new Set(AG
 const controlUsage = createUsageService(controlGateway, controlTasks);
 const closeControlNamespace = mountControlNamespace(io, { config: controlConfig, tasks: controlTasks, conversations: controlConversations,
   originAllowed: origin => isOriginAllowed(origin, corsConfig), trustProxy: app.get("trust proxy fn") });
-app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts, workspace: controlWorkspace, usage: controlUsage, runHistory: controlRunHistory, runControls: controlRunControls, approvals: controlApprovals, models: controlModels }));
+app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts, workspace: controlWorkspace, usage: controlUsage, runHistory: controlRunHistory, runControls: controlRunControls, approvals: controlApprovals, models: controlModels, schedules: controlSchedules }));
 server.on("listening", () => controlGateway.start());
-server.on("close", () => { closeControlNamespace(); controlModels.close(); controlApprovals.close(); controlRunControls.close(); controlUsage.close(); controlWorkspace.close(); controlArtifacts.close(); controlRunHistory.close(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close(); });
+server.on("close", () => {
+  void controlSchedules.close().catch(() => logger.error({ subsystem: "control-schedules", code: "unavailable" }, "private scheduling disposal failed"));
+  closeControlNamespace(); controlModels.close(); controlApprovals.close(); controlRunControls.close(); controlUsage.close(); controlWorkspace.close(); controlArtifacts.close(); controlRunHistory.close(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close();
+});
 
 // Unmatched requests that reach the end of the API route chain keep the API
 // representation/status contract. In particular, an unknown GET must not fall
@@ -1889,17 +1898,25 @@ async function shutdown(signal: string) {
   // can `clearTimeout` once the race resolves, preventing a delayed forced-shutdown
   // log from firing after a successful graceful exit.
   let hardTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let disposalFailed = false;
 
   const gracefulClose = (async (): Promise<false> => {
-    // Close HTTP server (stops accepting new connections)
-    await new Promise<void>((resolve) =>
+    // Fence scheduling admission immediately, including connected submit preflights.
+    // The HTTP close hook shares this idempotent disposal for non-startServer users.
+    const schedulesClosed = controlSchedules.close().catch(() => {
+      disposalFailed = true;
+      logger.error({ subsystem: "control-schedules", code: "unavailable" }, "private scheduling disposal failed");
+    });
+    // Stop accepting, then drain HTTP and upgraded office sockets together.
+    const httpClosed = new Promise<void>((resolve) =>
       server.close(() => {
         logger.info({ subsystem: "server" }, "http server closed");
         resolve();
       }),
     );
-    // Close Socket.IO connections (awaited so log lines land in order).
-    await io.close();
+    // A connected submit can become idle only after scheduling disposal settles.
+    const schedulesDrained = schedulesClosed.finally(() => server.closeIdleConnections());
+    await Promise.all([httpClosed, schedulesDrained, io.close()]);
     logger.info({ subsystem: "server" }, "socket.io connections closed");
     return false;
   })();
@@ -1921,11 +1938,12 @@ async function shutdown(signal: string) {
     process.exit(1);
   }
 
-  logger.info({ subsystem: "server" }, "shutdown complete");
+  if (disposalFailed) logger.error({ subsystem: "server" }, "shutdown complete (failed)");
+  else logger.info({ subsystem: "server" }, "shutdown complete");
   // Best-effort drain of buffered pino lines; flush is fire-and-forget here
   // because `process.exit` is synchronous and there is no awaiting wrapper.
   logger.flush?.();
-  process.exit(0);
+  process.exit(disposalFailed ? 1 : 0);
 }
 
 function startServer(): void {

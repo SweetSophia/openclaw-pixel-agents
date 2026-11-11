@@ -23,13 +23,16 @@ import { parseApprovalReadRequest, parseApprovalInspectRequest, parseApprovalRes
 import { ApprovalNotDispatchedError, type ApprovalService } from './approvalService';
 import { parseControlModelReadRequest, parseControlModelSelection } from '../../shared/controlModels';
 import type { ModelService } from './modelService';
+import type { ScheduleService } from './scheduleService';
+import { createScheduleRouter } from './scheduleRoutes';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService; models?: ModelService }): Router {
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService; models?: ModelService; schedules?: ScheduleService }): Router {
   const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls, approvals, models } = options; const router = Router();
   const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
   router.use(createControlAccess(config));
+  if (options.schedules) router.use('/agents/:id/schedules', createScheduleRouter(options.schedules));
   router.get('/status', (_req, res) => res.json(gateway.status()));
   function run<T>(req: Request, res: Response, action: (signal: AbortSignal) => Promise<T>, success: (result: T) => void = result => { res.json(result); }): void {
     const controller = new AbortController();

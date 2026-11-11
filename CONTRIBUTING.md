@@ -120,6 +120,22 @@ must stop its refresh. Inspect browser errors/network traffic and confirm no pri
 payload appears on the public socket or in browser storage. Use synthetic text in
 screenshots and committed fixtures. Never send a real task as an automated check.
 
+For scheduling changes, use [the operator guide](docs/schedules.md) and a disposable
+signed synthetic Gateway with separate ordinary/scheduling identities. Build first
+and test the production client at 320/390/768/1024/1440px and short landscape, plus
+200% text zoom. Check roving tabs (arrows/Home/End), Enter/Space, focus containment
+and return, 44px targets, one drawer scroll area and long prompts. Exercise interval
+and cron/timezone validation, disabled creation then separate Enable/Pause review,
+history read-only mode, pairing-required, partial reads and unknown reconciliation.
+Switch agent/history, lock and hide during delayed reads and admitted mutations;
+late responses must not restore cleared data or replay writes. Inspect console,
+network, storage and public socket traffic: private prompts/keys must remain private.
+The process-level `server/control/scheduleIntegration.test.ts` proves lost-reply
+creation followed by native edit and actual office restart never adds again; a
+same-process service recreation is not equivalent evidence. Use unique browser
+sessions, Docker image/container names and ephemeral/verified-unused loopback ports;
+clean only owned synthetic resources. Never pair a live device or schedule a real task.
+
 ## npm package and releases
 
 `npm run test:package` installs the actual tarball with production dependencies in a disposable directory and checks setup instructions with lifecycle scripts disabled, a separately enabled foreground install notice, configured startup, assets, key generation and restart persistence. Both setup and the notice must leave office data/configuration untouched. It does not contact a real Gateway or publish anything. Run it after building whenever package files, startup or deployment setup changes.

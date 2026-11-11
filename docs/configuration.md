@@ -147,6 +147,8 @@ The mounted file must be readable by the image's non-root account; do not make s
 | `PIXEL_CONTROL_TOKEN` | None | Separate operator key generated for this office. Both this and the Gateway URL are required for task access. |
 | `CONTROL_SEND_ENABLED` | `false` | Existing write opt-in for sending, steering, Stop and conversation model changes; also requires the office device's paired `operator.write` grant and each action's supported native methods. |
 | `CONTROL_APPROVALS_ENABLED` | `false` | Only exact `true` opts into native approval review. Requires separately paired `operator.approvals`, supported native methods and record reviewer binding; read/write grants do not imply it. |
+| `CONTROL_SCHEDULES_MANAGE_ENABLED` | `false` | Exact `true` enables a separate scheduling read/admin device, lazily connected after an authenticated schedules visit. See [scheduling setup and recovery](schedules.md). |
+| `OPENCLAW_SCHEDULES_GATEWAY_TOKEN` / `OPENCLAW_SCHEDULES_GATEWAY_PASSWORD` | None | Separate temporary scheduling-device bootstrap credential. Remove after pairing; ordinary bootstrap credentials are never reused. |
 | `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_GATEWAY_PASSWORD` | None | Temporary server-only bootstrap credential for pairing. Remove after the scoped grant is saved. |
 | `CONTROL_ALLOW_TAILNET_HTTP` | `false` | Explicit direct-Tailscale HTTP exception for private access. Actual local and peer Tailnet socket addresses must qualify; forwarded headers cannot enable it. |
 | `LOG_LEVEL` | `info` | Server log level. |
@@ -166,6 +168,8 @@ All rate-limit maximums must be positive integers; malformed settings fail start
 An explicit `DATA_DIR` overrides these defaults. Relative settings resolve from the process working directory; use an absolute path for a service and reuse it across upgrades.
 
 Retain `agent-prefs.json`, `layouts/` and, if task access is configured, `control/`. The latter holds the office's private identity and scoped device grant; do not copy another client's identity or commit these files. Persist `/app/data` as a Docker volume.
+
+With scheduling management enabled, also preserve private `control-schedules/` identity/grant and creation journal. Never reset/delete uncertain records to retry creation. See [journal maintenance](schedules.md#storage-failures-and-maintenance) for verified-stop, private-backup and operator inspection requirements.
 
 Preference and layout writes flush a same-directory temporary file, atomically replace the target, and sync its parent directory on POSIX. A pre-replacement failure preserves the old file. If replacement succeeded but durable saving cannot be confirmed, preference changes remain visible and the client reports that saving needs to be retried.
 
@@ -201,6 +205,8 @@ The trusted proxy must overwrite client-supplied forwarding headers. Use the act
 ## Private access
 
 The shared office key unlocks private task and conversation access; it does not create per-user accounts or protect every public roster/editor route. Deploy on a trusted network or behind your own access control.
+
+Native scheduling management is independently default-off and uses a separate administrator device, never the ordinary task grant. See [native schedules](schedules.md) for setup, grant/revocation risks, disabled-first creation and unknown-outcome recovery. This is source-branch delivery, not proof of live deployment or inclusion in published npm 1.7.0.
 
 Private task payloads stay off the public office socket and out of browser storage. Pairing uses the office's own device and scoped permissions. See [task access setup](task-access-setup.md) for the full procedure, key rotation and troubleshooting.
 

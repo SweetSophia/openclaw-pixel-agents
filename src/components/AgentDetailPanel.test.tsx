@@ -6,10 +6,10 @@ import type { AgentState } from '../../shared/types';
 
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'idle', model: 'fixture', sessionKey: 'agent:cylena:test', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
 afterEach(cleanup);
-it('provides seven ARIA tabs with dynamic wrapping/Home/End and restores focus after closing', () => {
+it('provides eight ARIA tabs with dynamic wrapping/Home/End and restores focus after closing', () => {
   const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus(); const close = vi.fn();
   const { unmount } = render(<AgentDetailPanel agent={agent} onClose={close} />);
-  const tabs = screen.getAllByRole('tab'); expect(tabs.map(tab => tab.textContent)).toEqual(['Task', 'Conversation', 'Results', 'Workspace', 'Usage', 'Approvals', 'Agent']);
+  const tabs = screen.getAllByRole('tab'); expect(tabs.map(tab => tab.textContent)).toEqual(['Task', 'Conversation', 'Results', 'Workspace', 'Usage', 'Approvals', 'Schedules', 'Agent']);
   const last = tabs[tabs.length - 1];
   expect(tabs[0]).toHaveAttribute('aria-selected', 'true'); fireEvent.keyDown(tabs[0], { key: 'ArrowLeft' }); expect(last).toHaveFocus();
   fireEvent.keyDown(last, { key: 'Home' }); expect(tabs[0]).toHaveFocus(); fireEvent.keyDown(tabs[0], { key: 'ArrowRight' }); expect(tabs[1]).toHaveFocus();

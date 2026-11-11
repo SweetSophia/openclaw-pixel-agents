@@ -91,6 +91,22 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it('ordinary_methods_unchanged_without_cron', async () => {
+    const host = await fixture(); const gateway = client(host.url); await ready(gateway);
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+    for (const method of ['cron.list', 'cron.get'] as const) await expect(gateway.request(method, {})).rejects.toMatchObject({ code: 'unsupported' });
+    expect(gateway.status()).toMatchObject({ canRead: true, canSend: false });
+    expect(host.frames).toHaveLength(1);
+  });
+  it('permits advertised cron reads without granting scheduling mutations', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? hello(frame.id, {
+      features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'cron.list', 'cron.get', 'cron.add', 'cron.update'], events: [] },
+    }) : { type: 'res', id: frame.id, ok: true, payload: { jobs: [] } })));
+    const gateway = client(host.url); await ready(gateway);
+    for (const method of ['cron.list', 'cron.get'] as const) await expect(gateway.request(method, {})).resolves.toEqual({ jobs: [] });
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']);
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'cron.list', 'cron.get']);
+  });
   it('runs literal native model catalog and preference receipts through signed transport, real services and protected HTTP', async () => {
     const target = { agentId: 'cylena', sessionKey: 'agent:cylena:model-fixture', sessionId: 'model-session', lifecycleRevision: 'l1' };
     let selected = 'old';

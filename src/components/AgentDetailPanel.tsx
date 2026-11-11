@@ -8,6 +8,7 @@ import { TaskResults } from './TaskResults';
 import { AgentWorkspace } from './AgentWorkspace';
 import { ConversationUsage } from './ConversationUsage';
 import { ConversationApprovals } from './ConversationApprovals';
+import { AgentSchedules } from './AgentSchedules';
 import { useTaskDetails } from '../control/useTaskDetails';
 import { useRunHistory } from '../control/useRunHistory';
 import { useControlAccess, useConversationDrafts } from '../control/ControlAccess';
@@ -41,7 +42,7 @@ const activityColors: Record<AgentActivity, string> = {
   sleeping: '#8a93b2',
   error: '#dc3545',
 };
-const detailTabs = ['task', 'conversation', 'results', 'workspace', 'usage', 'approvals', 'agent'] as const;
+const detailTabs = ['task', 'conversation', 'results', 'workspace', 'usage', 'approvals', 'schedules', 'agent'] as const;
 
 export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -148,6 +149,9 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
               : newConversationDraft ? <p>A new conversation draft is selected. Return to Conversation and resume the existing live conversation before reviewing its approvals.</p>
                 : <ConversationApprovals target={details.selected} active />}
           </TaskDetailsView>}
+        </div>
+        <div role="tabpanel" id={`${tabsId}-schedules-panel`} aria-labelledby={`${tabsId}-schedules-tab`} hidden={tab !== 'schedules'}>
+          <AgentSchedules agentId={agent.id} active={tab === 'schedules'} historical={historical} onReturnToLive={() => setRunSelection(null)} />
         </div>
         <div role="tabpanel" id={`${tabsId}-agent-panel`} aria-labelledby={`${tabsId}-agent-tab`} hidden={tab !== 'agent'}>
         <p className="detail-subvalue">Office roster summary</p>
