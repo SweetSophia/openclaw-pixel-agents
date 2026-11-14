@@ -32,11 +32,11 @@ Install the prebuilt app using the [recommended quickstart](../README.md#quick-s
 
 3. Open **http://localhost:3001**. Keep the terminal running; press **Ctrl+C** to stop. To change the office's listening port, update both `PORT` and `CORS_ORIGIN`, restart the office, and open the matching URL; for example, `PORT=3002` with `CORS_ORIGIN=http://localhost:3002` uses **http://localhost:3002**. If only the external browser address changes behind a reverse proxy, update `CORS_ORIGIN` to match its exact scheme, hostname and port; the backend `PORT` can stay unchanged.
 
-This setup enables the public office/roster, not private tasks or sending. Private access requires its [own key and explicit Gateway pairing](task-access-setup.md); it is optional. Published npm 1.7.0 has fixed IDs; [custom rosters](#custom-agent-rosters) are an unreleased source feature. Production does not insert demo agents when live data is unavailable. Use a trusted network or your own access controls; CORS is not a per-user login. For explanations without changing files or starting the app, run `openclaw-pixel-agents setup`.
+This setup enables the public office/roster, not private tasks or sending. Private access requires its [own key and explicit Gateway pairing](task-access-setup.md); it is optional. [Custom rosters](#custom-agent-rosters) require 1.8.0+; 1.7.0 has fixed IDs. Production does not insert demo agents when live data is unavailable. Use a trusted network or your own access controls; CORS is not a per-user login. For explanations without changing files or starting the app, run `openclaw-pixel-agents setup`.
 
 ## Guided configuration
 
-**Unreleased source feature:** npm 1.7.0 does not contain `configure`. A source merge does not publish a new package. The [manual quickstart](#minimal-local-configuration-npm) remains available in the published release.
+Requires **1.8.0 or newer**, or a source build containing the wizard; 1.7.0 does not contain `configure`. Check the installed version: a source merge or release-preparation PR does not publish to npm. The [manual quickstart](#minimal-local-configuration-npm) remains available.
 
 In a build containing the wizard, run this in an interactive terminal, from a private folder outside your repository:
 
@@ -78,7 +78,7 @@ For a global npm install the package directory is `openclaw-pixel-agents` under 
 
 ## Custom agent rosters
 
-**Unreleased source feature; not in npm 1.7.0.** Use a build containing configurable rosters. The wizard generates a file, or you can adopt one without changing your existing office configuration or credentials:
+Requires **1.8.0 or newer**, or a source build containing configurable rosters. The wizard generates a file, or you can adopt one without changing your existing office configuration or credentials:
 
 1. Copy [agents.example.json](../agents.example.json) to a private configuration folder outside the package/repository and edit the complete list:
 
@@ -206,10 +206,12 @@ The trusted proxy must overwrite client-supplied forwarding headers. Use the act
 
 The shared office key unlocks private task and conversation access; it does not create per-user accounts or protect every public roster/editor route. Deploy on a trusted network or behind your own access control.
 
-Native scheduling management is independently default-off and uses a separate administrator device, never the ordinary task grant. See [native schedules](schedules.md) for setup, grant/revocation risks, disabled-first creation and unknown-outcome recovery. This is source-branch delivery, not proof of live deployment or inclusion in published npm 1.7.0.
+Native scheduling requires 1.8.0+ or a source build containing it. Management is independently default-off and uses a separate administrator device, never the ordinary task grant. See [native schedules](schedules.md) for setup, grant/revocation risks, disabled-first creation and unknown-outcome recovery. Package availability does not establish live deployment or permission acceptance.
 
-Private task payloads stay off the public office socket and out of browser storage. Pairing uses the office's own device and scoped permissions. See [task access setup](task-access-setup.md) for the full procedure, key rotation and troubleshooting.
+Private-control API responses, drafts and credentials are not added to the public office socket or browser storage. Pairing uses the office's own device and scoped permissions. See [task access setup](task-access-setup.md) for the full procedure, key rotation and troubleshooting.
+
+This private-control boundary does **not** make all transcript text private. While local CLI polling is active, the existing public `ticker:messages` stream can send user/assistant transcript excerpts (up to 150 characters per message) to connected dashboard clients, including the buffered snapshot on connection, without `PIXEL_CONTROL_TOKEN`. Sensitive offices must restrict the entire dashboard, including Socket.IO, through network access controls or an authenticated reverse proxy. The office key is not whole-dashboard authentication, and CORS alone is not authentication.
 
 Approval review is independent of `CONTROL_SEND_ENABLED`. When enabled, the office additionally requests `operator.approvals`; it never silently upgrades a cached grant. Missing approval scope, methods or record reviewer binding is local to Approvals and does not lock other private panels. See [private approval handling](task-access-setup.md#private-approval-handling) for explicit pairing, confirmation and uncertain-outcome guidance.
 
-Conversation model changes use `CONTROL_SEND_ENABLED` and the existing paired `operator.read`/`operator.write` grant, not a new flag or administrator permission. Model reads and writes negotiate optional native methods independently of message sending. Unexpected administrator authority disables model writes to avoid native agent/default persistence. See [conversation model selection](task-access-setup.md#conversation-model-selection) for native race, default-reset, local settlement/expiry and uncertain-outcome limits. Original source merged through PR #334 (`7bd8809`); the late-review hardening follow-up merged through PR #335 (`6012e82`) on 2026-10-30, with exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41120931299) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41120931437) successful. Source delivery does not establish live deployment or inclusion in published npm 1.7.0.
+Conversation model selection requires 1.8.0+ or a source build containing it. Changes use `CONTROL_SEND_ENABLED` and the existing paired `operator.read`/`operator.write` grant, not a new flag or administrator permission. Model reads and writes negotiate optional native methods independently of message sending. Unexpected administrator authority disables model writes to avoid native agent/default persistence. See [conversation model selection](task-access-setup.md#conversation-model-selection) for native race, default-reset, local settlement/expiry and uncertain-outcome limits. Original source merged through PR #334 (`7bd8809`); the late-review hardening follow-up merged through PR #335 (`6012e82`) on 2026-10-30, with exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41120931299) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41120931437) successful. These source checks do not establish live deployment or permission acceptance.

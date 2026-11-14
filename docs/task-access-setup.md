@@ -87,7 +87,7 @@ If the office URL uses HTTP, private access is normally available only from loop
 
 ## Live follow-ups, steering and Stop
 
-Stop and steering are merged in source through [PR #330](https://github.com/SweetSophia/openclaw-pixel-agents/pull/330) (`c86e6eb`), but are not included in published npm **1.7.0**. Exact post-merge `main` CI and CodeQL passed on that revision. Source qualification does not establish deployment or a new npm release.
+Stop and steering require **1.8.0 or newer**, or a source build containing [PR #330](https://github.com/SweetSophia/openclaw-pixel-agents/pull/330) (`c86e6eb`); 1.7.0 does not include them. A source merge does not publish a package or establish live deployment.
 
 The Gateway must grant `operator.write` as well as `operator.read`, and advertise the native methods. Sending and steering require `chat.send` and `sessions.create`; Stop independently requires `chat.abort`. One capability does not imply the other. Missing methods show **unsupported**; missing write authority, disabled opt-in, disconnected access and native ownership denial remain explicit unavailable states. Do not bypass them with a generic RPC endpoint, administrator grant or deprecated `sessions.steer`.
 
@@ -99,7 +99,7 @@ A Stop receipt labelled **requested** confirms admission, not completion. **Not 
 
 ## Conversation model selection
 
-Model selection merged in [PR #334](https://github.com/SweetSophia/openclaw-pixel-agents/pull/334) as `7bd8809`; exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41105806956) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41105806958) passed. This feature is **not included in published npm 1.7.0**; no live acceptance, deployment or new npm publication is established. These instructions apply to a build containing the implementation.
+Model selection requires **1.8.0 or newer**, or a source build containing it; 1.7.0 does not include it. It merged in [PR #334](https://github.com/SweetSophia/openclaw-pixel-agents/pull/334) as `7bd8809`; exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41105806956) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41105806958) passed. Package availability does not establish live acceptance or deployment.
 
 That original merge/check evidence remains historical. Later bot feedback led to independently reviewed server/UI hardening (`9a6d46d`, `1379f25`, then the measured native pointer-focus correction `8f03fda`) in [PR #335](https://github.com/SweetSophia/openclaw-pixel-agents/pull/335). It merged on 2026-10-30 at 20:08:42 UTC as `6012e82`, matching reviewed head `71384ba`; exact post-merge `main` [CI](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41120931299) and [CodeQL](https://github.com/SweetSophia/openclaw-pixel-agents/actions/runs/41120931437) completed successfully. The contracts below include that follow-up; source delivery still establishes no live acceptance, deployment or npm publication.
 
@@ -127,7 +127,7 @@ Receipt readback shares the four-active-model-read ceiling. At saturation, only 
 
 ## Private approval handling
 
-Approval handling merged in [PR #332](https://github.com/SweetSophia/openclaw-pixel-agents/pull/332) as `56181af`; exact post-merge `main` CI and CodeQL passed. It is not included in published npm **1.7.0**; no approvals deployment or new package publication is established. The setup below applies to a build containing the approvals implementation, not the older published artifact.
+Approval handling requires **1.8.0 or newer**, or a source build containing [PR #332](https://github.com/SweetSophia/openclaw-pixel-agents/pull/332) (`56181af`); 1.7.0 does not include it. Exact post-merge `main` CI and CodeQL passed on that revision. Installation alone does not enable approval access or establish live deployment.
 
 Approvals reviews pending native requests visible to the selected **live conversation audience**. It is separate from message sending and Stop. Enable it only for office-key holders authorized to make those decisions:
 
@@ -160,7 +160,7 @@ Identity/lifecycle or authority rejection clears the pending list, inspected rec
 
 ## Recorded runs are read-only
 
-Run history is merged in source but is not included in published npm **1.7.0**. Its selector lets you choose a source-backed recorded run, then return explicitly to **Live / latest task**. Recorded **Task**, **Conversation** and **Results** follow that run; **Usage** explains that per-run usage is unavailable and directs you back to Live for conversation totals, never invented per-run billing. **Approvals** explains that review is live-only and does not mount its reads or actions. No Stop, send, steer, approval decision, new-conversation or retry action can mutate from recorded selection. Your live draft and delivery intent remain in private tab memory and return when you choose Live. Lock or reload clears private access; no control payload is added to the public roster/socket or browser storage.
+Run history requires **1.8.0 or newer**, or a source build containing it; 1.7.0 does not include it. Its selector lets you choose a source-backed recorded run, then return explicitly to **Live / latest task**. Recorded **Task**, **Conversation** and **Results** follow that run; **Usage** explains that per-run usage is unavailable and directs you back to Live for conversation totals, never invented per-run billing. **Approvals** explains that review is live-only and does not mount its reads or actions. No Stop, send, steer, approval decision, new-conversation or retry action can mutate from recorded selection. Your live draft and delivery intent remain in private tab memory and return when you choose Live. Lock or reload clears private access; no control payload is added to the public roster/socket or browser storage.
 
 ## Results and delivered files
 

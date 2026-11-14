@@ -2,7 +2,7 @@
 
 The agent **Schedules** tab browses native OpenClaw schedules without selecting a conversation. Management is separate and default-off: create a disabled schedule, inspect it, then explicitly enable it. Pixel Agents does not run a second scheduler.
 
-Availability: this guide describes the source-branch implementation, not a merged release, live deployment, or inclusion in published npm **1.7.0**. Synthetic qualification cannot establish real pairing or task execution.
+Availability: requires **1.8.0 or newer**, or a source build containing [PR #349](https://github.com/SweetSophia/openclaw-pixel-agents/pull/349); 1.7.0 does not include scheduling. A source merge or release-preparation PR does not publish to npm. Synthetic qualification cannot establish real pairing or task execution.
 
 ## Enable management deliberately
 

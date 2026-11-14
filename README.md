@@ -22,11 +22,17 @@ npm install --global openclaw-pixel-agents@latest
 openclaw-pixel-agents --version
 ```
 
-`@latest` selects the npm registry's current release. npm **1.7.0** includes Usage, setup instructions and transient Gateway-startup recovery; see the [1.7.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.7.0.md). Newer source additions such as run history, Stop/Steer, approvals and model selection are **not included in 1.7.0**. Check your installed version and release notes rather than assuming a source merge publishes a package.
+`@latest` selects the npm registry's current release. Run history, Stop/Steer, approvals, model selection, guided configuration, custom rosters and native scheduling require **1.8.0 or newer**; see the [1.8.0 release notes](https://github.com/SweetSophia/openclaw-pixel-agents/blob/main/docs/releases/1.8.0.md). They are not included in 1.7.0. A source merge or release-preparation PR does not publish a package: check your installed version and the registry's release before expecting these features.
 
 ### Configure the office
 
-**Interactive alternative (unreleased source feature; not in npm 1.7.0):** builds containing the wizard provide `openclaw-pixel-agents configure`. It guides local OpenClaw or a remote collector, lets you keep the default agents or enter your own IDs and public names, and optionally prepares private Task/Gateway access. It previews settings with secrets hidden, then asks before creating a new private configuration folder containing an editable `agents.json`. It never overwrites an existing folder, starts services or pairs devices. See [guided configuration](docs/configuration.md#guided-configuration). The manual steps below work with the published package today.
+**Guided setup (1.8.0+):** run this in an interactive terminal:
+
+```sh
+openclaw-pixel-agents configure
+```
+
+It guides local OpenClaw or a remote collector, lets you keep the default agents or enter your own IDs and public names, and optionally prepares private Task/Gateway access. It previews settings with secrets hidden, then asks before creating a new private configuration folder containing an editable `agents.json`. It never overwrites an existing folder, starts services or pairs devices. For an existing office, keep its environment file, keys and `DATA_DIR`; the wizard creates a separate bundle, not an in-place upgrade. See [guided configuration](docs/configuration.md#guided-configuration). Manual setup remains available below, including for 1.7.0.
 
 Create a file named **`pixel-agents.env`** in a folder you control, using a text editor, and save these settings:
 
@@ -54,7 +60,7 @@ To change the office's listening port, update both `PORT` and `CORS_ORIGIN`, res
 
 Without a global installation, use `npx --yes openclaw-pixel-agents@latest --env-file ./pixel-agents.env` from the configuration folder instead. It also runs the prebuilt production app.
 
-**Next steps:** [connect your agents](#connect-your-agents), optionally [enable private task access](#create-your-task-access-key), or open the [configuration reference](docs/configuration.md) and [troubleshooting](#configuration-and-troubleshooting). The current release has a [fixed set of agent IDs](#use-your-own-roster); it does not automatically discover an arbitrary roster. An empty production office can mean the data source is unavailable or your IDs do not match; production does not insert demo agents. Use a trusted network or your own access controls: the public roster/editor is not a per-user login system.
+**Next steps:** [connect your agents](#connect-your-agents), optionally [enable private task access](#create-your-task-access-key), or open the [configuration reference](docs/configuration.md) and [troubleshooting](#configuration-and-troubleshooting). Keep the default agents or [configure your own roster](#use-your-own-roster) on 1.8.0+; agent IDs are not automatically discovered. An empty production office can mean the data source is unavailable or your IDs do not match; production does not insert demo agents. Use a trusted network or your own access controls: the public roster/editor is not a per-user login system.
 
 ### Setup instructions
 
@@ -73,6 +79,9 @@ From a source checkout, use `node bin/openclaw-pixel-agents.mjs setup`; for a lo
 - **Follow live activity.** Animated agents, room counts and a filterable activity dock show working, attention-needed, idle and inactive states. Freshness indicators distinguish an old collector snapshot from a lost browser connection.
 - **Inspect real tasks.** Open an agent's Task tab to choose a conversation, inspect verified run state, read the recorded request and response, and review recent tool outcomes. Load earlier records when the first history window is incomplete.
 - **Have a conversation.** Read text history, send a message, queue a follow-up while an agent is busy, or start a new conversation. Sending is optional and requires a separately approved write grant.
+- **Review runs and control live work (1.8.0+).** Browse source-backed historical runs read-only; return to Live to steer a conversation, confirm Stop for an exact active run, or change an eligible idle conversation's model. These writes use the existing send opt-in and non-admin write grant. See [task controls](docs/task-access-setup.md#live-follow-ups-steering-and-stop) and [model selection](docs/task-access-setup.md#conversation-model-selection) for native capability and race limits.
+- **Review approvals (1.8.0+).** Inspect pending native requests visible to the live conversation audience, then explicitly Allow once or Deny. This has a separate default-off opt-in and `operator.approvals` grant; sending alone does not enable it. See [approval setup](docs/task-access-setup.md#private-approval-handling).
+- **Manage native schedules (1.8.0+).** Browse agent schedules, create disabled jobs, and separately review Enable, Pause or edits. Management is default-off and uses a separate administrator device, never an upgrade of the ordinary task device. See [scheduling setup and recovery](docs/schedules.md).
 - **Collect results and files.** The Results tab shows a verified result or clearly labels the latest response when completion is unconfirmed. Preview delivered text and still PNG/JPEG/WebP images, download other supported files, or explicitly open an external link after checking its host. It follows the selected conversation and task; it is not a workspace file browser.
 - **Browse agent workspaces.** The read-only Workspace tab offers folders, breadcrumbs, paginated file lists, text/image previews and supported downloads for the selected agent. It works without a conversation and uses the existing office key. Requires version **1.6.0 or newer**.
 - **Inspect conversation usage.** The read-only Usage tab shows recorded input/output/cache tokens, Gateway-reported cost estimates, model and context-window limit. Partial pricing and missing metrics are explicit; cumulative tokens are not treated as occupied context. Requires version **1.7.0 or newer**. See [Usage scope](docs/task-access-setup.md#conversation-usage).
@@ -125,7 +134,7 @@ The collector supplies roster/session status. It does **not** enable private tas
 
 ### Use your own roster
 
-**Unreleased source feature; not in npm 1.7.0:** custom rosters need a build containing this feature. No new npm publication is implied by a source merge.
+Custom rosters require **1.8.0 or newer** (or a source build containing them). A source merge alone does not update an installed npm package.
 
 Run `openclaw-pixel-agents configure` and choose custom agents to enter their existing OpenClaw IDs and public display names. The new private bundle contains `agents.json`, and `office.env` points to it through `AGENT_ROSTER_PATH`. To change the list or names later, edit that file and **restart the office—no source edits or rebuild needed**. Rerunning `configure` creates a separate bundle rather than changing your current settings or credentials.
 
@@ -143,7 +152,7 @@ Without a configured file, the eight built-in IDs remain: `main`, `miku`, `chi`,
 
 **Appearances:** use the agent's palette button and Apply. Portraits, the editor and map share the same recipe. A failed save is reported; keep the same `DATA_DIR` across rebuilds and restarts. The default source-runtime paths differ between development and compiled startup, so set the directory explicitly for production.
 
-**Tasks and conversations:** select an agent and switch between Task, Conversation, Results, Workspace, Usage and Agent. The selected conversation stays selected as new work arrives. Load earlier records when needed; unknown run state and stale facts are labelled explicitly. Enter adds a line; Send or Ctrl/Cmd+Enter submits. Send follow-up queues without interrupting work. New conversation creates a session only when sent. If a send reports Outcome unknown, retry the original submission to reconcile its existing identity. Drafts stay in tab memory and clear on Lock or reload. Sending from the office does not post to the conversation's external channel.
+**Tasks and conversations:** select an agent and choose a private panel. In 1.8.0+, recorded-run selection is read-only; return explicitly to Live for actions, approvals and conversation model selection. Schedules follows the agent, and current definitions remain read-only in recorded-run mode. The selected conversation stays selected as new work arrives. Load earlier records when needed; unknown run state and stale facts are labelled explicitly. Enter adds a line; Send or Ctrl/Cmd+Enter submits. Send follow-up queues without interrupting work. New conversation creates a session only when sent. If a message send reports Outcome unknown, its explicit retry reconciles the original submission identity; do not apply that retry rule to Stop, approvals, model changes or schedule creation. Follow each control's [recovery guidance](docs/task-access-setup.md) and the [schedule journal guide](docs/schedules.md#unknown-outcomes-never-recreate-to-retry). Drafts stay in tab memory and clear on Lock or reload. Sending from the office does not post to the conversation's external channel.
 
 ## Docker
 
@@ -179,13 +188,15 @@ See the [configuration reference](docs/configuration.md) for environment variabl
 
 The roster/editor is not an individual-user login system. The separate task key protects private task and conversation access. Deploy the office on a trusted network or behind appropriate access controls.
 
+**Public activity ticker:** local CLI polling can publish user/assistant transcript excerpts (up to 150 characters per message) to dashboard clients without the task key. For sensitive conversations, restrict the entire dashboard, including Socket.IO, with network access controls or an authenticated reverse proxy; `PIXEL_CONTROL_TOKEN` does not protect the public ticker and CORS is not authentication. See [the access boundary](docs/configuration.md#private-access).
+
 ## Development and releases
 
 Built with React, TypeScript, Vite, Canvas 2D, Express and Socket.IO.
 
 ### Start from source
 
-Use this path to contribute, customize the registry or run unreleased source changes. To use the published app without building, follow the [recommended npm quickstart](#quick-start-recommended).
+Use this path to contribute or run unreleased source changes. Custom agent IDs/names use configuration on 1.8.0+ and do not require a source build. To use the published app without building, follow the [recommended npm quickstart](#quick-start-recommended).
 
 Use Node.js **22.22.2+ within 22.x**, **24.15.0+ within 24.x**, or **26+**; the exact supported range is enforced by the repository. For live agents, you also need OpenClaw locally or a configured collector.
 
