@@ -208,7 +208,9 @@ The shared office key unlocks private task and conversation access; it does not 
 
 Native scheduling requires 1.8.0+ or a source build containing it. Management is independently default-off and uses a separate administrator device, never the ordinary task grant. See [native schedules](schedules.md) for setup, grant/revocation risks, disabled-first creation and unknown-outcome recovery. Package availability does not establish live deployment or permission acceptance.
 
-Private task payloads stay off the public office socket and out of browser storage. Pairing uses the office's own device and scoped permissions. See [task access setup](task-access-setup.md) for the full procedure, key rotation and troubleshooting.
+Private-control API responses, drafts and credentials are not added to the public office socket or browser storage. Pairing uses the office's own device and scoped permissions. See [task access setup](task-access-setup.md) for the full procedure, key rotation and troubleshooting.
+
+This private-control boundary does **not** make all transcript text private. While local CLI polling is active, the existing public `ticker:messages` stream can send user/assistant transcript excerpts (up to 150 characters per message) to connected dashboard clients, including the buffered snapshot on connection, without `PIXEL_CONTROL_TOKEN`. Sensitive offices must restrict the entire dashboard, including Socket.IO, through network access controls or an authenticated reverse proxy. The office key is not whole-dashboard authentication, and CORS alone is not authentication.
 
 Approval review is independent of `CONTROL_SEND_ENABLED`. When enabled, the office additionally requests `operator.approvals`; it never silently upgrades a cached grant. Missing approval scope, methods or record reviewer binding is local to Approvals and does not lock other private panels. See [private approval handling](task-access-setup.md#private-approval-handling) for explicit pairing, confirmation and uncertain-outcome guidance.
 

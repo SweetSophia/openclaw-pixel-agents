@@ -188,6 +188,8 @@ See the [configuration reference](docs/configuration.md) for environment variabl
 
 The roster/editor is not an individual-user login system. The separate task key protects private task and conversation access. Deploy the office on a trusted network or behind appropriate access controls.
 
+**Public activity ticker:** local CLI polling can publish user/assistant transcript excerpts (up to 150 characters per message) to dashboard clients without the task key. For sensitive conversations, restrict the entire dashboard, including Socket.IO, with network access controls or an authenticated reverse proxy; `PIXEL_CONTROL_TOKEN` does not protect the public ticker and CORS is not authentication. See [the access boundary](docs/configuration.md#private-access).
+
 ## Development and releases
 
 Built with React, TypeScript, Vite, Canvas 2D, Express and Socket.IO.
