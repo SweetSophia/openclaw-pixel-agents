@@ -95,6 +95,28 @@ describe('bounded historical run selection', () => {
     const page = await f.history.read(target); expect(page.loadedRecords).toBe(2); expect(page.source.state).toBe('current'); expect(page.nextCursor).toBeUndefined();
     f.history.close(); f.tasks.close();
   });
+  it.each([undefined, null])('re-reads complete unbound history when its leaf is %s instead of serving stale rows as current', async leaf => {
+    const f = historyLeafFixture(); f.leaf(leaf); const pages = f.pages.getMockImplementation()!; let grown = false;
+    f.pages.mockImplementation(async offset => ({ ...await pages(offset), hasMore: false, messages: [
+      { role: 'user', content: 'Recorded prompt', __openclaw: { id: 'first', runId: 'first' } },
+      ...(grown ? [{ role: 'user', content: 'New recorded prompt', __openclaw: { id: 'second', runId: 'second' } }] : []),
+    ] }));
+    try {
+      const first = await f.history.read(target); expect(first.runs.map(run => run.runId)).toEqual(['first']);
+      grown = true; const next = await f.history.read(target);
+      expect(next.runs.map(run => run.runId)).toEqual(['second', 'first']); expect(next.source.state).toBe('current'); expect(next.nextCursor).toBeUndefined();
+    } finally { f.history.close(); f.tasks.close(); }
+  });
+  it.each([undefined, null])('fails closed when previously complete unbound history with a %s leaf grows beyond one page', async leaf => {
+    const f = historyLeafFixture(); f.leaf(leaf); const pages = f.pages.getMockImplementation()!; let more = false;
+    f.pages.mockImplementation(async offset => ({ ...await pages(offset), hasMore: more, messages: [
+      { role: 'user', content: 'Recorded prompt', __openclaw: { id: 'first', runId: 'first' } },
+    ] }));
+    try {
+      expect((await f.history.read(target)).nextCursor).toBeUndefined(); more = true;
+      await expect(f.history.read(target)).rejects.toMatchObject({ code: 'unsupported' });
+    } finally { f.history.close(); f.tasks.close(); }
+  });
   it('reserves space for native envelope metadata without raising the complete-response byte cap', async () => {
     const f = fixture(); const rpc = f.rpc.getMockImplementation()!;
     f.rpc.mockImplementation(async (method, params, signal) => {
@@ -117,6 +139,7 @@ describe('bounded historical run selection', () => {
     const f = fixture(); f.row({ activeRunIds: ['live-run'] }); const page = await f.history.read(target);
     expect(page.runs.map(run => run.runId)).toEqual(['latest', 'older']); expect(f.pages).toHaveBeenCalledTimes(4);
     const selected = await f.history.read({ ...target, runId: 'older' });
+    expect(f.pages).toHaveBeenCalledTimes(4);
     expect(selected.task).toMatchObject({ runId: 'older', runState: 'unknown', requestAssociation: 'run', request: { runId: 'older' }, latestResponse: { runId: 'older' } });
     expect(selected.task?.result).toBeUndefined(); expect(selected.task?.children).toEqual([]); expect(selected.task?.activeRunIds).toBeUndefined();
     expect((await f.history.read({ ...target, runId: 'missing' })).task).toBeUndefined();

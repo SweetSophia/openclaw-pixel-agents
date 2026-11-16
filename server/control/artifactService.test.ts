@@ -15,6 +15,7 @@ function fixture(withHistory = false) {
   let state: 'ready' | 'unavailable' | 'auth-error' = 'ready'; let generation = 1; let completed = false;
   const listeners = new Set<(event: GatewayEvent) => void>();
   const rows = new Map<string, Record<string, unknown>>([[target.sessionKey, { ...target, key: target.sessionKey }]]);
+  const retainedHistory = new Map<string, Map<string | undefined, unknown[]>>();
   const nativeArtifact = () => ({ id: 'artifact-1', type: 'text', title: 'report.txt', mimeType: 'text/plain',
     sessionKey: target.sessionKey, ...(runId ? { runId } : {}), messageSeq: 2, source: 'session-transcript', download: { mode: 'bytes' } });
   const list = vi.fn(async (_params: Record<string, unknown>, _signal?: AbortSignal): Promise<unknown> => ({ artifacts: [nativeArtifact()] }));
@@ -25,10 +26,18 @@ function fixture(withHistory = false) {
       ...(completed ? { lastRunId: runId, status: 'completed' } : {}), snapshotAt: 100 };
     if (method === 'sessions.describe') return { session: row };
     if (method === 'sessions.list') return { sessions: [], hasMore: false };
-    if (method === 'chat.history') return { sessionKey: params.sessionKey, sessionId: row.sessionId, sessionInfo: row,
-      messages: [{ role: 'user', content: 'Create the fixture report', __openclaw: { id: 'request', runId } },
-        ...(text ? [{ role: 'assistant', content: text, stopReason: 'stop', __openclaw: { id: 'response', runId } }] : [])],
-      ...(runId && !completed ? { inFlightRun: { runId } } : {}), hasMore: false, totalMessages: 2 };
+    if (method === 'chat.history') {
+      let messages: unknown[] = [{ role: 'user', content: 'Create the fixture report', __openclaw: { id: withHistory ? `${runId}:request` : 'request', runId } },
+        ...(text ? [{ role: 'assistant', content: text, stopReason: 'stop', __openclaw: { id: withHistory ? `${runId}:response` : 'response', runId } }] : [])];
+      if (withHistory) {
+        // Starting a new live run does not erase earlier recorded transcript evidence.
+        const key = JSON.stringify([params.sessionKey, row.sessionId, row.lifecycleRevision, row.branchId]);
+        let runs = retainedHistory.get(key); if (!runs) { runs = new Map(); retainedHistory.set(key, runs); }
+        runs.set(runId, messages); messages = [...runs.values()].flat();
+      }
+      return { sessionKey: params.sessionKey, sessionId: row.sessionId, sessionInfo: row, messages,
+        ...(runId && !completed ? { inFlightRun: { runId } } : {}), hasMore: false, totalMessages: messages.length };
+    }
     if (method === 'artifacts.list') return list(params, signal);
     if (method === 'artifacts.get') return { artifact: nativeArtifact() };
     if (method === 'artifacts.download') return download(params, signal);
@@ -53,6 +62,7 @@ describe('assistant-delivered results discovery', () => {
   it('reads explicitly selected historical files without weakening the live/latest file fence', async () => {
     const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' }); const oldArtifact = f.nativeArtifact();
     f.setRun('run-2'); f.list.mockResolvedValue({ artifacts: [oldArtifact] });
+    expect((await f.runHistory!.read(target)).runs.map(run => run.runId)).toEqual(['run-2', 'run-1']);
     const results = await f.artifacts.read({ ...target, runId: 'run-1' }); expect(results.scope).toEqual({ kind: 'run', runId: 'run-1' }); expect(results.runState).toBe('unknown');
     expect(f.list.mock.lastCall?.[0]).toMatchObject({ runId: 'run-1', sessionKey: target.sessionKey });
     await expect(f.artifacts.file(fileInput)).rejects.toMatchObject({ code: 'session-changed' });
@@ -65,6 +75,19 @@ describe('assistant-delivered results discovery', () => {
     await expect(f.artifacts.read({ ...target, runId: 'unobserved' })).rejects.toMatchObject({ code: 'invalid-target' }); expect(f.list).not.toHaveBeenCalled();
     await expect(f.artifacts.file({ ...fileInput, scope: { kind: 'run', runId: 'unobserved' }, historical: true })).rejects.toMatchObject({ code: 'invalid-target' });
     expect(f.rpc.mock.calls.filter(([method]) => method === 'artifacts.get' || method === 'artifacts.download')).toHaveLength(0);
+  });
+  it('does not authorize historical files from stale unbound proof after native history no longer contains that run', async () => {
+    const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' }); f.setRun('run-2');
+    const rpc = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (method, params, signal) => {
+      const result = await rpc(method, params, signal);
+      if (method !== 'chat.history') return result;
+      const page = result as { messages: { __openclaw: { runId?: string } }[] };
+      const messages = page.messages.filter(message => message.__openclaw.runId === 'run-2');
+      return { ...page, messages, totalMessages: messages.length };
+    });
+    await expect(f.artifacts.read({ ...target, runId: 'run-1' })).rejects.toMatchObject({ code: 'invalid-target' });
+    expect(f.list).not.toHaveBeenCalled();
   });
   it('never serves a historical cache entry as the last-known live result', async () => {
     const f = fixture(true); await f.runHistory!.read({ ...target, runId: 'run-1' });

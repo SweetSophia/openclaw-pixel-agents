@@ -113,7 +113,7 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
       if (leaf === undefined && existing?.leaf !== undefined) leaf = await historyHeadLeaf(input, combined);
       if (cursor && leaf !== existing!.leaf) throw new ControlError('session-changed');
       let window = existing;
-      if (!window || input.refresh || cursor || (leaf !== undefined && leaf !== window.leaf)) {
+      if (!window || window.leaf === undefined || window.leaf === null || input.refresh || cursor || (leaf !== undefined && leaf !== window.leaf)) {
         if (cursor) window = { ...existing!, rows: [...existing!.rows], outcomes: new Map(existing!.outcomes), id: randomUUID() };
         else {
           const selected = parseControlTarget({ ...input, activeLeafEntryId: leaf ?? undefined });
