@@ -14,11 +14,14 @@ export interface RunHistoryService {
 }
 interface Window {
   id: string; target: ControlTarget; rows: unknown[]; offset: number; loaded: number; more: boolean;
-  leaf: unknown; total: unknown; observedAt: number; limitReached: boolean; stale: boolean;
+  leaf: string | null | undefined; total: unknown; observedAt: number; limitReached: boolean; stale: boolean;
   outcomes: Map<string, RecordedRunOutcome>;
 }
 const identity = (target: ControlTarget) => JSON.stringify([target.agentId, target.sessionKey, target.sessionId, target.lifecycleRevision ?? null, target.branchId ?? null]);
 const runId = (value: unknown) => { const row = controlRecord(value); const id = controlRecord(row?.__openclaw)?.runId ?? row?.runId; return isControlRunId(id) ? id : undefined; };
+// Native maxBytes bounds messages, not the surrounding session/default/pagination metadata.
+// Leave envelope headroom while retaining the hard complete-response check below.
+const HISTORY_MESSAGE_BYTES = CONTROL_LIMITS.responseBytes - 16 * 1024;
 export function createRunHistoryService(gateway: ControlGateway, tasks: TaskService): RunHistoryService {
   const windows = new Map<string, Window>(); const cursors = new Map<string, { window: string; key: string; runId?: string; expires: number }>();
   const reads = new Set<AbortController>(); let closed = false; let epoch = 0; let destructiveEpoch = 0;
@@ -30,6 +33,25 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
   }
   function denied(): void {
     if (!gateway.status().canRead) throw new ControlError(gateway.status().state === 'auth-error' ? 'scope-required' : gateway.status().state === 'pairing-required' ? 'pairing-required' : 'unavailable');
+  }
+  function nativeLeaf(target: ControlTarget, value: unknown): string | null | undefined {
+    if (value === undefined || value === null) return value;
+    const selected = parseControlTarget({ ...target, activeLeafEntryId: value });
+    if (!selected) throw new ControlError('invalid-source');
+    return selected.activeLeafEntryId;
+  }
+  async function historyHeadLeaf(target: ControlTarget, signal: AbortSignal): Promise<string | null> {
+    // Native session rows can omit the leaf; only the offset-zero history page supplies it.
+    // Read one record for verification only, without expanding the discovery budget.
+    const page = controlRecord(await gateway.request('chat.history', { agentId: target.agentId, sessionKey: target.sessionKey, limit: 1, maxBytes: HISTORY_MESSAGE_BYTES, offset: 0 }, signal));
+    if (!page || page.sessionKey !== target.sessionKey || page.sessionId !== target.sessionId || !Array.isArray(page.messages)
+      || page.messages.length > 1 || controlByteSize(page) > CONTROL_LIMITS.responseBytes || page.windowReset === true) throw new ControlError('invalid-source');
+    const info = controlRecord(page.sessionInfo);
+    if (!info) throw new ControlError('unsupported');
+    tasks.verifyHistoryInfo(target, info);
+    const leaf = nativeLeaf(target, info.activeLeafEntryId);
+    if (leaf === undefined) throw new ControlError('unsupported');
+    return leaf;
   }
   function project(window: Window, row: Record<string, unknown>, selectedRunId?: string): ControlRunHistorySnapshot {
     const choices = new Map<string, ControlRunChoice>();
@@ -87,24 +109,31 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
     if (input.cursor && (!cursor || !existing || cursor.window !== existing.id || cursor.key !== key || cursor.runId !== input.runId || cursor.expires <= Date.now())) { reads.delete(controller); throw new ControlError('invalid-request'); }
     try {
       denied(); const row = await tasks.verifyTarget(input, combined); denied();
-      if (cursor && row.activeLeafEntryId !== existing!.leaf) throw new ControlError('session-changed');
+      let leaf = nativeLeaf(input, row.activeLeafEntryId);
+      if (leaf === undefined && existing?.leaf !== undefined) leaf = await historyHeadLeaf(input, combined);
+      if (cursor && leaf !== existing!.leaf) throw new ControlError('session-changed');
       let window = existing;
-      if (!window || input.refresh || cursor) {
+      if (!window || window.leaf === undefined || window.leaf === null || input.refresh || cursor || (leaf !== undefined && leaf !== window.leaf)) {
         if (cursor) window = { ...existing!, rows: [...existing!.rows], outcomes: new Map(existing!.outcomes), id: randomUUID() };
         else {
-          const selected = parseControlTarget({ ...input, activeLeafEntryId: row.activeLeafEntryId });
+          const selected = parseControlTarget({ ...input, activeLeafEntryId: leaf ?? undefined });
           if (!selected) throw new ControlError('invalid-source');
-          window = { id: randomUUID(), target: selected, rows: [], offset: 0, loaded: 0, more: true, leaf: row.activeLeafEntryId, total: undefined, observedAt: Date.now(), limitReached: false, stale: false, outcomes: new Map() };
+          window = { id: randomUUID(), target: selected, rows: [], offset: 0, loaded: 0, more: true, leaf, total: undefined, observedAt: Date.now(), limitReached: false, stale: false, outcomes: new Map() };
         }
         const budget = cursor ? CONTROL_LIMITS.historyPage : CONTROL_LIMITS.automaticHistory;
         for (let used = 0; used < budget && window.more && window.loaded < CONTROL_LIMITS.maximumHistory; used += CONTROL_LIMITS.historyPage) {
           const limit = Math.min(CONTROL_LIMITS.historyPage, CONTROL_LIMITS.maximumHistory - window.loaded);
-          const page = controlRecord(await gateway.request('chat.history', { agentId: input.agentId, sessionKey: input.sessionKey, limit, maxBytes: CONTROL_LIMITS.responseBytes, offset: window.offset }, combined));
+          const page = controlRecord(await gateway.request('chat.history', { agentId: input.agentId, sessionKey: input.sessionKey, limit, maxBytes: HISTORY_MESSAGE_BYTES, offset: window.offset }, combined));
           if (!page || page.sessionKey !== input.sessionKey || page.sessionId !== input.sessionId || !Array.isArray(page.messages) || page.messages.length > limit
             || controlByteSize(page) > CONTROL_LIMITS.responseBytes || page.windowReset === true || (window.total !== undefined && window.total !== page.totalMessages)) throw new ControlError('invalid-source');
           const info = controlRecord(page.sessionInfo);
           if (info) tasks.verifyHistoryInfo(input, info);
-          if (info?.activeLeafEntryId !== undefined && info.activeLeafEntryId !== window.leaf) throw new ControlError('session-changed');
+          const pageLeaf = nativeLeaf(input, info?.activeLeafEntryId);
+          if (pageLeaf !== undefined) {
+            if (window.leaf !== undefined && pageLeaf !== window.leaf) throw new ControlError('session-changed');
+            window.leaf = pageLeaf; window.target = { ...window.target, activeLeafEntryId: pageLeaf ?? undefined };
+          }
+          if ((window.leaf === undefined || window.leaf === null) && page.hasMore === true) throw new ControlError('unsupported');
           if (controlByteSize([...page.messages, ...window.rows]) > RUN_HISTORY_LIMITS.bytes) { window.limitReached = true; break; }
           window.total = page.totalMessages; window.rows = [...page.messages, ...window.rows]; window.loaded += page.messages.length; window.more = page.hasMore === true;
           if (window.more && (!Number.isSafeInteger(page.nextOffset) || (page.nextOffset as number) <= window.offset)) throw new ControlError('invalid-source');
@@ -123,7 +152,9 @@ export function createRunHistoryService(gateway: ControlGateway, tasks: TaskServ
         while (window.outcomes.size > RUN_HISTORY_LIMITS.choices) window.outcomes.delete(window.outcomes.keys().next().value!);
       }
       const after = await tasks.verifyTarget(input, combined); denied();
-      if (after.activeLeafEntryId !== row.activeLeafEntryId) throw new ControlError('session-changed');
+      let afterLeaf = nativeLeaf(input, after.activeLeafEntryId);
+      if (afterLeaf === undefined && window.leaf !== undefined) afterLeaf = await historyHeadLeaf(input, combined);
+      if (afterLeaf !== window.leaf) throw new ControlError('session-changed');
       if (closed || combined.aborted || generation !== epoch) throw new ControlError(destructive !== destructiveEpoch ? 'session-changed' : 'unavailable');
       windows.delete(key); windows.set(key, window); return project(window, after, input.runId);
     } catch (error) {

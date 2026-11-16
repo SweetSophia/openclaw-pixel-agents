@@ -4,7 +4,7 @@ import { createRunHistoryService } from './runHistoryService';
 import type { ControlGateway, GatewayEvent } from './gatewayClient';
 import { GatewayRequestError } from './gatewayClient';
 import { createTaskService } from './taskService';
-import { parseControlTarget } from '../../shared/control';
+import { CONTROL_LIMITS, parseControlTarget } from '../../shared/control';
 const target = { agentId: 'cylena', sessionKey: 'agent:cylena:fixture', sessionId: 'session-1' };
 function fixture() {
   let row: Record<string, unknown> = { ...target, key: target.sessionKey, hasActiveRun: false, lastRunId: 'latest', status: 'completed', activeLeafEntryId: 'leaf-1' };
@@ -18,11 +18,128 @@ function fixture() {
   const tasks = createTaskService(gateway, () => new Set(['cylena'])); const history = createRunHistoryService(gateway, tasks);
   return { history, tasks, pages, rpc, status: (value: typeof state) => { state = value; }, row: (change: object) => { row = { ...row, ...change }; }, event: (event: GatewayEvent) => listeners.forEach(fn => fn(event)) };
 }
+function historyLeafFixture(initial: unknown = 'leaf-1') {
+  const f = fixture(); f.row({ activeLeafEntryId: undefined }); let leaf = initial;
+  const pages = f.pages.getMockImplementation()!;
+  f.pages.mockImplementation(async offset => {
+    const page = await pages(offset);
+    return { ...page, sessionInfo: { ...page.sessionInfo, ...(offset === 0 ? { activeLeafEntryId: leaf } : {}) },
+      ...(leaf === null ? { messages: [], hasMore: false } : {}) };
+  });
+  const rpc = f.rpc.getMockImplementation()!;
+  f.rpc.mockImplementation(async (method, params, signal) => {
+    const page = await rpc(method, params, signal);
+    if (method !== 'chat.history' || params.limit !== 1) return page;
+    const result = page as { messages: unknown[] }; return { ...result, messages: result.messages.slice(-1) };
+  });
+  return { ...f, leaf: (value: unknown) => { leaf = value; } };
+}
 describe('bounded historical run selection', () => {
+  it('reads and selects history when native descriptions omit the leaf provided only by the history head', async () => {
+    const f = historyLeafFixture();
+    const page = await f.history.read(target);
+    expect(page).toMatchObject({ target: { ...target, activeLeafEntryId: 'leaf-1' }, source: { state: 'current' }, loadedRecords: 8 });
+    expect(page.runs.map(run => run.runId)).toEqual(['latest', 'older']); expect(page.nextCursor).toBeTruthy();
+    const selected = await f.history.read({ ...target, runId: 'older' });
+    expect(selected.task).toMatchObject({ runId: 'older', requestAssociation: 'run' }); expect(selected.messages.length).toBeGreaterThan(0);
+    f.history.close(); f.tasks.close();
+  });
+  it('accepts a native null leaf for an empty transcript without emitting null in the browser target', async () => {
+    const f = historyLeafFixture(null); const page = await f.history.read(target);
+    expect(page).toMatchObject({ target, source: { state: 'current' }, loadedRecords: 0, runs: [] });
+    expect(page.target.activeLeafEntryId).toBeUndefined(); expect(page.nextCursor).toBeUndefined();
+    f.history.close(); f.tasks.close();
+  });
+  it('never issues an offset cursor for nonempty history with a native null leaf', async () => {
+    const f = historyLeafFixture(null); const pages = f.pages.getMockImplementation()!;
+    f.pages.mockImplementation(async offset => ({ ...await pages(offset), messages: [{ role: 'user', content: 'retained transcript', __openclaw: { id: 'retained', runId: 'recorded' } }], hasMore: true }));
+    await expect(f.history.read(target)).rejects.toMatchObject({ code: 'unsupported' });
+    expect(f.pages.mock.calls.every(([offset]) => offset === 0)).toBe(true);
+    f.history.close(); f.tasks.close();
+  });
+  it.each(['branch', 'auth', 'source'] as const)('fences %s invalidation during the final history-head verification', async reason => {
+    const f = historyLeafFixture(); const pages = f.pages.getMockImplementation()!; let heads = 0;
+    f.pages.mockImplementation(async offset => {
+      const page = await pages(offset);
+      if (offset === 0 && ++heads === 2) {
+        if (reason === 'branch') f.event({ event: 'sessions.changed', payload: { sessionKey: target.sessionKey, reason: 'branch-switch' } });
+        else { f.status(reason === 'auth' ? 'auth-error' : 'unavailable'); f.event({ event: 'source.invalidated', payload: null }); }
+      }
+      return page;
+    });
+    await expect(f.history.read(target)).rejects.toMatchObject({ code: reason === 'source' ? 'unavailable' : 'session-changed' });
+    expect(heads).toBe(2); f.history.close(); f.tasks.close();
+  });
+  it('checks a history-only leaf before offset continuation and refreshes appended choices without changing stable identity', async () => {
+    const f = historyLeafFixture(); const page = await f.history.read(target); expect(page.nextCursor).toBeTruthy();
+    f.leaf('leaf-2');
+    await expect(f.history.read({ ...target, cursor: page.nextCursor })).rejects.toMatchObject({ code: 'session-changed' });
+    const fresh = await f.history.read(target); expect(fresh.target).toEqual({ ...target, activeLeafEntryId: 'leaf-2' }); expect(fresh.source.state).toBe('current');
+    f.history.close(); f.tasks.close();
+  });
+  it('rejects a history-only leaf changing across automatic page reads', async () => {
+    const f = historyLeafFixture(); const pages = f.pages.getMockImplementation()!;
+    f.pages.mockImplementation(async offset => { const page = await pages(offset); if (offset === 50) f.leaf('leaf-2'); return page; });
+    await expect(f.history.read(target)).rejects.toMatchObject({ code: 'session-changed' });
+    expect(f.pages.mock.calls.some(([offset]) => offset === 50)).toBe(true);
+    f.history.close(); f.tasks.close();
+  });
+  it('fails closed when neither descriptions nor history can bind an offset window to a leaf', async () => {
+    const f = historyLeafFixture(undefined); f.leaf(undefined);
+    await expect(f.history.read(target)).rejects.toMatchObject({ code: 'unsupported' });
+    f.history.close(); f.tasks.close();
+  });
+  it('keeps a complete single-page transcript usable without issuing an unbound continuation', async () => {
+    const f = historyLeafFixture(); f.leaf(undefined); const pages = f.pages.getMockImplementation()!;
+    f.pages.mockImplementation(async offset => ({ ...await pages(offset), hasMore: false }));
+    const page = await f.history.read(target); expect(page.loadedRecords).toBe(2); expect(page.source.state).toBe('current'); expect(page.nextCursor).toBeUndefined();
+    f.history.close(); f.tasks.close();
+  });
+  it.each([undefined, null])('re-reads complete unbound history when its leaf is %s instead of serving stale rows as current', async leaf => {
+    const f = historyLeafFixture(); f.leaf(leaf); const pages = f.pages.getMockImplementation()!; let grown = false;
+    f.pages.mockImplementation(async offset => ({ ...await pages(offset), hasMore: false, messages: [
+      { role: 'user', content: 'Recorded prompt', __openclaw: { id: 'first', runId: 'first' } },
+      ...(grown ? [{ role: 'user', content: 'New recorded prompt', __openclaw: { id: 'second', runId: 'second' } }] : []),
+    ] }));
+    try {
+      const first = await f.history.read(target); expect(first.runs.map(run => run.runId)).toEqual(['first']);
+      grown = true; const next = await f.history.read(target);
+      expect(next.runs.map(run => run.runId)).toEqual(['second', 'first']); expect(next.source.state).toBe('current'); expect(next.nextCursor).toBeUndefined();
+    } finally { f.history.close(); f.tasks.close(); }
+  });
+  it.each([undefined, null])('fails closed when previously complete unbound history with a %s leaf grows beyond one page', async leaf => {
+    const f = historyLeafFixture(); f.leaf(leaf); const pages = f.pages.getMockImplementation()!; let more = false;
+    f.pages.mockImplementation(async offset => ({ ...await pages(offset), hasMore: more, messages: [
+      { role: 'user', content: 'Recorded prompt', __openclaw: { id: 'first', runId: 'first' } },
+    ] }));
+    try {
+      expect((await f.history.read(target)).nextCursor).toBeUndefined(); more = true;
+      await expect(f.history.read(target)).rejects.toMatchObject({ code: 'unsupported' });
+    } finally { f.history.close(); f.tasks.close(); }
+  });
+  it('reserves space for native envelope metadata without raising the complete-response byte cap', async () => {
+    const f = fixture(); const rpc = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (method, params, signal) => {
+      if (method !== 'chat.history') return rpc(method, params, signal);
+      return { sessionKey: target.sessionKey, sessionId: target.sessionId, sessionInfo: { activeLeafEntryId: 'leaf-1' }, hasMore: false,
+        defaults: { metadata: 'm'.repeat(2048) }, messages: [{ role: 'user', content: 'x'.repeat(Number(params.maxBytes) - 128), __openclaw: { runId: 'recorded' } }] };
+    });
+    const page = await f.history.read(target); expect(page.runs).toEqual([{ runId: 'recorded' }]); expect(page.loadedRecords).toBe(1);
+    const narrow = f.rpc.getMockImplementation()!;
+    f.rpc.mockImplementation(async (method, params, signal) => method === 'chat.history' ? { ...await narrow(method, params, signal) as object, metadata: 'm'.repeat(CONTROL_LIMITS.responseBytes) } : narrow(method, params, signal));
+    await expect(f.history.read({ ...target, refresh: true })).rejects.toMatchObject({ code: 'invalid-source' });
+    f.history.close(); f.tasks.close();
+  });
+  it('rejects malformed history-head leaves before continuing an offset window', async () => {
+    const f = historyLeafFixture(); const page = await f.history.read(target); f.leaf(42);
+    await expect(f.history.read({ ...target, cursor: page.nextCursor })).rejects.toMatchObject({ code: 'invalid-source' });
+    f.history.close(); f.tasks.close();
+  });
   it('discovers only recorded run identities, selects exact messages, and never uses the latest outcome for an older run', async () => {
     const f = fixture(); f.row({ activeRunIds: ['live-run'] }); const page = await f.history.read(target);
     expect(page.runs.map(run => run.runId)).toEqual(['latest', 'older']); expect(f.pages).toHaveBeenCalledTimes(4);
     const selected = await f.history.read({ ...target, runId: 'older' });
+    expect(f.pages).toHaveBeenCalledTimes(4);
     expect(selected.task).toMatchObject({ runId: 'older', runState: 'unknown', requestAssociation: 'run', request: { runId: 'older' }, latestResponse: { runId: 'older' } });
     expect(selected.task?.result).toBeUndefined(); expect(selected.task?.children).toEqual([]); expect(selected.task?.activeRunIds).toBeUndefined();
     expect((await f.history.read({ ...target, runId: 'missing' })).task).toBeUndefined();
