@@ -6,7 +6,7 @@
 
 # ---- Builder stage -----------------------------------------------------------
 # Full dev deps + source, produces the compiled output in /app/dist.
-FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS builder
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 WORKDIR /app
 # .npmrc carries engine-strict=true; copy it before `npm ci` so the supported
 # Node engine range is enforced on the pinned image during the build.
@@ -18,7 +18,7 @@ RUN npm run build
 
 # ---- Runtime stage -----------------------------------------------------------
 # Production deps, compiled app and the standalone key generator; no dev deps or .git.
-FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5
 WORKDIR /app
 ENV NODE_ENV=production
 
