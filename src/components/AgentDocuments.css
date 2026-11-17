@@ -1,0 +1,8 @@
+.agent-documents { margin: 1rem 0; padding: 1rem 0; border-top: 1px solid #39405c; overflow-wrap: anywhere; }
+.agent-documents h3 { margin: 0 0 .5rem; }
+.agent-documents button { min-height: 44px; padding: .5rem .75rem; }
+.agent-documents-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.agent-documents textarea { display: block; box-sizing: border-box; width: 100%; min-height: 180px; resize: vertical; margin-top: .5rem; padding: .75rem; font: 14px/1.5 monospace; background: #14182a; color: #edf0fa; border: 1px solid #737e9f; border-radius: 6px; }
+.agent-documents textarea:focus-visible, .agent-documents button:focus-visible { outline: 2px solid #4ecca3; outline-offset: 2px; }
+.agent-documents button:disabled { opacity: .55; cursor: not-allowed; }
+.agent-document-target { font-weight: 600; }

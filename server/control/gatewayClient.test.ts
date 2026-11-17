@@ -16,9 +16,110 @@ import { createTaskService } from './taskService';
 import { createControlRouter } from './routes';
 import { createUsageService } from './usageService';
 import { createRunControlService } from './runControlService';
+import { createAgentDocumentGateway, createScheduleGateway, type AgentDocumentMethod } from './gatewayClient';
+import { loadScheduleConfig } from './scheduleConfig';
+import { documentFixture, encodeDocumentFrame } from './fixtures/agentDocuments';
 
 type Frame = { type: string; id: string; method: string; params: Record<string, any> };
 const cleanups: (() => void | Promise<void>)[] = [];
+
+describe('separate document signed profile', () => {
+  async function documents(options: Parameters<typeof documentFixture>[0] = {}) {
+    const host = await documentFixture(options); cleanups.push(() => host.close());
+    const gateway = createAgentDocumentGateway(host.config); cleanups.push(() => gateway.close());
+    return { host, gateway };
+  }
+  it('is lazy and disabled credentials create no identity or connection', async () => {
+    const { host, gateway } = await documents(); gateway.status(); expect(gateway.connection()).toBeNull();
+    expect(host.frames).toEqual([]);
+    const disabled = createAgentDocumentGateway({ ...host.config, enabled: false }); disabled.start(); disabled.close();
+    const { existsSync } = await import('node:fs'); expect(existsSync(host.config.deviceDirectory)).toBe(false);
+    gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+    expect(host.frames[0].params.scopes).toEqual(['operator.read', 'operator.admin']);
+    expect(host.frames[0].params.auth).toEqual({ token: 'document-bootstrap-fixture' });
+    expect(host.frames[0].params.caps).toEqual([]);
+    const params = host.frames[0].params as any;
+    const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(params.device.publicKey, 'base64url')]), type: 'spki', format: 'der' });
+    const payload = ['v3', params.device.id, 'cli', 'backend', 'operator', 'operator.read,operator.admin', '123', 'document-bootstrap-fixture', 'document-nonce', process.platform, ''].join('|');
+    expect(verify(null, Buffer.from(payload), key, Buffer.from(params.device.signature, 'base64url'))).toBe(true);
+    expect(devices.readDeviceGrantDetails(host.config.deviceDirectory, host.url, params.device.id)?.scopes).toEqual(['operator.read', 'operator.admin']);
+    expect(gateway.connection()).toMatchObject({ epoch: gateway.status().epoch, gatewayUrl: host.url, deviceId: params.device.id });
+  });
+  it.each(['agents.files.get', 'agents.files.set'])('fails closed when required native method is absent: %s', async omitted => {
+    const { gateway } = await documents({ methods: ['agents.files.get', 'agents.files.set'].filter(method => method !== omitted) });
+    gateway.start(); await vi.waitFor(() => expect(gateway.status()).toMatchObject({ state: 'unsupported', canEdit: false, epoch: null, reason: 'unsupported' }));
+  });
+  it.each(['', 'fixture', '2026.11.1', '2026.10.99', '2026.11.2-beta.1', '2027.1.0-beta.1', '2026.11', 'v2026.11.2', '2026.011.2'])('rejects unqualified document contract version %j before grant persistence', async version => {
+    const { host, gateway } = await documents({ version }); gateway.start();
+    await vi.waitFor(() => expect(gateway.status()).toMatchObject({ state: 'unsupported', canEdit: false, epoch: null }));
+    expect(devices.readDeviceGrantDetails(host.config.deviceDirectory, host.url, (host.frames[0].params as any).device.id)).toBeUndefined();
+    expect(gateway.connection()).toBeNull(); expect(host.frames).toHaveLength(1);
+  });
+  it.each(['2026.11.2', '2026.11.2+build.1', '2026.11.3', '2026.12.0', '2027.1.0'])('accepts qualified stable document contract version %s', async version => {
+    const { gateway } = await documents({ version }); gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+  });
+  it('invalidates the document management epoch on native configuration changes', async () => {
+    const { host, gateway } = await documents(); gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+    const original = gateway.status().epoch; host.event('config.changed');
+    await vi.waitFor(() => expect(gateway.status().epoch).not.toBe(original));
+  });
+  it('cannot upgrade a cached partial grant or retain unrelated admin authority', async () => {
+    const { host, gateway } = await documents({ scopes: ['operator.read', 'operator.admin', 'operator.write', 'operator.approvals'] });
+    const identity = devices.loadOrCreateDeviceIdentity(host.config.deviceDirectory);
+    devices.writeDeviceGrant(host.config.deviceDirectory, host.url, identity.deviceId, 'partial-document-fixture', ['operator.read']);
+    gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'));
+    expect(host.frames[0].params.scopes).toEqual(['operator.read']); expect(gateway.status().canEdit).toBe(false);
+    expect(devices.readDeviceGrantDetails(host.config.deviceDirectory, host.url, identity.deviceId)?.scopes).toEqual(['operator.read']);
+    await expect(gateway.request('agents.files.get', {})).rejects.toMatchObject({ code: 'document-denied' });
+    expect(host.frames).toHaveLength(1);
+  });
+  it('keeps ordinary, scheduling and document identities, bootstrap secrets and grants separate', async () => {
+    const { host, gateway } = await documents({ methods: ['agents.files.get', 'agents.files.set', 'sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'cron.list', 'cron.get', 'cron.add', 'cron.update'] });
+    const ordinary = createControlGateway(host.control); cleanups.push(() => ordinary.close()); ordinary.start();
+    await vi.waitFor(() => expect(ordinary.status().canRead).toBe(true));
+    const schedules = createScheduleGateway(loadScheduleConfig({ CONTROL_SCHEDULES_MANAGE_ENABLED: 'true', OPENCLAW_SCHEDULES_GATEWAY_TOKEN: 'schedule-bootstrap-fixture' }, host.directory, host.control)); cleanups.push(() => schedules.close()); schedules.start();
+    await vi.waitFor(() => expect(schedules.status().canManage).toBe(true));
+    gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+    const params = host.frames.map(frame => frame.params as any);
+    expect(new Set(params.map(value => value.device.id)).size).toBe(3);
+    expect(params.map(value => value.auth)).toEqual([{ token: 'ordinary-fixture' }, { token: 'schedule-bootstrap-fixture' }, { token: 'document-bootstrap-fixture' }]);
+    expect(params.map(value => value.scopes)).toEqual([['operator.read'], ['operator.read', 'operator.admin'], ['operator.read', 'operator.admin']]);
+    for (const method of ['agents.files.get', 'agents.files.set']) {
+      await expect(ordinary.request(method as any, {})).rejects.toMatchObject({ code: 'scope-required' });
+      await expect(schedules.request(method as any, {})).rejects.toMatchObject({ code: 'schedule-denied' });
+    }
+    const { lstatSync } = await import('node:fs');
+    expect(lstatSync(host.config.deviceDirectory).mode & 0o777).toBe(0o700);
+    expect(lstatSync(join(host.config.deviceDirectory, 'device.json')).mode & 0o777).toBe(0o600);
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'connect', 'connect']);
+  });
+  it('rejects all cross-profile RPC before dispatch', async () => {
+    const { host, gateway } = await documents({ methods: ['agents.files.get', 'agents.files.set', 'cron.add', 'chat.send', 'sessions.list'] });
+    gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+    for (const method of ['cron.add', 'chat.send', 'sessions.list', 'agents.workspace.get', 'connect']) await expect(gateway.request(method as AgentDocumentMethod, {})).rejects.toMatchObject({ code: 'document-denied' });
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect']);
+  });
+  it.each([
+    [{ code: 'INVALID_REQUEST', details: { type: 'agent_file_conflict' } }, 'document-changed'],
+    [{ code: 'FORBIDDEN' }, 'document-denied'],
+    [{ code: 'INVALID_REQUEST' }, 'invalid-request'],
+    [{ code: 'UNAVAILABLE' }, 'document-outcome-unknown'],
+  ])('maps native document errors privately: %j', async (error, code) => {
+    const { host, gateway } = await documents({ onRequest(frame, socket) { if (frame.method !== 'agents.files.set') return; socket.write(encodeDocumentFrame({ type: 'res', id: frame.id, ok: false, error: { ...error, message: 'private-path-content' } })); return true; } });
+    gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+    const failure = await gateway.request('agents.files.set', {}).catch(error => error);
+    expect(failure).toMatchObject({ code }); expect((failure as Error).message).not.toContain('private-path-content');
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'agents.files.set']);
+    if (code === 'document-denied') expect(gateway.status()).toMatchObject({ canEdit: false, epoch: null, reason: 'permission' });
+  });
+  it('classifies post-dispatch cancellation as unknown without replay', async () => {
+    const { host, gateway } = await documents({ onRequest: frame => frame.method === 'agents.files.set' });
+    gateway.start(); await vi.waitFor(() => expect(gateway.status().canEdit).toBe(true));
+    const abort = new AbortController(); const result = gateway.request('agents.files.set', {}, abort.signal).catch(error => error);
+    await vi.waitFor(() => expect(host.frames).toHaveLength(2)); abort.abort();
+    expect(await result).toMatchObject({ code: 'document-outcome-unknown' }); expect(host.frames).toHaveLength(2);
+  });
+});
 afterEach(async () => { vi.useRealTimers(); for (const close of cleanups.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 function encode(value: unknown): Buffer {
   const text = Buffer.from(JSON.stringify(value));

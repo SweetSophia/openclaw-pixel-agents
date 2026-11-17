@@ -55,16 +55,17 @@ try {
   for (const required of ['bin/openclaw-pixel-agents.mjs', 'bin/setup.mjs', 'bin/configure.mjs', 'bin/configure-values.mjs', 'bin/configure-files.mjs', 'scripts/install-notice.mjs', 'dist/client/index.html',
     'dist/server/server/index.js', 'dist/server/shared/characterRecipes.js',
     'shared/agentRoster.cjs', 'dist/server/shared/agentRoster.cjs', 'agents.example.json',
-    'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', 'docs/configuration.md', 'docs/schedules.md', '.env.example',
+    'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', 'docs/configuration.md', 'docs/schedules.md', 'docs/agent-documents.md', '.env.example',
     'collector/.env.collector.example', 'LICENSE', 'README.md']) assert(files.has(required), `Missing ${required}`);
   for (const path of files) {
     assert(!/(^|\/)(data|node_modules|coverage|\.git|\.superpowers|\.worktrees)(\/|$)/.test(path), `Runtime/private path packed: ${path}`);
     assert(!/\.(test|spec)\.|\.map$|(^|\/)\.env($|\.(?!example$|collector\.example$))/.test(path), `Development/private file packed: ${path}`);
-    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|(?:shared|dist\/server\/shared)\/agentRoster\.cjs$|agents\.example\.json$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|schedules|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
+    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|(?:shared|dist\/server\/shared)\/agentRoster\.cjs$|agents\.example\.json$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|schedules|agent-documents|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
   }
   const tarball = join(destination, packed.filename);
   command([npmCli, 'install', '--prefix', consumer, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', `${pkg.name}@file:${tarball}`]);
   const installed = join(consumer, 'node_modules', pkg.name);
+  assert((await readFile(join(installed, 'docs/agent-documents.md'))).length > 0, 'Installed document guide is not readable');
   assert.match(await readFile(join(installed, 'docs/configuration.md'), 'utf8'), /\]\(schedules\.md\)/);
   assert.match(await readFile(join(installed, 'docs/schedules.md'), 'utf8'), /500 records/);
   const sourceRoster = await import(pathToFileURL(join(installed, 'shared/agentRoster.cjs')).href);
@@ -153,15 +154,24 @@ try {
   assert.deepEqual((await agents()).map(({ id, name }) => ({ id, name })), [main, { id: 'researcher', name: 'Research Assistant' }]);
   assert.deepEqual((await observeSocket()).map(({ id, name }) => ({ id, name })), [main, { id: 'researcher', name: 'Research Assistant' }]);
   assert(!existsSync(join(generated.DATA_DIR, 'control-schedules')), 'Default-off packaged startup created scheduling state');
+  assert(!existsSync(join(generated.DATA_DIR, 'control-documents')), 'Default-off packaged startup created document identity');
   await stop();
   for (const scheduling of [{}, { CONTROL_SCHEDULES_MANAGE_ENABLED: 'true' }]) {
     await start({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:9', PIXEL_CONTROL_TOKEN: firstKey,
-      OPENCLAW_SCHEDULES_GATEWAY_TOKEN: secondKey, ...scheduling });
+      OPENCLAW_SCHEDULES_GATEWAY_TOKEN: secondKey, OPENCLAW_DOCUMENTS_GATEWAY_TOKEN: secondKey, ...scheduling });
     const recovery = await fetch(`${origin}/api/control/agents/main/schedules/operations`, { headers: { Authorization: `Bearer ${firstKey}` } });
     assert.equal(recovery.status, 200); assert.deepEqual(await recovery.json(), { agentId: 'main', operations: [] });
     assert(!existsSync(join(generated.DATA_DIR, 'control-schedules')), 'Startup/recovery read paired scheduling without an authenticated native browse');
+    const documents = await fetch(`${origin}/api/control/agents/main/documents/status`, { headers: { Authorization: `Bearer ${firstKey}` } });
+    assert.equal(documents.status, 200); assert.deepEqual(await documents.json(), { configured: false, state: 'disabled', canEdit: false, epoch: null, reason: 'disabled' });
+    assert(!existsSync(join(generated.DATA_DIR, 'control-documents')), 'Default-off document status created identity despite separate bootstrap credentials');
     await stop();
   }
+  await start({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:9', PIXEL_CONTROL_TOKEN: firstKey,
+    OPENCLAW_DOCUMENTS_GATEWAY_TOKEN: secondKey, CONTROL_DOCUMENTS_EDIT_ENABLED: 'true' });
+  assert.equal((await fetch(`${origin}/api/control/status`, { headers: { Authorization: `Bearer ${firstKey}` } })).status, 200);
+  assert(!existsSync(join(generated.DATA_DIR, 'control-documents')), 'Enabled document profile connected before explicit authenticated document access');
+  await stop();
   await start();
   const recipe = { bodyIndex: 4, hairIndex: 3, outfitIndex: 5 };
   assert.equal((await fetch(`${origin}/api/agents/main/recipe`, { method: 'PUT',

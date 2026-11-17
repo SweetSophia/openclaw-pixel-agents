@@ -1,6 +1,8 @@
 import { createPublicKey, randomUUID, sign } from 'node:crypto';
 import { controlRecord, type ControlGatewayState, type ControlStatus } from '../../shared/control';
 import type { ScheduleManagement } from '../../shared/controlSchedules';
+import { AGENT_DOCUMENT_MIN_GATEWAY_VERSION, type AgentDocumentManagement } from '../../shared/controlAgentDocuments';
+import type { AgentDocumentConfig } from './agentDocumentConfig';
 import type { ControlConfig } from './config';
 import type { ScheduleConfig } from './scheduleConfig';
 import { loadOrCreateDeviceIdentity, readDeviceGrantDetails, writeDeviceGrant, type DeviceGrant } from './deviceIdentity';
@@ -19,11 +21,13 @@ const MODEL_METHODS = ['models.list', 'sessions.patch'] as const;
 const SCHEDULE_READ_METHODS = ['cron.list', 'cron.get'] as const;
 const SCHEDULE_METHODS = [...SCHEDULE_READ_METHODS, 'cron.add', 'cron.update'] as const;
 const SCHEDULE_SCOPES = ['operator.read', 'operator.admin'];
+const DOCUMENT_METHODS = ['agents.files.get', 'agents.files.set'] as const;
+export type AgentDocumentMethod = typeof DOCUMENT_METHODS[number];
 export type ScheduleMethod = typeof SCHEDULE_METHODS[number];
 export type ControlMethod = typeof READ_METHODS[number] | typeof WRITE_METHODS[number] | typeof STOP_METHOD | typeof STREAM_METHODS[number] | typeof ARTIFACT_METHODS[number] | typeof WORKSPACE_METHODS[number] | typeof USAGE_METHODS[number] | typeof HISTORY_METHODS[number] | typeof APPROVAL_METHODS[number] | typeof MODEL_METHODS[number] | typeof SCHEDULE_READ_METHODS[number];
 export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
-  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable' | 'model-denied' | 'model-busy' | 'schedule-changed' | 'schedule-denied' | 'schedule-outcome-unknown') { super('Task source request rejected'); }
+  constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable' | 'model-denied' | 'model-busy' | 'schedule-changed' | 'schedule-denied' | 'schedule-outcome-unknown' | 'document-changed' | 'document-denied' | 'document-outcome-unknown') { super('Task source request rejected'); }
 }
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
@@ -37,10 +41,24 @@ export interface ScheduleGateway {
   connection(): { epoch: string; gatewayUrl: string; deviceId: string } | null;
   request(method: ScheduleMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 }
-type GatewayMethod = ControlMethod | ScheduleMethod;
-type GatewayProfile = { kind: 'control'; config: ControlConfig } | { kind: 'schedules'; config: ScheduleConfig };
+export interface AgentDocumentGateway {
+  start(): void; close(): void; status(): AgentDocumentManagement;
+  connection(): { epoch: string; gatewayUrl: string; deviceId: string } | null;
+  onEvent(listener: (event: GatewayEvent) => void): () => void;
+  request(method: AgentDocumentMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+}
+type GatewayMethod = ControlMethod | ScheduleMethod | AgentDocumentMethod;
+type GatewayProfile = { kind: 'control'; config: ControlConfig } | { kind: 'schedules'; config: ScheduleConfig } | { kind: 'documents'; config: AgentDocumentConfig };
 interface Pending { method: GatewayMethod; approval: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
+function supportsDocumentPreconditions(version: string): boolean {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
+  if (!match) return false;
+  const parts = match.slice(1, 4).map(Number); if (!parts.every(Number.isSafeInteger)) return false;
+  const minimum = AGENT_DOCUMENT_MIN_GATEWAY_VERSION.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (parts[i] !== minimum[i]) return parts[i] > minimum[i];
+  return true;
+}
 function retryHintDelay(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return 0;
   // Native hints select a fixed policy delay, never an arbitrary timer duration.
@@ -57,10 +75,16 @@ export function createScheduleGateway(config: ScheduleConfig): ScheduleGateway {
   const gateway = createSignedGateway({ kind: 'schedules', config });
   return { start: gateway.start, close: gateway.close, status: gateway.scheduleStatus, connection: gateway.scheduleConnection, request: gateway.request };
 }
+export function createAgentDocumentGateway(config: AgentDocumentConfig): AgentDocumentGateway {
+  const gateway = createSignedGateway({ kind: 'documents', config });
+  return { start: gateway.start, close: gateway.close, status: gateway.documentStatus, connection: gateway.scheduleConnection, onEvent: gateway.onEvent, request: gateway.request };
+}
 function createSignedGateway(profile: GatewayProfile) {
   const config = profile.config;
   const control = profile.kind === 'control' ? profile.config : undefined;
   const scheduling = profile.kind === 'schedules';
+  const documents = profile.kind === 'documents';
+  const management = scheduling || documents;
   let state: ControlGatewayState = config.enabled ? 'unavailable' : 'disabled';
   let socket: WebSocket | undefined; let generation = 0; let stopped = false; let retry = 0; let sequence: number | undefined; let writeGranted = false;
   let negotiatedMethods: string[] = [];
@@ -75,7 +99,7 @@ function createSignedGateway(profile: GatewayProfile) {
   const pending = new Map<string, Pending>(); const listeners = new Set<(event: GatewayEvent) => void>();
   const emit = (event: GatewayEvent) => { for (const listener of listeners) listener(event); };
   function rejectPending(message: string): void {
-    for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(scheduling && isScheduleMutation(item.method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message)); }
+    for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(documents && item.method === 'agents.files.set' ? new GatewayRequestError('document-outcome-unknown') : scheduling && isScheduleMutation(item.method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message)); }
     pending.clear();
   }
   function fail(next: ControlGatewayState, retryable = false, retryAfterMs?: unknown): void {
@@ -105,7 +129,7 @@ function createSignedGateway(profile: GatewayProfile) {
     let connectId: string | undefined;
     const readOnlyFallback = !config.token && !config.password && cached?.scopes.includes('operator.read') && !cached.scopes.includes('operator.write');
     // Cached scheduling grants bound authority even when bootstrap secrets remain configured.
-    const scopes = scheduling
+    const scopes = management
       ? cached ? SCHEDULE_SCOPES.filter(scope => cached.scopes.includes(scope)) : [...SCHEDULE_SCOPES]
       : control?.sendEnabled && !readOnlyFallback ? ['operator.read', 'operator.write'] : ['operator.read'];
     // Device-only reconnects keep their existing grant; opt-in never silently upgrades it.
@@ -131,8 +155,8 @@ function createSignedGateway(profile: GatewayProfile) {
           const payload = ['v3', identity.deviceId, 'cli', 'backend', 'operator', scopes.join(','), String(challenge.ts), signatureToken ?? '', challenge.nonce, platform, ''].join('|');
           connectId = randomUUID();
           ws.send(JSON.stringify({ type: 'req', id: connectId, method: 'connect', params: {
-            minProtocol: 4, maxProtocol: 4, client: { id: 'cli', displayName: scheduling ? 'Pixel Agents scheduling management' : 'Pixel Agents task details', mode: 'backend', version: '1', platform },
-            role: 'operator', scopes, caps: scheduling ? [] : ['model-selection-policy'],
+            minProtocol: 4, maxProtocol: 4, client: { id: 'cli', displayName: documents ? 'Pixel Agents document editing' : scheduling ? 'Pixel Agents scheduling management' : 'Pixel Agents task details', mode: 'backend', version: '1', platform },
+            role: 'operator', scopes, caps: management ? [] : ['model-selection-policy'],
             auth: { token: config.token || undefined, password: config.password || undefined, deviceToken: !config.token && !config.password ? storedToken : undefined },
             device: { id: identity.deviceId, publicKey: createPublicKey(identity.publicKeyPem).export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64url'),
               signature: sign(null, Buffer.from(payload), identity.privateKeyPem).toString('base64url'), signedAt: challenge.ts, nonce: challenge.nonce },
@@ -143,6 +167,7 @@ function createSignedGateway(profile: GatewayProfile) {
           if (!Number.isSafeInteger(frame.seq) || (frame.seq as number) < 0 || (sequence !== undefined && frame.seq !== sequence + 1)) { fail('unavailable', true); return; }
           sequence = frame.seq as number;
         }
+        if (documents && frame.event === 'config.changed' && manageGranted) epoch = randomUUID();
         emit({ event: frame.event, payload: frame.payload, ...(sequence === undefined ? {} : { seq: sequence }) }); return;
       }
       if (frame.type !== 'res' || typeof frame.id !== 'string' || typeof frame.ok !== 'boolean') { fail('unsupported'); return; }
@@ -158,9 +183,10 @@ function createSignedGateway(profile: GatewayProfile) {
         const features = controlRecord(hello?.features); const policy = controlRecord(hello?.policy); const server = controlRecord(hello?.server);
         const methods = features?.methods; const grants = auth?.scopes;
         if (!hello || hello.type !== 'hello-ok' || hello.protocol !== 4 || !server || typeof server.version !== 'string'
+          || (documents && !supportsDocumentPreconditions(server.version))
           || typeof server.connId !== 'string' || !controlRecord(hello.snapshot) || !policy || typeof policy.tickIntervalMs !== 'number'
           || policy.tickIntervalMs <= 0 || typeof policy.maxPayload !== 'number' || typeof policy.maxBufferedBytes !== 'number'
-          || !features || !Array.isArray(methods) || !(scheduling ? SCHEDULE_METHODS : READ_METHODS).every(method => methods.includes(method))
+          || !features || !Array.isArray(methods) || !(documents ? DOCUMENT_METHODS : scheduling ? SCHEDULE_METHODS : READ_METHODS).every(method => methods.includes(method))
           || !Array.isArray(features.events)) { fail('unsupported'); return; }
         if (!auth || auth.role !== 'operator' || !Array.isArray(grants) || !grants.includes('operator.read')) { fail('auth-error'); return; }
         writeScopeGranted = Boolean(control?.sendEnabled && scopes.includes('operator.write') && grants.includes('operator.write'));
@@ -171,10 +197,10 @@ function createSignedGateway(profile: GatewayProfile) {
         approvalsGranted = approvalScopeGranted && [...APPROVAL_METHODS, ...STREAM_METHODS].every(method => methods.includes(method));
         negotiatedMethods = methods.filter((method): method is string => typeof method === 'string');
         connectionId = server.connId.length > 0 && server.connId.length <= 256 && !/[\u0000-\u001f\u007f]/.test(server.connId) ? server.connId : undefined;
-        manageGranted = scheduling && SCHEDULE_SCOPES.every(scope => scopes.includes(scope) && grants.includes(scope));
+        manageGranted = management && SCHEDULE_SCOPES.every(scope => scopes.includes(scope) && grants.includes(scope));
         if (typeof auth.deviceToken === 'string' && auth.deviceToken.length > 0 && auth.deviceToken.length <= 16384) {
-          const actualScopes = (scheduling ? SCHEDULE_SCOPES : ['operator.read', 'operator.write', 'operator.approvals']).filter(scope => grants.includes(scope) && (!scheduling || scopes.includes(scope)));
-          const retainedScopes = !scheduling && cached?.token === auth.deviceToken ? [...new Set([...cached.scopes, ...actualScopes])] : actualScopes;
+          const actualScopes = (management ? SCHEDULE_SCOPES : ['operator.read', 'operator.write', 'operator.approvals']).filter(scope => grants.includes(scope) && (!management || scopes.includes(scope)));
+          const retainedScopes = !management && cached?.token === auth.deviceToken ? [...new Set([...cached.scopes, ...actualScopes])] : actualScopes;
           // A rotated token may immediately invalidate the old disk token. Keep it for safe I/O retries.
           memoryGrant = { deviceId: identity.deviceId, endpoint: config.url!, token: auth.deviceToken, scopes: retainedScopes };
           try { writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, memoryGrant.token, memoryGrant.scopes); }
@@ -188,6 +214,13 @@ function createSignedGateway(profile: GatewayProfile) {
       if (frame.ok) item.resolve(frame.payload);
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
+        if (documents) {
+          const code = error?.code === 'FORBIDDEN' ? 'document-denied'
+            : error?.code === 'INVALID_REQUEST' && details?.type === 'agent_file_conflict' ? 'document-changed'
+              : error?.code === 'INVALID_REQUEST' ? 'invalid-request' : item.method === 'agents.files.set' ? 'document-outcome-unknown' : 'unavailable';
+          if (code === 'document-denied') fail('auth-error');
+          item.reject(new GatewayRequestError(code)); return;
+        }
         if ((SCHEDULE_METHODS as readonly string[]).includes(item.method)) {
           const code = error?.code === 'CRON_JOB_CHANGED' || details?.code === 'CRON_JOB_CHANGED' ? 'schedule-changed'
             : error?.code === 'FORBIDDEN' ? 'schedule-denied' : error?.code === 'INVALID_REQUEST' ? 'invalid-request'
@@ -239,12 +272,15 @@ function createSignedGateway(profile: GatewayProfile) {
         disabledReason: unsupported ? 'unsupported' : !writeScopeGranted || modelAdminGranted ? 'permission' : null };
     },
     scheduleStatus: (): ScheduleManagement => ({ configured: config.enabled, state, canManage: state === 'ready' && manageGranted && epoch !== null, epoch, reason: scheduleReason }),
+    documentStatus: (): AgentDocumentManagement => ({ configured: config.enabled, state, canEdit: state === 'ready' && manageGranted && epoch !== null, epoch, reason: state === 'connecting' ? 'unavailable' : scheduleReason }),
     scheduleConnection: () => state === 'ready' && manageGranted && epoch && deviceId && socket?.readyState === WebSocket.OPEN && config.url
       ? { epoch, gatewayUrl: config.url, deviceId } : null,
     request(method: GatewayMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+      if (documents && !(DOCUMENT_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('document-denied'));
       if (scheduling && !(SCHEDULE_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('schedule-denied'));
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
       if (scheduling && !manageGranted) return Promise.reject(new GatewayRequestError('schedule-denied'));
+      if (documents && !manageGranted) return Promise.reject(new GatewayRequestError('document-denied'));
       const model = (MODEL_METHODS as readonly string[]).includes(method);
       if (method === 'sessions.patch' && (!writeScopeGranted || modelAdminGranted)) return Promise.reject(new GatewayRequestError('model-denied'));
       if (model && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
@@ -261,7 +297,7 @@ function createSignedGateway(profile: GatewayProfile) {
       if ((artifact || workspace || history || scheduleRead) && !negotiatedMethods.includes(method)) return Promise.reject(new GatewayRequestError('unsupported'));
       // OpenClaw's read-scoped compatibility usage method is deliberately unadvertised.
       // Keep this one allowlisted probe optional and normalize an unsupported contract.
-      const allowed = scheduling || scheduleRead || (READ_METHODS as readonly string[]).includes(method)
+      const allowed = documents || scheduling || scheduleRead || (READ_METHODS as readonly string[]).includes(method)
         || artifact || workspace || usage || history || model || (approval && approvalsGranted) || (method === STOP_METHOD && stopGranted)
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
@@ -270,7 +306,7 @@ function createSignedGateway(profile: GatewayProfile) {
       if (pending.size >= 8) return Promise.reject(Error('Too many pending task requests'));
       return new Promise((resolve, reject) => {
         const id = randomUUID();
-        const uncertain = (message: string) => scheduling && isScheduleMutation(method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message);
+        const uncertain = (message: string) => documents && method === 'agents.files.set' ? new GatewayRequestError('document-outcome-unknown') : scheduling && isScheduleMutation(method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message);
         const cancel = () => { const item = pending.get(id); if (!item) return; clearTimeout(item.timer); item.cleanup(); pending.delete(id); reject(uncertain('Task request cancelled')); };
         const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(uncertain('Task request timed out')); }, 5000);
         const cleanup = () => signal?.removeEventListener('abort', cancel);

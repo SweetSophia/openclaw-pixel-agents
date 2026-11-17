@@ -3,6 +3,7 @@ import { WORKSPACE_LIMITS, isWorkspacePath, workspaceFileLimit } from '../../sha
 import { useWorkspace } from '../control/useWorkspace';
 import { ControlApiError } from '../control/api';
 import { ControlAccessPanel } from './ControlAccessPanel';
+import { AgentDocuments } from './AgentDocuments';
 import './AgentWorkspace.css';
 
 function workspaceError(error: ControlApiError | null): string | undefined {
@@ -16,7 +17,10 @@ function workspaceError(error: ControlApiError | null): string | undefined {
   return error.message;
 }
 function size(value: number): string { return value < 1024 ? `${value} B` : value < 1048576 ? `${(value / 1024).toFixed(1)} KiB` : `${(value / 1048576).toFixed(1)} MiB`; }
-export function AgentWorkspace({ agentId, active }: { agentId: string; active: boolean }) {
+export function AgentWorkspace({ agentId, active, onDocumentDirtyChange, documentResetKey, historical, onReturnToLive }: {
+  agentId: string; active: boolean; onDocumentDirtyChange?: (dirty: boolean) => void; documentResetKey?: number;
+  historical?: boolean; onReturnToLive?: () => void;
+}) {
   const workspace = useWorkspace({ agentId, active }); const page = workspace.page;
   const previewRef = useRef<HTMLElement>(null);
   type Trigger = { path: string; element: HTMLButtonElement };
@@ -44,6 +48,7 @@ export function AgentWorkspace({ agentId, active }: { agentId: string; active: b
   return <ControlAccessPanel active={active} loading={workspace.loading} allowRefreshWhileLoading onRefresh={workspace.refresh} error={workspaceError(workspace.error)}>
     <section className="agent-workspace" aria-label="Agent workspace">
       <h3>Workspace</h3><p className="task-muted">Read-only files for this agent. Files may belong to any conversation.</p>
+      <AgentDocuments key={documentResetKey} agentId={agentId} active={active} onDirtyChange={onDocumentDirtyChange} historical={historical} onReturnToLive={onReturnToLive} />
       <p role="status" aria-label="Preview status" className="task-muted workspace-preview-status">{workspace.preview ? `Preview ready: ${workspace.preview.name}` : ''}</p>
       <nav className="workspace-breadcrumbs" aria-label="Workspace folders">
         <button ref={rootRef} type="button" aria-label="Workspace root" onClick={() => workspace.navigate('')}>Workspace root</button>
