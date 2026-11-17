@@ -2,7 +2,7 @@
 
 Date: 2026-11-17
 
-Status: proposed design, pending user approval. The user selected the native single-image approach after contract qualification. That selection does not approve the detailed choices below, a live grant, activation, deployment, release, or publication. No feature implementation is included in this document.
+Status: approved by the user on 2026-11-17, including the detailed choices below. The implementation plan and execution handoff are the next gate. No live grant, activation, deployment, release, or publication is authorized; no feature implementation is included in this document.
 
 ## Intent and scope
 
@@ -20,7 +20,7 @@ This is a cross-boundary feature, not a file-picker-only change. It touches priv
 | Stage with `terminal.upload`, then send a path | Not selected. Requires admin authority and an existing terminal; its temporary path is not a general agent-workspace destination or a supported reference-only chat attachment. |
 | Write directly into the agent workspace | Deferred. `sessions.files.set` updates existing UTF-8 files, not new binary files. An internal MCP-form workspace-upload provider has form-specific authority; it is not a qualified general operator upload RPC. No local-filesystem, shell, tool-call or generic RPC fallback. |
 
-The coordinator proposes a **prepare, review, confirm** adapter within the selected native approach. Preparation freezes bytes and target without native upload or task creation. Confirmation admits at most one native send attempt for that preparation. This avoids reusing the text sender's resend-oriented recovery and needs no durable image store.
+The approved approach uses a **prepare, review, confirm** adapter. Preparation freezes bytes and target without native upload or task creation. Confirmation admits at most one native send attempt for that preparation. This avoids reusing the text sender's resend-oriented recovery and needs no durable image store.
 
 ## Authority and compatibility
 
@@ -31,9 +31,9 @@ The coordinator proposes a **prepare, review, confirm** adapter within the selec
 - Advertised byte ceilings do not prove `gateway.uploads.enabled`, model image support or current authorization. Native upload policy remains authoritative at dispatch. Normalize a policy denial to attachment-specific copy without locking otherwise valid private reads or proposing broader grants.
 - Preserve secure transport, exact Origin checks, office-key authentication, mutation limits and the existing actual-socket Tailnet exception. The shared office key represents trusted operators, not per-user RBAC.
 
-## Proposed first-slice limits
+## Approved first-slice limits
 
-These are coordinator choices to approve, not existing product behavior:
+These coordinator choices are approved requirements, not existing product behavior:
 
 | Boundary | Limit |
 | --- | --- |
@@ -175,8 +175,8 @@ Use test-driven, thin implementation slices. These are acceptance requirements, 
 
 Within these contracts, the builder may choose module internals, narrow reusable helpers, status/error type names, CSS arrangement and fixture structure. Keep the existing React/TypeScript/Express stack. Do not broaden formats, delivery modes, permissions, storage or retry semantics as an implementation convenience.
 
-Coordinator choices needing approval are the 4 MiB/single-image and dimension caps, existing-follow-up-plus-text restriction, metadata-only local review, prepare/confirm with short memory-only tokens, and fail-closed unknown-outcome behavior. These are proposals, not previously agreed details.
+Approved coordinator choices are the 4 MiB/single-image and dimension caps, existing-follow-up-plus-text restriction, metadata-only local review, prepare/confirm with short memory-only tokens, and fail-closed unknown-outcome behavior.
 
-Next gate: independent builder check, then user approval of this design. Only after approval write the implementation plan. Source implementation, GitHub publication/merge, live activation, permission changes and releases remain distinct steps; this document authorizes none of those operational actions by itself.
+Next gate: self-reviewed implementation plan and user execution handoff. Source implementation, GitHub publication/merge, live activation, permission changes and releases remain distinct steps; this document authorizes none of those operational actions by itself.
 
-Builder check: an independent fresh-context software-engineer reviewer read the draft on 2026-11-17 and reported "nothing important left" to answer before planning. The reviewer checked the subsequent separate 30-second native deadline and native/office base64 strictness clarification and again reported no consequential unanswered question. User approval is still pending.
+Builder check: an independent fresh-context software-engineer reviewer read the draft on 2026-11-17 and reported "nothing important left" to answer before planning. The reviewer checked the subsequent separate 30-second native deadline and native/office base64 strictness clarification and again reported no consequential unanswered question. The user subsequently approved this design.
