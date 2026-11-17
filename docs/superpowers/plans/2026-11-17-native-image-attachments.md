@@ -224,7 +224,7 @@ Plan self-review completed by the coordinator on 2026-11-17, not delegated: auth
 
 - [x] Task 1: contracts/image/config — `272feef`; focused/types/full 2,585 tests pass, independent task review approved. Baseline focus/noise and development audit remain separately tracked.
 - [x] Task 2: native capability/transport — `3fe583c`; 163 focused tests, typecheck and full 2,650 tests pass; independent task review approved. Existing noise/audit remain separate gates.
-- [ ] Task 3: bounded authority/leases — independent test cycle and chosen review complete.
+- [x] Task 3: bounded authority/leases — `ee5214a` + `bb3f364`; initial full 2,673 tests, fix 30 focused tests/types pass; independent scoped review closed all three lifecycle/identity findings.
 - [ ] Task 4: exact-target service/receipts — independent test cycle and chosen review complete.
 - [ ] Task 5: authenticated ingress/runtime — independent test cycle and chosen review complete.
 - [ ] Task 6: private hook/uncertainty — independent test cycle and chosen review complete.
