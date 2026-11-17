@@ -49,6 +49,18 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
   const closeRef = useRef<HTMLButtonElement>(null);
   const headingId = useId();
   const [tab, setTab] = useState<typeof detailTabs[number]>('task');
+  const [documentDirty, setDocumentDirty] = useState(false);
+  const [documentResetKey, setDocumentResetKey] = useState(0);
+  const canDiscardDocument = () => !documentDirty || window.confirm('Discard unsaved document changes? This cannot be undone.');
+  const closeDetails = () => { if (canDiscardDocument()) onClose(); };
+  const changeTab = (next: typeof detailTabs[number]) => {
+    if (next === tab) return true;
+    if (tab === 'workspace' && documentDirty) {
+      if (!canDiscardDocument()) return false;
+      setDocumentResetKey(value => value + 1); setDocumentDirty(false);
+    }
+    setTab(next); return true;
+  };
   const tabsId = useId();
   const access = useControlAccess();
   const drafts = useConversationDrafts();
@@ -70,7 +82,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
     onSelect={runId => { if (runId && details.selected) setRunSelection({ agentId: agent.id, target: targetIdentity(details.selected), runId }); else setRunSelection(null); }}
     onRefresh={() => { void history.refresh(); }} onEarlier={() => { void history.loadEarlier(); }} />;
 
-  useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose });
+  useModalFocus({ overlayRef, initialFocusRef: closeRef, onClose: closeDetails });
 
   const lastActivityDate = agent.lastActivity
     ? new Date(agent.lastActivity).toLocaleTimeString()
@@ -81,7 +93,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
     : null;
 
   return createPortal(
-    <div className="detail-overlay" onClick={onClose} ref={overlayRef} tabIndex={-1}>
+    <div className="detail-overlay" onClick={closeDetails} ref={overlayRef} tabIndex={-1}>
       <div
         className="detail-panel"
         role="dialog"
@@ -94,7 +106,7 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           type="button"
           className="detail-close"
           aria-label={`Close details for ${agent.name}`}
-          onClick={onClose}
+          onClick={closeDetails}
         >
           ✕
         </button>
@@ -116,9 +128,9 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
         <div className="detail-tabs" role="tablist" aria-label="Agent details">
           {detailTabs.map((name, index) => <button key={name} type="button" role="tab" id={`${tabsId}-${name}-tab`}
             aria-selected={tab === name} aria-controls={`${tabsId}-${name}-panel`} tabIndex={tab === name ? 0 : -1}
-            onClick={() => setTab(name)} onKeyDown={event => {
+            onClick={() => changeTab(name)} onKeyDown={event => {
               const position = event.key === 'Home' ? 0 : event.key === 'End' ? detailTabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % detailTabs.length : event.key === 'ArrowLeft' ? (index + detailTabs.length - 1) % detailTabs.length : -1;
-              if (position < 0) return; event.preventDefault(); const next = detailTabs[position]; setTab(next); document.getElementById(`${tabsId}-${next}-tab`)?.focus();
+              if (position < 0) return; event.preventDefault(); const next = detailTabs[position]; if (changeTab(next)) document.getElementById(`${tabsId}-${next}-tab`)?.focus();
             }}>{name.charAt(0).toUpperCase() + name.slice(1)}</button>)}
         </div>
         <div role="tabpanel" id={`${tabsId}-task-panel`} aria-labelledby={`${tabsId}-task-tab`} hidden={tab !== 'task'}>
@@ -136,7 +148,8 @@ export const AgentDetailPanel: React.FC<Props> = ({ agent, onClose }) => {
           </TaskDetailsView>
         </div>
         <div role="tabpanel" id={`${tabsId}-workspace-panel`} aria-labelledby={`${tabsId}-workspace-tab`} hidden={tab !== 'workspace'}>
-          <AgentWorkspace agentId={agent.id} active={tab === 'workspace'} />
+          <AgentWorkspace agentId={agent.id} active={tab === 'workspace'} onDocumentDirtyChange={setDocumentDirty} documentResetKey={documentResetKey}
+            historical={historical} onReturnToLive={() => setRunSelection(null)} />
         </div>
         <div role="tabpanel" id={`${tabsId}-usage-panel`} aria-labelledby={`${tabsId}-usage-tab`} hidden={tab !== 'usage'}>
           <TaskDetailsView agentId={agent.id} active={tab === 'usage'} state={displayDetails} runNavigation={runNavigation} historical={!!selectedRunId}>
