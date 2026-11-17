@@ -5,6 +5,7 @@ import { AgentDocuments } from './AgentDocuments';
 import { AgentDetailPanel } from './AgentDetailPanel';
 import { AgentWorkspace } from './AgentWorkspace';
 import type { AgentState } from '../../shared/types';
+import { ControlApiError } from '../control/api';
 
 const access = vi.hoisted(() => ({ request: vi.fn(), requestFile: vi.fn(), lock: vi.fn(), unlock: vi.fn(), state: 'unlocked', generation: 1,
   status: { configured: true, state: 'ready', canRead: true, canSend: false } }));
@@ -81,6 +82,31 @@ it('discards after accepted tab navigation without remounting ordinary Workspace
   vi.mocked(window.confirm).mockReturnValue(true); fireEvent.click(screen.getByRole('tab', { name: 'Agent' }));
   fireEvent.click(screen.getByRole('tab', { name: 'Workspace' })); expect(screen.queryByRole('textbox')).toBeNull();
   expect(screen.getByRole('button', { name: 'Agent documents' })).toHaveAttribute('aria-expanded', 'false');
+});
+it('the real parent retains dirty consent without unknown-write guidance after a failed save preflight', async () => {
+  const close = vi.fn(); render(<AgentDetailPanel agent={agent} onClose={close} />);
+  fireEvent.click(screen.getByRole('tab', { name: 'Workspace' })); const textarea = await edit();
+  const originalRequest = access.request.getMockImplementation()!;
+  access.request.mockImplementation((path, init) => path.endsWith('/documents/status') ? Promise.reject(new ControlApiError()) : originalRequest(path, init));
+  fireEvent.click(screen.getByRole('button', { name: 'Save document' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save document' })).toBeDisabled());
+  expect(screen.getByRole('alert')).not.toHaveTextContent(/unknown|replay this submission/i);
+  expect(textarea).toHaveValue('é draft'); expect(screen.getByText(/8 \/ 32768 bytes · Unsaved changes/)).toBeVisible();
+  expect(screen.getByText(/Reload and review the current document before another save/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Reload and review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close details for Cylena' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Agent' }));
+  expect(window.confirm).toHaveBeenCalledTimes(3); expect(close).not.toHaveBeenCalled(); expect(textarea).toHaveValue('é draft');
+  expect(screen.getByRole('tab', { name: 'Workspace' })).toHaveAttribute('aria-selected', 'true');
+  const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+  access.request.mockImplementation(originalRequest); fireEvent.click(screen.getByRole('button', { name: 'Check document access' }));
+  await waitFor(() => expect(screen.getByText(/Ready — select an existing document/)).toBeVisible());
+  expect(screen.getByRole('button', { name: 'Save document' })).toBeDisabled();
+  expect(access.request.mock.calls.filter(([path]) => path.endsWith('/documents/save'))).toHaveLength(0);
+  vi.mocked(window.confirm).mockReturnValue(true); fireEvent.click(screen.getByRole('button', { name: 'Reload and review' }));
+  await waitFor(() => expect(textarea).toHaveValue(''));
+  expect(screen.queryByText(/Unsaved changes/)).toBeNull();
+  expect(access.request.mock.calls.filter(([path]) => path.endsWith('/documents/save'))).toHaveLength(0);
 });
 it('the real parent protects an unsaved undo after a different submitted version is acknowledged', async () => {
   const close = vi.fn(); const originalRequest = access.request.getMockImplementation()!;

@@ -72,6 +72,42 @@ it.each(['conflict', 'unknown', 'transport', 'malformed'])('retains text and for
   await act(() => result.current.save()); expect(result.current.draft).toBe('new draft'); expect(result.current.dirty).toBe(true); expect(result.current.canSave).toBe(false);
   const count = access.request.mock.calls.length; await act(() => result.current.save()); expect(access.request).toHaveBeenCalledTimes(count);
 });
+it.each(['transport', 'malformed', 'permission', 'epoch'])('does not claim an unknown write when save preflight fails on %s', async reason => {
+  const { result } = await selected(); act(() => result.current.setDraft('private preflight draft'));
+  access.request.mockImplementation(async path => {
+    if (!path.endsWith('/status')) throw Error('preflight must prevent document requests');
+    if (reason === 'transport') throw new ControlApiError();
+    if (reason === 'malformed') return { ...management, epoch: null };
+    if (reason === 'permission') return { configured: true, state: 'auth-error', canEdit: false, epoch: null, reason: 'permission' };
+    return { ...management, epoch: 'epoch-2' };
+  });
+  await act(() => result.current.save());
+  expect(access.request.mock.calls.filter(([path]) => path.endsWith('/save'))).toHaveLength(0);
+  expect(result.current.draft).toBe('private preflight draft'); expect(result.current.dirty).toBe(true);
+  expect(result.current.saving).toBe(false); expect(result.current.saveNeedsReview).toBe(false);
+  expect(result.current.epoch).toBeNull(); expect(result.current.canSave).toBe(false); expect(result.current.receipt).toBeNull();
+  expect(result.current.error?.code).toBe(reason === 'transport' ? 'unavailable' : reason === 'malformed' ? 'invalid-source' : undefined);
+  access.request.mockResolvedValue(management);
+  await act(() => result.current.refreshManagement());
+  expect(result.current.management?.canEdit).toBe(true); expect(result.current.epoch).toBeNull(); expect(result.current.canSave).toBe(false);
+  const count = access.request.mock.calls.length; await act(() => result.current.save()); expect(access.request).toHaveBeenCalledTimes(count);
+});
+it('retains a draft without unknown-write guidance when hidden during pending save preflight', async () => {
+  const { result } = await selected(); act(() => result.current.setDraft('private preflight draft'));
+  let release!: (value: unknown) => void;
+  access.request.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  let pending!: Promise<void>; act(() => { pending = result.current.save(); });
+  expect(result.current.saving).toBe(true); expect(result.current.saveNeedsReview).toBe(false);
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')); release(management); await pending; });
+  expect(access.request.mock.calls.filter(([path]) => path.endsWith('/save'))).toHaveLength(0);
+  expect(result.current.draft).toBe('private preflight draft'); expect(result.current.dirty).toBe(true);
+  expect(result.current.saving).toBe(false); expect(result.current.saveNeedsReview).toBe(false); expect(result.current.error).toBeNull();
+  visibility.mockReturnValue('visible'); access.request.mockResolvedValue(management);
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+  expect(result.current.management?.canEdit).toBe(true); expect(result.current.epoch).toBeNull(); expect(result.current.canSave).toBe(false);
+  const count = access.request.mock.calls.length; await act(() => result.current.save()); expect(access.request).toHaveBeenCalledTimes(count);
+});
 it.each(['hidden', 'inactive', 'unavailable', 'epoch'])('retains draft but invalidates its revision on %s', async reason => {
   const { result, rerender } = await selected(); act(() => result.current.setDraft('private draft'));
   if (reason === 'hidden') act(() => { vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden'); document.dispatchEvent(new Event('visibilitychange')); });

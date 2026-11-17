@@ -42,15 +42,16 @@ These checks are **optimistic**, not cross-process atomic compare-and-swap again
 | State | Safe response |
 | --- | --- |
 | Saved and verified | The exact submitted text was acknowledged. Review any newer unsaved draft separately. |
+| Save preflight failed / source invalidated before submission | No Save request was attempted, so this is not an unknown write outcome. Your draft remains, but Save authority is invalidated. Restore readiness, then explicitly **Reload and review** with discard consent; do not blindly retry with a new operation identity. |
 | Conflict / changed document | Your draft remains. Explicitly **Reload and review** the current file before another edit/save; no force overwrite or silent rebase. |
-| Outcome unknown | A lost, timed-out, canceled, malformed or post-acknowledgement connection failure may follow a committed write. **Do not resubmit or recreate the operation to retry.** Save remains disabled. Explicitly reload/review native truth before deciding on a new edit. Unknown is not confirmed failure. |
+| Outcome unknown after submission was attempted | A lost, timed-out, canceled, malformed or post-acknowledgement connection failure may follow a committed write. **Do not resubmit or recreate the operation to retry.** Save remains disabled. Explicitly reload/review native truth before deciding on a new edit. Unknown is not confirmed failure. |
 | Disabled / pairing required / permission required | Inspect the separate opt-in and intended device grant. Never broaden the ordinary grant to work around this state. Other private panels remain independent. |
 | Unsupported | Verify the stable native floor, negotiated methods and hash/precondition reply contract. No shell, generic RPC, tool-call, task-send or local-filesystem fallback. |
 | Temporarily unavailable / source changed | Keep the draft, restore readiness, then explicitly reload/review. Reconnection does not revive an old write revision. |
 
 **Reload and review discards the current draft after confirmation.** Preserve anything you need privately before accepting; the editor has no merge or backup service. Canceling discard keeps the draft. A new read is a new explicit review point, not permission to replay an earlier submission.
 
-Server-side tickets (32) and operation receipts (128) are bounded, memory-only records, accepted/deduplicated for up to ten minutes. Expiry is enforced on subsequent requests, not by a timed physical-memory erasure guarantee. An identical operation identity/payload can return its retained receipt without another native dispatch; changed reuse is rejected. No automatic replay occurs. Restart loses tickets/receipts, invalidating old revisions rather than replaying them. Document text is not journaled to disk. Do not apply Conversation message retry semantics or scheduling journal recovery to document writes.
+Server-side tickets (32) and operation receipts (128) are bounded, memory-only records, accepted/deduplicated for up to ten minutes. That lifetime does not prove the source or connection epoch is still valid; reconnecting does not restore invalidated Save authority, even after a known-not-attempted preflight failure. Expiry is enforced on subsequent requests, not by a timed physical-memory erasure guarantee. An identical operation identity/payload can return its retained receipt without another native dispatch; changed reuse is rejected. No automatic replay occurs. Restart loses tickets/receipts, invalidating old revisions rather than replaying them. Document text is not journaled to disk. Do not apply Conversation message retry semantics or scheduling journal recovery to document writes.
 
 ## Draft lifetime and privacy
 
