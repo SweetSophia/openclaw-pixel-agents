@@ -28,7 +28,7 @@ interface Staged {
 }
 interface Operation {
   meta: AttachmentOperationMeta; tokenDigest: Buffer; expires: number; staged?: Staged;
-  invoked: boolean; pending?: Promise<AttachmentReceipt>;
+  invoked: boolean; pending?: Promise<AttachmentReceipt>; attempt?: Promise<void>;
 }
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex');
 const tokenHash = (token: string): Buffer => createHash('sha256').update(token).digest();
@@ -53,7 +53,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     cleanup = undefined;
     if (closed) return;
     let deadline = Infinity;
-    for (const row of operations.values()) if (!row.pending || (row.staged && !row.invoked)) deadline = Math.min(deadline, row.expires);
+    for (const row of operations.values()) if (!row.staged || !row.pending || !row.invoked) deadline = Math.min(deadline, row.expires);
     for (const row of leases.values()) if (!row.operationId) deadline = Math.min(deadline, row.expires);
     if (deadline !== Infinity) {
       cleanup = setTimeout(prune, Math.max(1, deadline - now())); cleanup.unref?.();
@@ -72,7 +72,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
   function prune(): void {
     const time = now();
     for (const [id, row] of operations) if (row.expires <= time) {
-      if (!row.pending) { dropStaged(row); operations.delete(id); }
+      if (!row.pending || !row.staged) { dropStaged(row); operations.delete(id); }
       else if (row.staged && !row.invoked) stopPrepared(row, 'expired');
     }
     for (const [lease, state] of leases) if (!state.operationId && state.expires <= time) leases.delete(lease);
@@ -141,13 +141,20 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     return Object.freeze({
       get review() { return staged(row).review; }, get payload() { return staged(row).payload; },
       get connection() { return staged(row).connection; }, get nativeInvoked() { return row.invoked; },
-      async attempt<T>(send: () => Promise<T>): Promise<T> {
-        staged(row);
-        if (row.invoked) throw new ControlError('attachment-changed');
-        row.invoked = true;
-        row.meta.receipt = { ...row.meta.receipt, nativeInvoked: true, runId: row.meta.receipt.operationId };
-        schedule();
-        return send();
+      attempt<T>(send: () => Promise<T>): Promise<T> {
+        try {
+          staged(row);
+          if (row.invoked) throw new ControlError('attachment-changed');
+          row.invoked = true;
+          row.meta.receipt = { ...row.meta.receipt, nativeInvoked: true, runId: row.meta.receipt.operationId };
+          schedule();
+          let native: Promise<T>;
+          try { native = Promise.resolve(send()); } catch (error) { native = Promise.reject(error); }
+          // Track settlement without retaining its value/error. This also observes
+          // rejection when a callback returns early without awaiting its attempt.
+          row.attempt = native.then(() => undefined, () => undefined);
+          return native;
+        } catch (error) { return Promise.reject(error); }
       },
     });
   }
@@ -168,7 +175,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
           open();
           if (row.staged) {
             const receipt = await start(dispatch(row));
-            if (receipt.phase === 'prepared' || receipt.phase === 'sending') throw new ControlError('attachment-changed');
+            if (receipt.operationId !== row.meta.receipt.operationId || receipt.phase === 'prepared' || receipt.phase === 'sending') throw new ControlError('attachment-changed');
             record(receipt);
           }
         } catch {
@@ -177,8 +184,9 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
             phase: row.invoked ? 'unknown' : 'not-dispatched', nativeInvoked: row.invoked, imageEvidence: 'unverified',
             ...(row.invoked ? { runId: row.meta.receipt.operationId } : { reason: 'unavailable' }) });
         } finally {
-          dropStaged(row); row.pending = undefined;
-          row.expires = now() + ATTACHMENT_LIMITS.receiptTtlMs;
+          await row.attempt;
+          if (row.staged) { dropStaged(row); row.expires = now() + ATTACHMENT_LIMITS.receiptTtlMs; }
+          row.pending = undefined;
           schedule();
         }
         open(); return copyReceipt(row.meta.receipt);

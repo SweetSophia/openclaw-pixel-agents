@@ -126,6 +126,34 @@ describe('monotonic_expiry_releases_orphan_slots', () => {
     advance(1); expect(admission.read('main', review.operationId)).toBeNull();
     expect(() => admission.record(receipt)).toThrow('attachment-expired');
   });
+
+  it('expires invalidated preflight metadata while callbacks hang and restores bounded capacity', async () => {
+    vi.useFakeTimers();
+    const { admission, prepare, advance } = fixture(); const gate = deferred<void>();
+    const pending: Promise<AttachmentReceipt>[] = []; const reviews: AttachmentReview[] = [];
+    for (let i = 0; i < 128; i++) {
+      const review = prepare(); reviews.push(review);
+      pending.push(admission.confirm('main', confirmation(review), async () => { await gate.promise; throw Error('cancelled preflight'); }));
+      await Promise.resolve(); admission.invalidatePrepared();
+    }
+    expect(() => admission.acquire()).toThrow('rate-limited'); expect(vi.getTimerCount()).toBe(1);
+    advance(600_001); vi.advanceTimersByTime(600_001); expect(vi.getTimerCount()).toBe(0);
+    try {
+      expect(admission.read('main', reviews[0].operationId)).toBeNull();
+      const lease = admission.acquire(); lease.release();
+      await expect(admission.confirm('main', confirmation(reviews[0]), sendAccepted)).rejects.toThrow('attachment-expired');
+    } finally { gate.resolve(); await Promise.all(pending); }
+    expect(admission.read('main', reviews[0].operationId)).toBeNull(); admission.close();
+  });
+
+  it('does not restart an invalidated preflight terminal deadline when its callback settles', async () => {
+    const { admission, prepare, advance } = fixture(); const review = prepare(); const gate = deferred<void>();
+    const pending = admission.confirm('main', confirmation(review), async () => { await gate.promise; throw Error('cancelled preflight'); });
+    await Promise.resolve(); admission.invalidatePrepared(); advance(599_999); gate.resolve();
+    expect((await pending).phase).toBe('not-dispatched');
+    expect(admission.read('main', review.operationId)?.receipt.phase).toBe('not-dispatched');
+    advance(1); expect(admission.read('main', review.operationId)).toBeNull(); admission.close();
+  });
 });
 
 describe('capacity_never_evicts_live_operation', () => {
@@ -153,6 +181,35 @@ describe('capacity_never_evicts_live_operation', () => {
     for (let i = 0; i < 127; i++) { const review = prepare(); await admission.confirm('main', confirmation(review), sendAccepted); }
     const last = admission.acquire(); expect(() => admission.acquire()).toThrow('rate-limited');
     last.release(); const replacement = admission.acquire(); replacement.release();
+  });
+
+  it.each(['return', 'throw', 'native-rejection'] as const)('retains slots until native work settles after early callback %s', async outcome => {
+    const { admission, prepare } = fixture(); const first = prepare(), second = prepare(); const native = deferred<void>();
+    const dispatches: AttachmentDispatch[] = []; let starts = 0, nativeSettled = 0;
+    const start = async (operation: AttachmentDispatch): Promise<AttachmentReceipt> => {
+      starts++; dispatches.push(operation);
+      void operation.attempt(async () => {
+        await native.promise; nativeSettled++;
+        if (outcome === 'native-rejection') throw Error('native request rejected');
+      });
+      if (outcome === 'throw') throw Error('early callback failure');
+      return { operationId: operation.review.operationId, target: operation.review.target,
+        phase: 'unknown', nativeInvoked: true, imageEvidence: 'unverified', runId: operation.review.operationId };
+    };
+    const pending = [admission.confirm('main', confirmation(first), start), admission.confirm('main', confirmation(second), start)];
+    // Two turns let both callbacks finish, without settling their native promises.
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    const repeated = admission.confirm('main', confirmation(first), start);
+    try {
+      expect(starts).toBe(2); expect(nativeSettled).toBe(0);
+      expect(() => admission.acquire()).toThrow('rate-limited');
+      admission.discard('main', first.operationId); admission.invalidatePrepared();
+      expect(() => admission.acquire()).toThrow('rate-limited');
+    } finally { native.resolve(); await Promise.all([...pending, repeated]); }
+    expect(nativeSettled).toBe(2); expect(starts).toBe(2);
+    expect(admission.read('main', first.operationId)?.receipt.phase).toBe('unknown');
+    expect(() => dispatches[0].payload).toThrow();
+    const lease1 = admission.acquire(), lease2 = admission.acquire(); lease1.release(); lease2.release(); admission.close();
   });
 });
 
@@ -193,6 +250,19 @@ describe('late_ack_cannot_downgrade_recorded_receipt', () => {
     const noSend = prepare();
     expect(await admission.confirm('main', confirmation(noSend), async operation => ({ operationId: operation.review.operationId,
       target: operation.review.target, phase: 'sending', nativeInvoked: false, imageEvidence: 'unverified' }))).toMatchObject({ phase: 'not-dispatched', nativeInvoked: false });
+  });
+
+  it.each([false, true])('binds callback receipts to the admitted identity (native invoked: %s)', async invoked => {
+    const { admission, prepare } = fixture(); const foreign = prepare();
+    const foreignReceipt = await admission.confirm('main', confirmation(foreign), sendAccepted);
+    const current = prepare();
+    const result = await admission.confirm('main', confirmation(current), async operation => {
+      if (invoked) await operation.attempt(async () => {});
+      return { ...foreignReceipt, imageEvidence: 'omitted' };
+    });
+    expect(result).toMatchObject({ operationId: current.operationId, phase: invoked ? 'unknown' : 'not-dispatched', nativeInvoked: invoked });
+    expect(await admission.confirm('main', confirmation(current), sendAccepted)).toEqual(result);
+    expect(admission.read('main', foreign.operationId)?.receipt).toEqual(foreignReceipt); admission.close();
   });
 });
 
