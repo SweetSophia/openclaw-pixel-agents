@@ -117,6 +117,33 @@ it('uses the verified saved snapshot for a subsequent explicit edit', async () =
   await act(() => result.current.save()); act(() => result.current.setDraft('another edit'));
   expect(result.current.snapshot?.revision).toBe('revision-2'); expect(result.current.canSave).toBe(true);
 });
+it.each(['unknown', 'transport', 'malformed', 'post-ack-status'])('protects an undo to the old baseline during and after an uncertain %s save', async outcome => {
+  const { result } = await selected(); act(() => result.current.setDraft('submitted'));
+  let release!: (value: unknown) => void; let reject!: (reason: unknown) => void; let statuses = 0;
+  access.request.mockImplementation(path => {
+    if (path.endsWith('/status')) {
+      if (++statuses > 1 && outcome === 'post-ack-status') return Promise.reject(new ControlApiError());
+      return Promise.resolve(management);
+    }
+    return new Promise((resolve, fail) => { release = resolve; reject = fail; });
+  });
+  let pending!: Promise<void>; act(() => { pending = result.current.save(); }); await act(async () => {});
+  act(() => result.current.setDraft('original'));
+  expect(result.current.saving).toBe(true); expect(result.current.dirty).toBe(true);
+  await act(async () => {
+    if (outcome === 'transport') reject(new ControlApiError());
+    else release({ agentId: 'cylena', name: 'AGENTS.md', operationId: outcome === 'malformed' ? 'wrong' : 'operation-1',
+      state: outcome === 'post-ack-status' ? 'saved' : 'unknown',
+      ...(outcome === 'post-ack-status' ? { snapshot: snapshot({ content: 'submitted', bytes: 9 }) } : {}) });
+    await pending;
+  });
+  expect(result.current.draft).toBe('original'); expect(result.current.dirty).toBe(true);
+  expect(result.current.saving).toBe(false); expect(result.current.error?.code).toBe('document-outcome-unknown');
+  expect(result.current.epoch).toBeNull(); expect(result.current.canSave).toBe(false);
+  const calls = access.request.mock.calls.length; await act(() => result.current.save()); expect(access.request).toHaveBeenCalledTimes(calls);
+  access.request.mockImplementation(async path => path.endsWith('/status') ? management : snapshot({ content: 'submitted', bytes: 9 }));
+  await act(() => result.current.reload()); expect(result.current.dirty).toBe(false); expect(result.current.draft).toBe('submitted');
+});
 it('bounds a stalled save and marks its outcome unknown without retry', async () => {
   const { result } = await selected(); vi.useFakeTimers(); act(() => result.current.setDraft('changed'));
   access.request.mockImplementation(path => path.endsWith('/status') ? Promise.resolve(management) : new Promise(() => {}));

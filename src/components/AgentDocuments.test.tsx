@@ -107,3 +107,27 @@ it('the real parent protects an unsaved undo after a different submitted version
   expect(screen.getByRole('tab', { name: 'Workspace' })).toHaveAttribute('aria-selected', 'true');
   expect(access.request.mock.calls.filter(([path]) => path.endsWith('/documents/save'))).toHaveLength(1);
 });
+it('the real parent protects a baseline undo while a save is pending and after its outcome becomes unknown', async () => {
+  const close = vi.fn(); const originalRequest = access.request.getMockImplementation()!;
+  let release!: (value: unknown) => void; let operationId!: string;
+  access.request.mockImplementation((path, init) => {
+    if (!path.endsWith('/documents/save')) return originalRequest(path, init);
+    operationId = JSON.parse(init.body).operationId;
+    return new Promise(resolve => { release = resolve; });
+  });
+  render(<AgentDetailPanel agent={agent} onClose={close} />);
+  fireEvent.click(screen.getByRole('tab', { name: 'Workspace' })); const textarea = await edit();
+  fireEvent.click(screen.getByRole('button', { name: 'Save document' })); await waitFor(() => expect(operationId).toBeTruthy());
+  fireEvent.change(textarea, { target: { value: '' } });
+  for (const phase of ['pending', 'unknown']) {
+    if (phase === 'unknown') await act(async () => { release({ agentId: 'cylena', name: 'AGENTS.md', operationId, state: 'unknown' }); });
+    fireEvent.click(screen.getByRole('button', { name: 'Close details for Cylena' }));
+    expect(window.confirm).toHaveBeenCalledTimes(phase === 'pending' ? 1 : 3); expect(close).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent' }));
+    expect(screen.getByRole('tab', { name: 'Workspace' })).toHaveAttribute('aria-selected', 'true'); expect(textarea).toHaveValue('');
+    const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+  }
+  expect(screen.getByText(/0 \/ 32768 bytes · Unsaved changes/)).toBeVisible();
+  expect(screen.getByRole('alert')).toHaveTextContent(/unknown/i); expect(screen.getByRole('button', { name: 'Save document' })).toBeDisabled();
+  expect(access.request.mock.calls.filter(([path]) => path.endsWith('/documents/save'))).toHaveLength(1);
+});

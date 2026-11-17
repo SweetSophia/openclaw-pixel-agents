@@ -7,9 +7,9 @@ import { newEntityId } from '../util/id';
 
 interface View {
   management: AgentDocumentManagement | null; selected: AgentDocumentName | null; snapshot: AgentDocumentSnapshot | null;
-  draft: string; loading: boolean; saving: boolean; error: ControlApiError | null; receipt: AgentDocumentSaveReceipt | null; epoch: string | null;
+  draft: string; loading: boolean; saving: boolean; saveNeedsReview: boolean; error: ControlApiError | null; receipt: AgentDocumentSaveReceipt | null; epoch: string | null;
 }
-const empty: View = { management: null, selected: null, snapshot: null, draft: '', loading: false, saving: false, error: null, receipt: null, epoch: null };
+const empty: View = { management: null, selected: null, snapshot: null, draft: '', loading: false, saving: false, saveNeedsReview: false, error: null, receipt: null, epoch: null };
 export function useAgentDocuments(options: { agentId: string; active: boolean; opened: boolean }) {
   const access = useControlAccess(); const owner = `${options.agentId}:${access.generation}`;
   const [view, render] = useState<View>(empty); const data = useRef(view); const identity = useRef(owner);
@@ -68,13 +68,13 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
       const after = await refreshManagement();
       if (!valid() || !after?.canEdit || before.epoch !== after.epoch) return;
       if (draftVersion.current !== textVersion) return;
-      update({ snapshot, draft: snapshot.content, epoch: after.epoch, error: null });
+      update({ snapshot, draft: snapshot.content, epoch: after.epoch, error: null, saveNeedsReview: false });
     } catch (error) { if (valid()) update({ error: error instanceof ControlApiError ? error : new ControlApiError('invalid-source'), epoch: null }); }
     finally { if (valid()) update({ loading: false }); }
   }, [invalidate, refreshManagement, request, update]);
   const select = useCallback(async (name: AgentDocumentName) => {
     if (!permitted() || !data.current.management?.canEdit || data.current.saving) return;
-    update({ snapshot: null, draft: '', epoch: null }); await read(name);
+    update({ snapshot: null, draft: '', epoch: null, saveNeedsReview: false }); await read(name);
   }, [read, update]);
   const reload = useCallback(async () => { if (data.current.selected && !data.current.saving) await read(data.current.selected); }, [read]);
   const setDraft = useCallback((draft: string) => { draftVersion.current++; update({ draft }); }, [update]);
@@ -93,13 +93,15 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
     try {
       const management = await refreshManagement();
       if (!valid() || !management?.canEdit || management.epoch !== epoch) return;
+      // An undo to the old snapshot cannot prove the draft matches an outstanding or uncertain write.
+      update({ saveNeedsReview: true });
       const receipt = parseAgentDocumentSaveReceipt(await request('save', submission));
       if (!valid()) return;
       if (!receipt || receipt.agentId !== snapshot.agentId || receipt.name !== submission.name || receipt.operationId !== submission.operationId
         || (receipt.state === 'saved' && (receipt.snapshot?.content !== draft || receipt.snapshot?.source.state !== 'current'))) throw new ControlApiError('document-outcome-unknown');
       const after = await refreshManagement();
       if (!valid() || !after?.canEdit || after.epoch !== epoch) return;
-      if (receipt.state === 'saved') update({ snapshot: receipt.snapshot!, receipt, epoch: data.current.draft === draft ? after.epoch : null });
+      if (receipt.state === 'saved') update({ snapshot: receipt.snapshot!, receipt, saveNeedsReview: false, epoch: data.current.draft === draft ? after.epoch : null });
       else update({ receipt, error: receipt.state === 'conflict' ? new ControlApiError('document-changed') : receipt.state === 'unknown' ? new ControlApiError('document-outcome-unknown') : null });
     } catch (error) {
       if (valid()) update({ error: error instanceof ControlApiError && ['document-denied', 'document-changed'].includes(error.code) ? error : new ControlApiError('document-outcome-unknown') });
@@ -125,6 +127,6 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
     return () => { mounted.current = false; invalidate(); data.current = empty; document.removeEventListener('visibilitychange', visibility); };
   }, [invalidate, refreshManagement]);
   const shown = identity.current === owner && access.state === 'unlocked' ? view : empty;
-  return { ...shown, dirty: !!shown.snapshot && shown.draft !== shown.snapshot.content, valid: isAgentDocumentText(shown.draft),
+  return { ...shown, dirty: !!shown.snapshot && (shown.saveNeedsReview || shown.draft !== shown.snapshot.content), valid: isAgentDocumentText(shown.draft),
     bytes: new TextEncoder().encode(shown.draft).byteLength, canSave: shown === view && readyToSave(), select, setDraft, reload, save, reset, refreshManagement };
 }
