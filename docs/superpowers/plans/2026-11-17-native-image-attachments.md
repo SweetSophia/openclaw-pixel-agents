@@ -223,7 +223,7 @@ interface AttachmentReceipt {
 Plan self-review completed by the coordinator on 2026-11-17, not delegated: authority/limits/validation map to Tasks 1–2; frozen identity, expiration and replay policy to 3–4; private buffering to 5; clearing/uncertainty/accessible review to 6–7; restart, browser, packaging and repository gates to 8. The five Review Focus items have named tests in their owning tasks. Interface review corrected receipt checking to use a retained text digest rather than forbidden message retention, made full-frame serialization explicit, and made the composer guard callable at admission to avoid a render-order gap. Task names/signatures and local documentation links were checked; no feature tests or implementation steps have been executed. Distinguish source qualification, future PR/merge, deployment and package availability; no implementation checkbox may be marked from a plan review alone.
 
 - [x] Task 1: contracts/image/config — `272feef`; focused/types/full 2,585 tests pass, independent task review approved. Baseline focus/noise and development audit remain separately tracked.
-- [ ] Task 2: native capability/transport — independent test cycle and chosen review complete.
+- [x] Task 2: native capability/transport — `3fe583c`; 163 focused tests, typecheck and full 2,650 tests pass; independent task review approved. Existing noise/audit remain separate gates.
 - [ ] Task 3: bounded authority/leases — independent test cycle and chosen review complete.
 - [ ] Task 4: exact-target service/receipts — independent test cycle and chosen review complete.
 - [ ] Task 5: authenticated ingress/runtime — independent test cycle and chosen review complete.
