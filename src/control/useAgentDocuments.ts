@@ -22,7 +22,7 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
   const invalidate = useCallback(() => {
     serial.current++; for (const controller of controllers.current) controller.abort(); controllers.current.clear();
     update({ epoch: null, loading: false, saving: false,
-      ...(data.current.saving ? { error: new ControlApiError('document-outcome-unknown') } : {}) });
+      ...(data.current.saving && data.current.saveNeedsReview ? { error: new ControlApiError('document-outcome-unknown') } : {}) });
   }, [update]);
   const reset = useCallback(() => { invalidate(); update(empty); }, [invalidate, update]);
   // Race the deadline as well as aborting fetch: even an uncooperative transport cannot keep Save pending.
@@ -49,8 +49,8 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
       update({ management }); return management;
     } catch (error) {
       if (current === serial.current && target === context.current.owner && permitted()) {
-        const saving = data.current.saving;
-        invalidate(); update({ management: null, error: saving ? new ControlApiError('document-outcome-unknown') : error instanceof ControlApiError ? error : new ControlApiError() });
+        const attemptedSave = data.current.saving && data.current.saveNeedsReview;
+        invalidate(); update({ management: null, error: attemptedSave ? new ControlApiError('document-outcome-unknown') : error instanceof ControlApiError ? error : new ControlApiError() });
       }
       return null;
     }
@@ -93,6 +93,7 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
     try {
       const management = await refreshManagement();
       if (!valid() || !management?.canEdit || management.epoch !== epoch) return;
+      // Only attempted saves need write-outcome review; preflight alone cannot have committed text.
       // An undo to the old snapshot cannot prove the draft matches an outstanding or uncertain write.
       update({ saveNeedsReview: true });
       const receipt = parseAgentDocumentSaveReceipt(await request('save', submission));
