@@ -16,6 +16,36 @@ async function setup(options: Parameters<typeof documentFixture>[0] = {}) {
 }
 const write = (revision: string, operationId = 'document-operation-1', content = 'updated') => ({ name: 'AGENTS.md' as const, revision, operationId, content });
 describe('one-use agent document revisions and receipts over signed native frames', () => {
+  it('keeps pre-admission document pairing loss local to the document device', async () => {
+    let connects = 0;
+    const { host, gateway, service } = await setup({ onRequest(frame, socket) {
+      if (frame.method !== 'connect' || ++connects === 1) return;
+      socket.write(encodeDocumentFrame({ type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', details: { code: 'PAIRING_REQUIRED' } } })); return true;
+    } });
+    const input = write((await service.read('main', { name: 'AGENTS.md' })).revision);
+    for (const socket of host.sockets) socket.destroy();
+    await vi.waitFor(() => expect(gateway.status().state).toBe('pairing-required'), { timeout: 2000 });
+    expect(gateway.status()).toMatchObject({ state: 'pairing-required', reason: 'pairing-required', canEdit: false, epoch: null });
+    await expect(service.read('main', { name: 'AGENTS.md' })).rejects.toMatchObject({ code: 'document-denied' });
+    await expect(service.save('main', input)).rejects.toMatchObject({ code: 'document-denied' });
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'agents.files.get', 'connect']);
+  });
+  it('retains unknown without replay when only the document device loses pairing after dispatch', async () => {
+    let connects = 0;
+    const { host, gateway, service } = await setup({ onRequest(frame, socket) {
+      if (frame.method === 'agents.files.set') return true;
+      if (frame.method !== 'connect' || ++connects === 1) return;
+      socket.write(encodeDocumentFrame({ type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', details: { code: 'PAIRING_REQUIRED' } } })); return true;
+    } });
+    const input = write((await service.read('main', { name: 'AGENTS.md' })).revision);
+    const saving = service.save('main', input);
+    await vi.waitFor(() => expect(host.frames.filter(frame => frame.method === 'agents.files.set')).toHaveLength(1));
+    for (const socket of host.sockets) socket.destroy();
+    expect(await saving).toEqual({ agentId: 'main', name: 'AGENTS.md', operationId: input.operationId, state: 'unknown' });
+    await vi.waitFor(() => expect(gateway.status().state).toBe('pairing-required'), { timeout: 2000 });
+    expect((await service.save('main', input)).state).toBe('unknown');
+    expect(host.frames.filter(frame => frame.method === 'agents.files.set')).toHaveLength(1);
+  });
   it('requires exact registered canonical agent ownership before any native request', async () => {
     const { host, service } = await setup();
     for (const agent of ['MAIN', 'unregistered', '../main']) {

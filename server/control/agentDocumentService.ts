@@ -53,7 +53,8 @@ export function createAgentDocumentService(gateway: AgentDocumentGateway, regist
     agent(agentId); if (closed || signal?.aborted) throw new ControlError('unavailable');
     const status = gateway.status();
     if (!status.configured) throw new ControlError('disabled');
-    if (status.state === 'pairing-required') throw new ControlError('pairing-required');
+    // This device's pairing is independent of the office key and ordinary task access.
+    if (status.state === 'pairing-required') throw new ControlError('document-denied');
     if (status.state === 'unsupported') throw new ControlError('unsupported');
     if (status.state === 'auth-error' || status.reason === 'permission') throw new ControlError('document-denied');
     const current = gateway.connection(); if (!status.canEdit || !current || current.epoch !== status.epoch) throw new ControlError('unavailable');

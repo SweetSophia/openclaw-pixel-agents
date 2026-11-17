@@ -12,12 +12,12 @@ import { createControlRouter } from './routes';
 import { createTaskService } from './taskService';
 import { loadControlConfig } from './config';
 import { createWorkspaceService } from './workspaceService';
-import { documentFixture } from './fixtures/agentDocuments';
+import { documentFixture, encodeDocumentFrame } from './fixtures/agentDocuments';
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.resetModules(); });
-async function appFixture(enabled = true) {
-  const host = await documentFixture(); cleanups.push(() => host.close()); host.config.enabled = enabled;
+async function appFixture(enabled = true, options: Parameters<typeof documentFixture>[0] = {}) {
+  const host = await documentFixture(options); cleanups.push(() => host.close()); host.config.enabled = enabled;
   const documentGateway = createAgentDocumentGateway(host.config);
   const documents = createAgentDocumentService(documentGateway, () => new Set(['main'])); cleanups.push(() => documents.close());
   const ordinaryFrames: unknown[] = [];
@@ -30,6 +30,27 @@ async function appFixture(enabled = true) {
 }
 describe('authenticated document route and signed native integration', () => {
   const path = '/api/control/agents/main/documents';
+  it('reports document-local pairing admission denial while the ordinary office key stays valid', async () => {
+    let connects = 0;
+    const { app, host, documentGateway } = await appFixture(true, { onRequest(frame, socket) {
+      if (frame.method !== 'connect' || ++connects === 1) return;
+      socket.write(encodeDocumentFrame({ type: 'res', id: frame.id, ok: false, error: { code: 'INVALID_REQUEST', details: { code: 'PAIRING_REQUIRED' } } })); return true;
+    } });
+    await request(app).get(`${path}/status`).auth('document-access-fixture', { type: 'bearer' });
+    await vi.waitFor(() => expect(documentGateway.status().canEdit).toBe(true));
+    const loaded = await request(app).post(`${path}/read`).auth('document-access-fixture', { type: 'bearer' }).send({ name: 'AGENTS.md' });
+    expect(loaded.status).toBe(200);
+    for (const socket of host.sockets) socket.destroy();
+    await vi.waitFor(() => expect(documentGateway.status().state).toBe('pairing-required'), { timeout: 2000 });
+    for (const [operation, body] of [['read', { name: 'AGENTS.md' }], ['save', { name: 'AGENTS.md', revision: loaded.body.revision, operationId: 'pairing-admission-operation', content: 'private draft' }]] as const) {
+      const denied = await request(app).post(`${path}/${operation}`).auth('document-access-fixture', { type: 'bearer' }).send(body);
+      expect(denied.status).toBe(403); expect(denied.body.code).toBe('document-denied');
+    }
+    expect(documentGateway.status()).toMatchObject({ state: 'pairing-required', reason: 'pairing-required', canEdit: false });
+    const ordinary = await request(app).get('/api/control/status').auth('document-access-fixture', { type: 'bearer' });
+    expect(ordinary.status).toBe(200); expect(ordinary.body.canRead).toBe(true);
+    expect(host.frames.map(frame => frame.method)).toEqual(['connect', 'agents.files.get', 'connect']);
+  });
   it('runs access/transport validation before lazy identity creation and preserves exact agent params', async () => {
     const { app, host } = await appFixture();
     expect((await request(app).get(`${path}/status`)).status).toBe(401);
