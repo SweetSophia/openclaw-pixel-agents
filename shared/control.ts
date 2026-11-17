@@ -70,7 +70,8 @@ export type ControlErrorCode = 'disabled' | 'locked' | 'transport-required' | 'p
   | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'workspace-changed' | 'usage-denied' | 'stop-denied'
   | 'approvals-denied' | 'approval-unavailable' | 'approval-changed' | 'approval-outcome-unknown' | 'model-denied' | 'model-busy'
   | 'schedule-outcome-unknown' | 'schedule-changed' | 'schedule-denied' | 'schedule-storage-unavailable'
-  | 'document-denied' | 'document-changed' | 'document-outcome-unknown';
+  | 'document-denied' | 'document-changed' | 'document-outcome-unknown'
+  | 'attachment-denied' | 'attachment-changed' | 'attachment-expired' | 'attachment-outcome-unknown';
 export interface ControlErrorBody { error: string; code: ControlErrorCode }
 export interface ControlConversationEvent {
   target: ControlTarget; kind: 'messages' | 'invalidated' | 'unavailable'; source: ControlSource; messages?: ControlMessage[];
