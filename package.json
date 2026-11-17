@@ -27,6 +27,7 @@
     "docs/task-access-setup.md",
     "docs/configuration.md",
     "docs/schedules.md",
+    "docs/agent-documents.md",
     "docs/editor.md",
     "docs/releases.md",
     ".env.example"

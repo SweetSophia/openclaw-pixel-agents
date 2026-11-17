@@ -184,6 +184,12 @@ Preview and Download load bytes only after an explicit action. Native `agents.wo
 
 Requests stay relative to the agent's workspace. The Gateway owns filesystem confinement; the office never reads host paths as a fallback. Each file action freshly checks the current parent page, size, modification time, agent and connection revision before exposing bytes. Folder changes, observed file/source changes, closing, Lock and hidden pages cancel work and clear previews. Workspace content stays out of public sockets and browser storage. Native list/get behavior was checked with installed OpenClaw handlers against isolated synthetic files; real framing, service and authenticated-route integration are also covered by controlled fixtures. No real agent task was submitted.
 
+## Private agent document editing
+
+The unreleased source **Agent documents** section is separate from read-only Workspace browsing. It edits only existing root `AGENTS.md`, `SOUL.md`, `USER.md` and `MEMORY.md`, at most 32 KiB of round-trippable UTF-8, through explicit Save. Uploads, creation, general paths and force overwrite are not supported.
+
+It is default-off (`CONTROL_DOCUMENTS_EDIT_ENABLED=false`) and needs a separate independently approved read/admin device, never an elevated ordinary task grant or reused scheduling grant. Bootstrap only through `OPENCLAW_DOCUMENTS_GATEWAY_TOKEN` / `OPENCLAW_DOCUMENTS_GATEWAY_PASSWORD`; preserve `DATA_DIR/control-documents/`. The local get/set allowlist does not cryptographically narrow native admin authority. Stable Gateway 2026.11.2+ and negotiated precondition methods are required. Follow [document setup, revocation, draft lifetime and no-replay recovery](agent-documents.md) before opting in. Source qualification does not activate an office or authorize live writes.
+
 ## Conversation usage
 
 Available from version **1.7.0**, the read-only **Usage** tab follows the conversation selected in Task/Conversation/Results and uses the same office key and `operator.read` device grant. No provider billing credentials are needed.
