@@ -23,7 +23,7 @@ Native agent reads return raw-byte hashes but local decoding can be lossy. Verif
 - Document names are exactly the four above, case-sensitive and root-only. Only existing files. No create, force overwrite, delete, rename, uploads, attachments, IDENTITY/BOOTSTRAP editing, generic RPC or filesystem access.
 - Text is strict round-trippable UTF-8, at most **32 KiB**, including empty text. Reject NUL, non-tab/newline/carriage-return ASCII controls and unpaired surrogates. This keeps the worst escaped request within the unchanged **100kb** Express JSON limit; normal workspace reads retain their existing limits.
 - Agent IDs must be canonical registered IDs. Never send an alternate native-normalized ID. Native replies must match exact agent/name/workspace and hash/bytes. Absolute workspace identifiers remain server-side; the browser receives an opaque revision, never a writable host path.
-- Editing authority requires negotiated get/set methods and separately granted read/admin scopes. Ordinary control grant request, persistence and optional-method behavior must remain unchanged. Older/missing hash or method/provider contracts fail closed. No live capability claim follows merely from installed source.
+- Editing authority requires a recognized stable Gateway version **2026.11.2 or newer**, negotiated get/set methods and separately granted read/admin scopes. This is the conservative first source-qualified floor, not a claim that every earlier build is unsafe. Reject missing, malformed and prerelease version identities for this profile. Ordinary control grant request, persistence and optional-method behavior must remain unchanged. Missing hash or method/provider contracts fail closed. No live capability claim follows merely from installed source.
 
 ## Server behavior
 
@@ -42,6 +42,8 @@ Invalidate write revisions on source/epoch/config changes and close; check again
 ## UI behavior
 
 Add an explicit expandable **Agent documents** section inside the private Workspace panel, separate from the read-only browser. No ordinary directory read starts the management connection. Show disabled, pairing, permission, unsupported, connecting and ready states honestly. An explicit selection reads one of the four documents; unsupported/missing/oversized/binary documents cannot be saved.
+
+When a recorded run remains selected in the parent details modal, keep the document editor inactive/read-only and offer **Return to live** before opening its management connection or saving. Existing ordinary Workspace browsing remains available. Agent documents affect the current agent, not a historical run; use the same conservative current-vs-recorded intent boundary as Schedules.
 
 Use plain text editing, visible agent/document identity, byte count and explicit **Save**. There is no autosave. Save requires a changed valid draft, current snapshot/revision/management epoch, and one submission at a time. After conflicts or uncertain outcomes, retain the draft but disable Save until the user explicitly reloads and reviews the current file; never silently replace/rebase typed text or replay the previous operation. A late response must not replace newer input or another agent/document's state. Use `newEntityId()` for operation IDs.
 
