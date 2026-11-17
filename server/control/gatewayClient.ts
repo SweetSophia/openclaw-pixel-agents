@@ -1,4 +1,4 @@
-import { createPublicKey, randomUUID, sign } from 'node:crypto';
+import { createHash, createPublicKey, randomUUID, sign } from 'node:crypto';
 import { controlRecord, type ControlGatewayState, type ControlStatus } from '../../shared/control';
 import type { ScheduleManagement } from '../../shared/controlSchedules';
 import { AGENT_DOCUMENT_MIN_GATEWAY_VERSION, type AgentDocumentManagement } from '../../shared/controlAgentDocuments';
@@ -7,6 +7,9 @@ import type { ControlConfig } from './config';
 import type { ScheduleConfig } from './scheduleConfig';
 import { loadOrCreateDeviceIdentity, readDeviceGrantDetails, writeDeviceGrant, type DeviceGrant } from './deviceIdentity';
 import { isDeviceStorageError } from './errors';
+import { ATTACHMENT_LIMITS } from '../../shared/controlAttachments';
+import { qualifyAttachmentPolicy, serializeImageFollowupFrame, type AttachmentGatewayCapabilities, type NativeImageFollowup } from './gatewayAttachmentPolicy';
+import { supportsStableGatewayVersion } from './gatewayVersion';
 
 const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'] as const;
 const WRITE_METHODS = ['chat.send', 'sessions.create'] as const;
@@ -29,12 +32,17 @@ export interface GatewayEvent { event: string; payload: unknown; seq?: number }
 export class GatewayRequestError extends Error {
   constructor(public readonly code: 'scope-required' | 'invalid-request' | 'invalid-source' | 'unavailable' | 'session-changed' | 'unsupported' | 'file-unavailable' | 'file-too-large' | 'preview-unsupported' | 'usage-denied' | 'stop-denied' | 'approvals-denied' | 'approval-unavailable' | 'model-denied' | 'model-busy' | 'schedule-changed' | 'schedule-denied' | 'schedule-outcome-unknown' | 'document-changed' | 'document-denied' | 'document-outcome-unknown') { super('Task source request rejected'); }
 }
+export class AttachmentGatewayRequestError extends Error {
+  constructor(public readonly code: 'attachment-changed' | 'attachment-too-large' | 'attachment-outcome-unknown' | 'uploads-disabled') { super('Image source request rejected'); }
+}
 export interface ControlGateway {
   start(): void; status(): ControlStatus;
   request(method: ControlMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   onEvent(listener: (event: GatewayEvent) => void): () => void; close(): void;
   artifactConnection?(): { id: string; generation: number; gatewayUrl: string } | null;
   modelCapabilities?(): { canRead: boolean; canChange: boolean; disabledReason?: 'unsupported' | 'permission' | null };
+  attachmentCapabilities?(): AttachmentGatewayCapabilities | null;
+  sendImageFollowup?(input: NativeImageFollowup, expectedEpoch: string): Promise<unknown>;
 }
 export interface ScheduleGateway {
   start(): void; close(): void; status(): ScheduleManagement;
@@ -49,16 +57,8 @@ export interface AgentDocumentGateway {
 }
 type GatewayMethod = ControlMethod | ScheduleMethod | AgentDocumentMethod;
 type GatewayProfile = { kind: 'control'; config: ControlConfig } | { kind: 'schedules'; config: ScheduleConfig } | { kind: 'documents'; config: AgentDocumentConfig };
-interface Pending { method: GatewayMethod; approval: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
+interface Pending { method: GatewayMethod; approval: boolean; image: boolean; resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; cleanup(): void }
 const MAX_FRAME = 2 * 1024 * 1024;
-function supportsDocumentPreconditions(version: string): boolean {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
-  if (!match) return false;
-  const parts = match.slice(1, 4).map(Number); if (!parts.every(Number.isSafeInteger)) return false;
-  const minimum = AGENT_DOCUMENT_MIN_GATEWAY_VERSION.split('.').map(Number);
-  for (let i = 0; i < 3; i++) if (parts[i] !== minimum[i]) return parts[i] > minimum[i];
-  return true;
-}
 function retryHintDelay(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return 0;
   // Native hints select a fixed policy delay, never an arbitrary timer duration.
@@ -95,16 +95,18 @@ function createSignedGateway(profile: GatewayProfile) {
   let deviceId: string | undefined; let epoch: string | null = null; let manageGranted = false;
   let scheduleReason: ScheduleManagement['reason'] = config.enabled ? 'unavailable' : 'disabled';
   let memoryGrant: DeviceGrant | undefined;
+  let attachmentCaps: AttachmentGatewayCapabilities | null = null; let attachmentEndpoint: string | undefined;
   let reconnect: ReturnType<typeof setTimeout> | undefined; let handshake: ReturnType<typeof setTimeout> | undefined;
   const pending = new Map<string, Pending>(); const listeners = new Set<(event: GatewayEvent) => void>();
   const emit = (event: GatewayEvent) => { for (const listener of listeners) listener(event); };
   function rejectPending(message: string): void {
-    for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(documents && item.method === 'agents.files.set' ? new GatewayRequestError('document-outcome-unknown') : scheduling && isScheduleMutation(item.method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message)); }
+    for (const item of pending.values()) { clearTimeout(item.timer); item.cleanup(); item.reject(item.image ? new AttachmentGatewayRequestError('attachment-outcome-unknown') : documents && item.method === 'agents.files.set' ? new GatewayRequestError('document-outcome-unknown') : scheduling && isScheduleMutation(item.method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message)); }
     pending.clear();
   }
   function fail(next: ControlGatewayState, retryable = false, retryAfterMs?: unknown): void {
     generation++; state = next; writeGranted = false; stopGranted = false; writeScopeGranted = false; approvalScopeGranted = false; approvalsGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
     epoch = null; deviceId = undefined; manageGranted = false;
+    attachmentCaps = null; attachmentEndpoint = undefined;
     scheduleReason = next === 'auth-error' ? 'permission' : next === 'pairing-required' ? 'pairing-required' : next === 'unsupported' ? 'unsupported' : next === 'disabled' ? 'disabled' : 'unavailable';
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
@@ -168,6 +170,7 @@ function createSignedGateway(profile: GatewayProfile) {
           sequence = frame.seq as number;
         }
         if (documents && frame.event === 'config.changed' && manageGranted) epoch = randomUUID();
+        if (frame.event === 'config.changed') attachmentCaps = null;
         emit({ event: frame.event, payload: frame.payload, ...(sequence === undefined ? {} : { seq: sequence }) }); return;
       }
       if (frame.type !== 'res' || typeof frame.id !== 'string' || typeof frame.ok !== 'boolean') { fail('unsupported'); return; }
@@ -182,8 +185,9 @@ function createSignedGateway(profile: GatewayProfile) {
         const hello = controlRecord(frame.payload); const auth = controlRecord(hello?.auth);
         const features = controlRecord(hello?.features); const policy = controlRecord(hello?.policy); const server = controlRecord(hello?.server);
         const methods = features?.methods; const grants = auth?.scopes;
-        if (!hello || hello.type !== 'hello-ok' || hello.protocol !== 4 || !server || typeof server.version !== 'string'
-          || (documents && !supportsDocumentPreconditions(server.version))
+        if (!hello || hello.type !== 'hello-ok' || hello.protocol !== 4 || !server
+          || (scheduling && typeof server.version !== 'string')
+          || (documents && (typeof server.version !== 'string' || !supportsStableGatewayVersion(server.version, AGENT_DOCUMENT_MIN_GATEWAY_VERSION)))
           || typeof server.connId !== 'string' || !controlRecord(hello.snapshot) || !policy || typeof policy.tickIntervalMs !== 'number'
           || policy.tickIntervalMs <= 0 || typeof policy.maxPayload !== 'number' || typeof policy.maxBufferedBytes !== 'number'
           || !features || !Array.isArray(methods) || !(documents ? DOCUMENT_METHODS : scheduling ? SCHEDULE_METHODS : READ_METHODS).every(method => methods.includes(method))
@@ -207,6 +211,11 @@ function createSignedGateway(profile: GatewayProfile) {
           catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); if (retryable) scheduleReason = 'storage-unavailable'; return; }
         }
         deviceId = identity.deviceId; epoch = manageGranted ? randomUUID() : null; scheduleReason = manageGranted ? null : 'permission';
+        if (control?.attachmentsEnabled && writeGranted) {
+          const sourceKey = createHash('sha256').update(JSON.stringify(['pixel-attachment-source-v1', config.url, identity.deviceId])).digest('hex');
+          attachmentCaps = qualifyAttachmentPolicy(server.version, policy, randomUUID(), sourceKey);
+          attachmentEndpoint = config.url;
+        }
         clearTimeout(handshake); handshake = undefined; retry = 0; state = 'ready'; emit({ event: 'source.ready', payload: null }); return;
       }
       const item = pending.get(frame.id); if (!item) return;
@@ -214,6 +223,9 @@ function createSignedGateway(profile: GatewayProfile) {
       if (frame.ok) item.resolve(frame.payload);
       else {
         const error = controlRecord(frame.error); const details = controlRecord(error?.details);
+        if (item.image) {
+          item.reject(new AttachmentGatewayRequestError(error?.code === 'FORBIDDEN' && details?.code === 'UPLOADS_DISABLED' ? 'uploads-disabled' : 'attachment-outcome-unknown')); return;
+        }
         if (documents) {
           const code = error?.code === 'FORBIDDEN' ? 'document-denied'
             : error?.code === 'INVALID_REQUEST' && details?.type === 'agent_file_conflict' ? 'document-changed'
@@ -257,6 +269,39 @@ function createSignedGateway(profile: GatewayProfile) {
       }
     });
   }
+  function currentAttachmentCapabilities(): AttachmentGatewayCapabilities | null {
+    return state === 'ready' && config.enabled && control?.attachmentsEnabled && control.sendEnabled && writeGranted
+      && socket?.readyState === WebSocket.OPEN && config.url === attachmentEndpoint && attachmentCaps ? { ...attachmentCaps } : null;
+  }
+  function dispatch(method: GatewayMethod, params: Record<string, unknown>, approval: boolean, signal?: AbortSignal, imageEpoch?: string): Promise<unknown> {
+    if (signal?.aborted) return Promise.reject(Error('Task request cancelled'));
+    if (pending.size >= 8) return Promise.reject(Error('Too many pending task requests'));
+    return new Promise((resolve, reject) => {
+      const id = randomUUID(); const image = imageEpoch !== undefined;
+      const uncertain = (message: string) => image ? new AttachmentGatewayRequestError('attachment-outcome-unknown')
+        : documents && method === 'agents.files.set' ? new GatewayRequestError('document-outcome-unknown')
+          : scheduling && isScheduleMutation(method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message);
+      let serialized: string; const outgoing = socket;
+      if (image) {
+        const caps = currentAttachmentCapabilities();
+        if (!caps || caps.epoch !== imageEpoch) { reject(new AttachmentGatewayRequestError('attachment-changed')); return; }
+        try { serialized = serializeImageFollowupFrame({ type: 'req', id, method: 'chat.send', params: params as unknown as NativeImageFollowup }, caps, 0); }
+        catch { reject(new AttachmentGatewayRequestError('attachment-too-large')); return; }
+        const buffered = outgoing!.bufferedAmount;
+        // Do not wait for drain/reconnect. Recheck identity after all serialization and socket getters.
+        if (outgoing !== socket || currentAttachmentCapabilities()?.epoch !== imageEpoch) { reject(new AttachmentGatewayRequestError('attachment-changed')); return; }
+        if (!Number.isSafeInteger(buffered) || buffered < 0 || Buffer.byteLength(serialized) > caps.maxBufferedBytes - buffered) {
+          reject(new AttachmentGatewayRequestError('attachment-too-large')); return;
+        }
+      } else serialized = JSON.stringify({ type: 'req', id, method, params });
+      const cancel = () => { const item = pending.get(id); if (!item) return; clearTimeout(item.timer); item.cleanup(); pending.delete(id); reject(uncertain('Task request cancelled')); };
+      const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(uncertain('Task request timed out')); }, image ? ATTACHMENT_LIMITS.nativeTimeoutMs : 5000);
+      const cleanup = () => signal?.removeEventListener('abort', cancel);
+      pending.set(id, { method, approval, image, resolve, reject, timer, cleanup }); signal?.addEventListener('abort', cancel, { once: true });
+      try { outgoing!.send(serialized); }
+      catch { clearTimeout(timer); cleanup(); pending.delete(id); reject(uncertain('Task source unavailable')); }
+    });
+  }
   return {
     start() { if (stopped || !config.enabled || socket || reconnect) return; connect(); },
     status: () => ({ configured: config.enabled, state, canRead: state === 'ready', canSend: state === 'ready' && writeGranted, canStop: state === 'ready' && stopGranted,
@@ -271,11 +316,17 @@ function createSignedGateway(profile: GatewayProfile) {
         canChange: state === 'ready' && writeScopeGranted && !modelAdminGranted && !unsupported,
         disabledReason: unsupported ? 'unsupported' : !writeScopeGranted || modelAdminGranted ? 'permission' : null };
     },
+    attachmentCapabilities: currentAttachmentCapabilities,
+    sendImageFollowup(input: NativeImageFollowup, expectedEpoch: string): Promise<unknown> {
+      if (typeof expectedEpoch !== 'string' || !expectedEpoch) return Promise.reject(new AttachmentGatewayRequestError('attachment-changed'));
+      return dispatch('chat.send', input as unknown as Record<string, unknown>, false, undefined, expectedEpoch);
+    },
     scheduleStatus: (): ScheduleManagement => ({ configured: config.enabled, state, canManage: state === 'ready' && manageGranted && epoch !== null, epoch, reason: scheduleReason }),
     documentStatus: (): AgentDocumentManagement => ({ configured: config.enabled, state, canEdit: state === 'ready' && manageGranted && epoch !== null, epoch, reason: state === 'connecting' ? 'unavailable' : scheduleReason }),
     scheduleConnection: () => state === 'ready' && manageGranted && epoch && deviceId && socket?.readyState === WebSocket.OPEN && config.url
       ? { epoch, gatewayUrl: config.url, deviceId } : null,
     request(method: GatewayMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+      if (method === 'chat.send' && 'attachments' in params) return Promise.reject(new GatewayRequestError('invalid-request'));
       if (documents && !(DOCUMENT_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('document-denied'));
       if (scheduling && !(SCHEDULE_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('schedule-denied'));
       if (state !== 'ready' || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new GatewayRequestError('unavailable'));
@@ -302,18 +353,7 @@ function createSignedGateway(profile: GatewayProfile) {
         || ((STREAM_METHODS as readonly string[]).includes(method) && negotiatedMethods.includes(method))
         || ((WRITE_METHODS as readonly string[]).includes(method) && writeGranted);
       if (!allowed) return Promise.reject(new GatewayRequestError('scope-required'));
-      if (signal?.aborted) return Promise.reject(Error('Task request cancelled'));
-      if (pending.size >= 8) return Promise.reject(Error('Too many pending task requests'));
-      return new Promise((resolve, reject) => {
-        const id = randomUUID();
-        const uncertain = (message: string) => documents && method === 'agents.files.set' ? new GatewayRequestError('document-outcome-unknown') : scheduling && isScheduleMutation(method) ? new GatewayRequestError('schedule-outcome-unknown') : Error(message);
-        const cancel = () => { const item = pending.get(id); if (!item) return; clearTimeout(item.timer); item.cleanup(); pending.delete(id); reject(uncertain('Task request cancelled')); };
-        const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(uncertain('Task request timed out')); }, 5000);
-        const cleanup = () => signal?.removeEventListener('abort', cancel);
-        pending.set(id, { method, approval, resolve, reject, timer, cleanup }); signal?.addEventListener('abort', cancel, { once: true });
-        try { socket!.send(JSON.stringify({ type: 'req', id, method, params })); }
-        catch { clearTimeout(timer); cleanup(); pending.delete(id); reject(uncertain('Task source unavailable')); }
-      });
+      return dispatch(method, params, approval, signal);
     },
     onEvent(listener: (event: GatewayEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     close() { stopped = true; memoryGrant = undefined; clearTimeout(reconnect); fail(config.enabled ? 'unavailable' : 'disabled'); listeners.clear(); },
