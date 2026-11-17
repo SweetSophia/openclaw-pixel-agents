@@ -51,7 +51,9 @@ export function AgentDocuments({ agentId, active, onDirtyChange, historical = fa
           {docs.draft === '' && <p>This document is empty.</p>}
           {!docs.valid && <p role="alert">Use valid UTF-8 text without binary control characters, at most 32768 bytes.</p>}
           {!docs.epoch && !docs.loading && <p className="task-notice">Reload and review the current document before another save. Reloading discards your draft; no submission is replayed.</p>}
-          {docs.receipt?.state === 'saved' && <p role="status">Document saved and verified by OpenClaw.</p>}
+          {docs.receipt?.state === 'saved' && <p role="status">{docs.dirty
+            ? 'Submitted version saved and verified by OpenClaw. Your current draft has unsaved changes.'
+            : 'Document saved and verified by OpenClaw.'}</p>}
           <div className="agent-documents-actions">
             <button type="button" disabled={!docs.canSave} onClick={() => { void docs.save(); }}>{docs.saving ? 'Saving document…' : 'Save document'}</button>
             <button type="button" disabled={docs.loading || docs.saving} onClick={() => { if (discard()) void docs.reload(); }}>Reload and review</button>

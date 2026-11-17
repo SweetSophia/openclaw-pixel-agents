@@ -99,7 +99,7 @@ export function useAgentDocuments(options: { agentId: string; active: boolean; o
         || (receipt.state === 'saved' && (receipt.snapshot?.content !== draft || receipt.snapshot?.source.state !== 'current'))) throw new ControlApiError('document-outcome-unknown');
       const after = await refreshManagement();
       if (!valid() || !after?.canEdit || after.epoch !== epoch) return;
-      if (receipt.state === 'saved' && data.current.draft === draft) update({ snapshot: receipt.snapshot!, receipt, epoch: after.epoch });
+      if (receipt.state === 'saved') update({ snapshot: receipt.snapshot!, receipt, epoch: data.current.draft === draft ? after.epoch : null });
       else update({ receipt, error: receipt.state === 'conflict' ? new ControlApiError('document-changed') : receipt.state === 'unknown' ? new ControlApiError('document-outcome-unknown') : null });
     } catch (error) {
       if (valid()) update({ error: error instanceof ControlApiError && ['document-denied', 'document-changed'].includes(error.code) ? error : new ControlApiError('document-outcome-unknown') });

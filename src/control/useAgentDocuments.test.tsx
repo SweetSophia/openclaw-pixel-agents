@@ -100,6 +100,18 @@ it('does not replace newer typing with a late saved receipt', async () => {
   await act(async () => { release({ agentId: 'cylena', name: 'AGENTS.md', operationId: 'operation-1', state: 'saved', snapshot: snapshot({ content: 'submitted', bytes: 9 }) }); await pending; });
   expect(result.current.draft).toBe('newer text'); expect(result.current.canSave).toBe(false);
 });
+it('keeps an undo to the old baseline dirty after a different submitted version is acknowledged', async () => {
+  const { result } = await selected(); act(() => result.current.setDraft('submitted'));
+  let release!: (value: unknown) => void;
+  access.request.mockImplementation(path => path.endsWith('/status') ? Promise.resolve(management) : new Promise(resolve => { release = resolve; }));
+  let pending!: Promise<void>; act(() => { pending = result.current.save(); }); await act(async () => {});
+  act(() => result.current.setDraft('original'));
+  await act(async () => { release({ agentId: 'cylena', name: 'AGENTS.md', operationId: 'operation-1', state: 'saved', snapshot: snapshot({ content: 'submitted', bytes: 9, revision: 'revision-2' }) }); await pending; });
+  expect(result.current.draft).toBe('original'); expect(result.current.dirty).toBe(true);
+  expect(result.current.snapshot).toMatchObject({ content: 'submitted', revision: 'revision-2' });
+  expect(result.current.canSave).toBe(false); expect(result.current.epoch).toBeNull();
+  const calls = access.request.mock.calls.length; await act(() => result.current.save()); expect(access.request).toHaveBeenCalledTimes(calls);
+});
 it('uses the verified saved snapshot for a subsequent explicit edit', async () => {
   const { result } = await selected(); act(() => result.current.setDraft('saved text'));
   await act(() => result.current.save()); act(() => result.current.setDraft('another edit'));

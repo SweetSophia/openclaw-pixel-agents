@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AgentDocuments } from './AgentDocuments';
 import { AgentDetailPanel } from './AgentDetailPanel';
@@ -81,4 +81,29 @@ it('discards after accepted tab navigation without remounting ordinary Workspace
   vi.mocked(window.confirm).mockReturnValue(true); fireEvent.click(screen.getByRole('tab', { name: 'Agent' }));
   fireEvent.click(screen.getByRole('tab', { name: 'Workspace' })); expect(screen.queryByRole('textbox')).toBeNull();
   expect(screen.getByRole('button', { name: 'Agent documents' })).toHaveAttribute('aria-expanded', 'false');
+});
+it('the real parent protects an unsaved undo after a different submitted version is acknowledged', async () => {
+  const close = vi.fn(); const originalRequest = access.request.getMockImplementation()!;
+  let release!: (value: unknown) => void; let operationId!: string;
+  access.request.mockImplementation((path, init) => {
+    if (!path.endsWith('/documents/save')) return originalRequest(path, init);
+    operationId = JSON.parse(init.body).operationId;
+    return new Promise(resolve => { release = resolve; });
+  });
+  render(<AgentDetailPanel agent={agent} onClose={close} />);
+  fireEvent.click(screen.getByRole('tab', { name: 'Workspace' })); const textarea = await edit();
+  fireEvent.click(screen.getByRole('button', { name: 'Save document' })); await waitFor(() => expect(operationId).toBeTruthy());
+  fireEvent.change(textarea, { target: { value: '' } });
+  await act(async () => { release({ agentId: 'cylena', name: 'AGENTS.md', operationId, state: 'saved', snapshot: {
+    agentId: 'cylena', name: 'AGENTS.md', revision: 'revision-2', content: 'é draft', bytes: 8, source: { state: 'current', observedAt: 200 } } }); });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save document' })).toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Close details for Cylena' }));
+  expect(window.confirm).toHaveBeenCalledOnce(); expect(close).not.toHaveBeenCalled(); expect(textarea).toHaveValue('');
+  const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+  expect(screen.getByText(/0 \/ 32768 bytes · Unsaved changes/)).toBeVisible();
+  expect(screen.getByText(/Submitted version saved.*current draft has unsaved changes/)).toBeVisible();
+  expect(screen.queryByText('Document saved and verified by OpenClaw.')).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Agent' })); expect(window.confirm).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('tab', { name: 'Workspace' })).toHaveAttribute('aria-selected', 'true');
+  expect(access.request.mock.calls.filter(([path]) => path.endsWith('/documents/save'))).toHaveLength(1);
 });
