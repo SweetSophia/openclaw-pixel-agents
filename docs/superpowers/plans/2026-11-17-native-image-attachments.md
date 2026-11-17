@@ -79,8 +79,8 @@ interface AttachmentReceipt {
 
 - [ ] **Step 1: Write `strict_image_contracts` and `actual_bytes_override_claims` tests.** Pin closed outer/image objects, foreign/reserved keys, exactly one image object, no paths/URLs/reference-only aliases, canonical alphabet/padding/pad bits, NUL/Unicode labels, reserved basenames, empty/oversized bytes, PNG signature/IHDR and baseline/progressive JPEG SOF headers, truncated/64 KiB JPEG scans, MIME mismatch, 8,192 dimension/16,777,216 pixel limits, 8,000-character ordinary text/command rules and flag parsing. Include concrete boundary assertions:
   ```ts
-  expect(ATTACHMENT_LIMITS.fileBytes).toBe(4_194_304);
-  expect(ATTACHMENT_LIMITS.prepareBodyBytes).toBe(6_291_456);
+  expect(validateAttachmentPayload(pngAtFileLimit, 4_194_304).image.bytes).toBe(4_194_304);
+  expect(() => validateAttachmentPayload(pngAtFileLimit, 4_194_303)).toThrow();
   expect(parseAttachmentConfirmRequest({ operationId, reviewToken, sharingAcknowledged: false })).toBeNull();
   expect(Buffer.from(pngWithNonzeroPadBits, 'base64')).toEqual(pngBytes);
   expect(() => validateAttachmentPayload({ ...pngInput, contentBase64: pngWithNonzeroPadBits }, 4_194_304)).toThrow();
@@ -101,7 +101,8 @@ interface AttachmentReceipt {
   ```ts
   expect(gateway.status().canSend).toBe(true); expect(gateway.attachmentCapabilities?.()).toBeNull();
   expect(socketFrames.filter(f => f.method === 'chat.send')).toHaveLength(0); // stale epoch / too-large frame
-  expect(ordinaryDeadlineMs).toBe(5_000); expect(imageDeadlineMs).toBe(30_000);
+  await vi.advanceTimersByTimeAsync(5_000); expect(ordinaryRequestSettled).toBe(true); expect(imageRequestSettled).toBe(false);
+  await vi.advanceTimersByTimeAsync(25_000); expect(imageRequestSettled).toBe(true);
   ```
 - [ ] **Step 2: Run `npm test -- server/control/gatewayAttachmentPolicy.test.ts server/control/gatewayVersion.test.ts server/control/gatewayClient.test.ts`.** Expect new-interface assertions to fail before implementing them.
 - [ ] **Step 3: Implement the capability and narrow send methods.** Retain policy only for a validated accepted hello; clear it on failure. Use the existing signed connection/pending machinery with image-specific classification/deadline, serialize once, and check current epoch plus existing buffered amount plus the outgoing frame immediately before socket send. Never wait for reconnect/drain or retry. Reject an `attachments` field on ordinary `request('chat.send', ...)` so new callers cannot bypass this boundary. No admin/profile expansion or response-limit increase.
