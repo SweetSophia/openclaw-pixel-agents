@@ -227,7 +227,7 @@ Plan self-review completed by the coordinator on 2026-11-17, not delegated: auth
 - [x] Task 3: bounded authority/leases — `ee5214a` + `bb3f364`; initial full 2,673 tests, fix 30 focused tests/types pass; independent scoped review closed all three lifecycle/identity findings.
 - [x] Task 4: exact-target service/receipts — `93cce9a` + `0b96256`; initial full 2,779 tests, custody fix 167 focused/types pass; independent scoped review closed resource-bound finding.
 - [x] Task 5: authenticated ingress/runtime — `fd04248`; 97 focused, 177 private-route regressions, typecheck/full 2,808 tests pass; independent task review approved.
-- [ ] Task 6: private hook/uncertainty — independent test cycle and chosen review complete.
+- [x] Task 6: private hook/uncertainty — `6507960` + `9119a8c`; initial full 2,852 tests, recovery fix 99 focused/types pass; independent scoped review closed both receipt-ordering findings.
 - [ ] Task 7: accessible composer — independent test cycle and chosen review complete.
 - [ ] Task 8: process/browser/repository qualification and whole-branch review complete.
 
