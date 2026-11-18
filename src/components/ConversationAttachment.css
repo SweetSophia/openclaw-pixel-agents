@@ -1,0 +1,13 @@
+.conversation-attachment { min-width: 0; margin: 20px 0; padding: 12px; border: 1px solid var(--border-color, rgba(255,255,255,.2)); border-radius: 8px; overflow-wrap: anywhere; }
+.conversation-attachment :is(button, input[type="file"]) { min-width: 44px; min-height: 44px; max-width: 100%; box-sizing: border-box; font: inherit; }
+.conversation-attachment button { white-space: normal; padding: 10px 14px; }
+.conversation-attachment input[type="file"] { display: block; width: 100%; }
+.conversation-attachment input::file-selector-button { min-height: 44px; padding: 8px; font: inherit; }
+.conversation-attachment :is(button, input):focus-visible, .conversation-attachment [tabindex="-1"]:focus { outline: 2px solid var(--acc-cyan); outline-offset: 3px; }
+.attachment-metadata { margin: 12px 0; }
+.attachment-metadata dt { color: var(--text-muted); }
+.attachment-metadata dd { margin: 0 0 8px; overflow-wrap: anywhere; }
+.attachment-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.attachment-review { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color, rgba(255,255,255,.2)); }
+.attachment-acknowledgment { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 0; cursor: pointer; }
+.attachment-acknowledgment input { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; }

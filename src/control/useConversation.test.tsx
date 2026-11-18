@@ -16,6 +16,31 @@ function setup() {
 }
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('manual conversation submissions', () => {
+  it('checks the current attachment guard at both fresh and original-retry admission', async () => {
+    setup(); let blocked = true;
+    const { result } = renderHook(() => useConversation(a, true, { agentId: 'cylena', attachmentBlocked: () => blocked }));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.setDraft('ordinary text'));
+    const send = result.current.send; const retry = result.current.retryPending;
+    await act(() => send());
+    expect(f.request.mock.calls.filter(([path]) => path.endsWith('/send'))).toHaveLength(0);
+    blocked = false; await act(() => send());
+    expect(f.request.mock.calls.filter(([path]) => path.endsWith('/send'))).toHaveLength(1);
+    blocked = true; await act(() => retry());
+    expect(f.request.mock.calls.filter(([path]) => path.endsWith('/send'))).toHaveLength(1);
+    blocked = false; await act(() => retry());
+    expect(f.request.mock.calls.filter(([path]) => path.endsWith('/send'))).toHaveLength(2);
+  });
+  it('clears only the exact recorded image draft without inventing a text submission', async () => {
+    setup(); const { result } = renderHook(() => useConversation(a, true));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    act(() => result.current.setDraft('newer text'));
+    act(() => result.current.clearRecordedDraft('older text'));
+    expect(result.current.draft).toBe('newer text'); expect(result.current.submission).toBeUndefined();
+    act(() => result.current.clearRecordedDraft('newer text'));
+    expect(result.current.draft).toBe(''); expect(result.current.submission).toBeUndefined();
+    expect(f.request.mock.calls.filter(([path]) => path.endsWith('/send'))).toHaveLength(0);
+  });
   it('defaults to follow-up and retains intent with each exact conversation draft', async () => {
     setup(); const { result, rerender } = renderHook(({ target, active }) => useConversation(target, active), { initialProps: { target: a, active: true } });
     await waitFor(() => expect(result.current.ready).toBe(true));

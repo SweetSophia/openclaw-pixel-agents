@@ -5,11 +5,14 @@ import { AgentDocuments } from './AgentDocuments';
 import { AgentDetailPanel } from './AgentDetailPanel';
 import { AgentWorkspace } from './AgentWorkspace';
 import type { AgentState } from '../../shared/types';
+import type { AttachmentClientOperation } from '../control/ControlAccess';
 import { ControlApiError } from '../control/api';
 
 const access = vi.hoisted(() => ({ request: vi.fn(), requestFile: vi.fn(), lock: vi.fn(), unlock: vi.fn(), state: 'unlocked', generation: 1,
-  status: { configured: true, state: 'ready', canRead: true, canSend: false } }));
-vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => access, useConversationDrafts: () => undefined }));
+  status: { configured: true, state: 'ready', canRead: true, canSend: false }, operations: new Map<string, AttachmentClientOperation>(),
+  isCurrentGeneration: (generation: number): boolean => access.state === 'unlocked' && generation === access.generation,
+  onInvalidate: (_listener: () => void) => () => {} }));
+vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => access, useConversationDrafts: () => undefined, useAttachmentOperations: () => access.operations }));
 const management = { configured: true, state: 'ready', canEdit: true, epoch: 'epoch-1', reason: null };
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'idle', model: 'fixture', sessionKey: 'agent:cylena:test', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
 beforeEach(() => {
@@ -23,7 +26,7 @@ beforeEach(() => {
   });
   vi.spyOn(window, 'confirm').mockReturnValue(false);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); access.operations.clear(); vi.restoreAllMocks(); });
 async function edit() {
   fireEvent.click(screen.getByRole('button', { name: 'Agent documents' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Edit AGENTS.md' }));

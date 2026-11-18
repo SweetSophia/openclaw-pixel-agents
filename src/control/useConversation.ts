@@ -8,7 +8,7 @@ interface Submission { input: ControlSendRequest; phase: 'sending' | 'accepted' 
 interface Draft { text: string; intent?: 'followup' | 'steer'; creating?: boolean; submission?: Submission }
 // A response owned by an unmounted live form must also update its mounted successor.
 const draftListeners = new WeakMap<Map<string, Draft>, Set<() => void>>();
-export function useConversation(target: ControlTarget | null, active: boolean, options?: { agentId: string; onCreated?(target: ControlTarget): void }) {
+export function useConversation(target: ControlTarget | null, active: boolean, options?: { agentId: string; onCreated?(target: ControlTarget): void; attachmentBlocked?(): boolean }) {
   const access = useControlAccess(); const sharedDrafts = useConversationDrafts(); const localDrafts = useRef(new Map<string, unknown>());
   const drafts = (sharedDrafts ?? localDrafts.current) as Map<string, Draft>;
   const [isNew, setNew] = useState(() => drafts.get(target ? targetIdentity(target) : '')?.creating === true); const [, redraw] = useState(0);
@@ -19,8 +19,8 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
   const scope = `${draftKey}:${access.generation}`;
   const creationReceipt = isNew ? drafts.get(draftKey)?.submission?.receipt : undefined;
   const read = useRef<AbortController | null>(null); const readGeneration = useRef(0);
-  const context = useRef({ access, active, target, targetKey, draftKey, scope, isNew, agentId, page, onCreated: options?.onCreated });
-  context.current = { access, active, target, targetKey, draftKey, scope, isNew, agentId, page, onCreated: options?.onCreated };
+  const context = useRef({ access, active, target, targetKey, draftKey, scope, isNew, agentId, page, onCreated: options?.onCreated, attachmentBlocked: options?.attachmentBlocked });
+  context.current = { access, active, target, targetKey, draftKey, scope, isNew, agentId, page, onCreated: options?.onCreated, attachmentBlocked: options?.attachmentBlocked };
   useEffect(() => () => { context.current.active = false; }, []);
   useEffect(() => {
     let listeners = draftListeners.get(drafts);
@@ -76,7 +76,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
   const submit = useCallback(async (retry: boolean) => {
     const current = context.current; const key = current.draftKey; const draft = drafts.get(key); if (!draft) return;
     const unsettled = draft.submission && !['persisted', 'rejected'].includes(draft.submission.phase);
-    if (!current.active || current.access.state !== 'unlocked' || !current.access.status?.canSend || draft.submission?.phase === 'sending') return;
+    if (current.attachmentBlocked?.() || !current.active || current.access.state !== 'unlocked' || !current.access.status?.canSend || draft.submission?.phase === 'sending') return;
     const page = current.page;
     if (!retry && (unsettled || isControlCommand(draft.text) || !draft.text.trim() || draft.text.length > CONTROL_LIMITS.prompt || (!current.isNew && (!page || page.source.state !== 'current' || page.sendDisabledReason || !current.target || targetIdentity(page.target) !== current.targetKey)))) return;
     const input = retry ? draft.submission?.input : {
@@ -140,6 +140,7 @@ export function useConversation(target: ControlTarget | null, active: boolean, o
     ready: !disabledReason, pending: !!submission && !['persisted', 'rejected'].includes(submission.phase), stale: !!currentPage && (currentPage.source.state === 'stale' || !access.status?.canRead),
     nextCursor: currentPage?.nextCursor,
     setDraft: (text: string) => mutate(draftKey, value => { value.text = text; }), setIntent: (intent: 'followup' | 'steer') => mutate(draftKey, value => { value.intent = intent; }), send: () => submit(false), retryPending: () => submit(true),
+    clearRecordedDraft: (submittedMessage: string) => mutate(draftKey, value => { if (value.text === submittedMessage) value.text = ''; }),
     newConversation: () => { if (!context.current.onCreated) { setError(new ControlApiError('unsupported')); return; } mutate(targetKey, value => { value.creating = true; }); setNew(true); setError(null); }, returnToConversation: () => { mutate(targetKey, value => { value.creating = false; }); setNew(false); }, refresh: () => refresh(), loadEarlier: () => refresh(true),
   };
 }
