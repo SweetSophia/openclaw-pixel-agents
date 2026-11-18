@@ -27,13 +27,16 @@ import type { ScheduleService } from './scheduleService';
 import { createScheduleRouter } from './scheduleRoutes';
 import type { AgentDocumentService } from './agentDocumentService';
 import { createAgentDocumentRouter } from './agentDocumentRoutes';
+import type { AttachmentService } from './attachmentService';
+import { createAttachmentRouter } from './attachmentRoutes';
 
-export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService; models?: ModelService; schedules?: ScheduleService; documents?: AgentDocumentService }): Router {
+export function createControlRouter(options: { gateway: ControlGateway; tasks: TaskService; config: ControlConfig; sends?: SendService; conversations?: ConversationService; artifacts?: ArtifactService; workspace?: WorkspaceService; usage?: UsageService; runHistory?: RunHistoryService; runControls?: RunControlService; approvals?: ApprovalService; models?: ModelService; schedules?: ScheduleService; documents?: AgentDocumentService; attachments?: AttachmentService }): Router {
   const { gateway, tasks, config, sends, conversations, artifacts, workspace, usage, runHistory, runControls, approvals, models } = options; const router = Router();
   const contentBudget = createContentBudget();
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.get('/status', (_req, res, next) => { if (!config.enabled) { res.json(gateway.status()); return; } next(); });
   router.use(createControlAccess(config));
+  if (options.attachments) router.use('/agents/:id/attachments', createAttachmentRouter(options.attachments));
   if (options.schedules) router.use('/agents/:id/schedules', createScheduleRouter(options.schedules));
   if (options.documents) router.use('/agents/:id/documents', createAgentDocumentRouter(options.documents));
   router.get('/status', (_req, res) => res.json(gateway.status()));

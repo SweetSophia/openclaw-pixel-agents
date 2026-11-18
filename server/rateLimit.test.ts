@@ -74,6 +74,19 @@ describe("API write rate limiting (issue #154)", () => {
     await request(app).post('/api/control/agents/main/task').set('Origin', appOrigin).send({}).expect(503);
   });
 
+  it("defers only canonical image preparation until private admission, without widening ordinary JSON limits", async () => {
+    const large = '{"private":"' + 'x'.repeat(120 * 1024);
+    for (const path of ['/api/control/agents/main/attachments/prepare', '/api/control/agents/main/attachments/prepare/']) {
+      await request(app).post(path).set('Origin', appOrigin).set('Content-Type', 'application/json').send(large).expect(503).expect('Cache-Control', 'no-store');
+      await request(app).post(path).set('Origin', 'https://other.test').set('Content-Type', 'application/json').send(large).expect(403).expect('Cache-Control', 'no-store');
+    }
+    for (const path of ['/api/control/agents/%6dain/attachments/prepare', '/api/control/agents/main/Attachments/prepare',
+      '/api/control/agents/main/attachments/prepare/extra', '/api/control/agents/main/attachments/confirm']) {
+      await request(app).post(path).set('Origin', appOrigin).set('Content-Type', 'application/json').send(large).expect(413).expect('Cache-Control', 'no-store');
+    }
+    await request(app).put('/api/control/agents/main/attachments/prepare').set('Origin', appOrigin).set('Content-Type', 'application/json').send(large).expect(413);
+  });
+
   it.each(preferenceMutations)("bounds the %s persistence/broadcast path", async (_name, mutate) => {
     await mutate().expect(200);
     const blocked = await mutate().expect(429);
