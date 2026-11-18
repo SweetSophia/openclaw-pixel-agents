@@ -32,6 +32,10 @@ const messages: Partial<Record<ClientErrorCode, string>> = {
   'document-denied': 'Document editing was denied. The separate document device needs permission; other panels remain unlocked.',
   'document-changed': 'This document changed or its revision expired. Your draft is kept. Explicitly reload and review before saving; no submission is replayed.',
   'document-outcome-unknown': 'The document save outcome is unknown. Your draft is kept. Explicitly reload and review the current document; do not replay this submission.',
+  'attachment-denied': 'Image sending was denied. Other task panels remain unlocked.',
+  'attachment-changed': 'This image review changed. Explicitly select an image and review a new submission.',
+  'attachment-expired': 'The original image receipt or review expired. An uncertain submission remains blocked; expiry does not prove non-delivery.',
+  'attachment-outcome-unknown': 'The image submission outcome is unknown. Check the original submission; a replacement is blocked.',
   'timed-out': 'The request timed out. Try again.',
 };
 // Browser-only error copy must not expand the server's rejection vocabulary.
@@ -44,6 +48,7 @@ const serverCodes: ReadonlySet<string> = new Set<ControlErrorCode>([
   'model-denied', 'model-busy',
   'schedule-outcome-unknown', 'schedule-changed', 'schedule-denied', 'schedule-storage-unavailable',
   'document-denied', 'document-changed', 'document-outcome-unknown',
+  'attachment-denied', 'attachment-changed', 'attachment-expired', 'attachment-outcome-unknown',
 ]);
 export class ControlApiError extends Error {
   constructor(public readonly code: ClientErrorCode = 'unavailable', public readonly approvalDisposition?: 'not-dispatched') { super(messages[code] ?? 'Task details are temporarily unavailable.'); }

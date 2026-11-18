@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ControlAccessProvider, useControlAccess, useConversationDrafts } from './ControlAccess';
+import { ControlAccessProvider, useAttachmentOperations, useControlAccess, useConversationDrafts } from './ControlAccess';
 import { controlFetch } from './api';
 
 const status = { configured: true, state: 'ready', canRead: true, canSend: false };
@@ -11,6 +11,28 @@ const socketFixture = vi.hoisted(() => ({ io: vi.fn(), disconnect: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: socketFixture.io }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('tab-memory task access', () => {
+  it('invalidates image authority and metadata synchronously before a lock render', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(status)));
+    const { result } = renderHook(() => ({ access: useControlAccess(), operations: useAttachmentOperations() }), { wrapper });
+    await act(() => result.current.access.unlock('fixture-key'));
+    const access = result.current.access; const invalidate = vi.fn();
+    const dispose = access.onInvalidate(invalidate);
+    result.current.operations.set('generation:target', { operationId: 'op-1', generation: access.generation, phase: 'unknown', target: { agentId: 'main', sessionKey: 'agent:main:one', sessionId: 'one' } });
+    act(() => {
+      access.lock();
+      expect(access.isCurrentGeneration(access.generation)).toBe(false);
+      expect(result.current.operations.size).toBe(0);
+      expect(invalidate).toHaveBeenCalledOnce();
+    });
+    dispose();
+  });
+  it('does not globally lock private reads after an attachment policy denial', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(status)).mockResolvedValueOnce(json({ code: 'attachment-denied' }, 403)).mockResolvedValueOnce(json({ private: 'still-readable' })));
+    const { result } = renderHook(useControlAccess, { wrapper }); await act(() => result.current.unlock('fixture-key'));
+    await act(async () => { await expect(result.current.request('/api/control/agents/main/attachments/prepare', { method: 'POST', body: '{}' })).rejects.toMatchObject({ code: 'attachment-denied' }); });
+    expect(result.current.state).toBe('unlocked');
+    await expect(result.current.request('/api/control/agents/main/task')).resolves.toEqual({ private: 'still-readable' });
+  });
   it('keeps the key and private drafts after a method-specific Usage denial', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(json(status)).mockResolvedValueOnce(json({ code: 'usage-denied' }, 403)).mockResolvedValueOnce(json({ private: 'task-read-still-allowed' }));
     vi.stubGlobal('fetch', fetch);
