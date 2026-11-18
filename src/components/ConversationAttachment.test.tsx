@@ -9,7 +9,7 @@ function form(changes: Partial<AttachmentForm> = {}): AttachmentForm {
   return { status: { enabled: true, canPrepare: true, reason: null, epoch: 'epoch', maxBytes: 1024 }, selection: null, review: null, receipt: null,
     phase: 'idle', pending: false, disabledReason: '', select: vi.fn(), prepare: vi.fn(), confirm: vi.fn(), check: vi.fn(), remove: vi.fn(), ...changes };
 }
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('attachment metadata controls', () => {
   it.each(['disabled', 'permission', 'unsupported', 'unavailable'] as const)('explains %s without exposing a usable file picker', reason => {
     render(<ConversationAttachment target={target} form={form({ status: { enabled: reason !== 'disabled', canPrepare: false, reason, epoch: null, maxBytes: null }, disabledReason: 'Image sending is unavailable for this connection.' })} />);
@@ -37,5 +37,31 @@ describe('attachment metadata controls', () => {
     expect(screen.queryByLabelText('Attach image')).toBeNull();
     expect(screen.queryByRole('button', { name: /Retry|Resend|Send image/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Check original submission' })); expect(state.check).toHaveBeenCalledOnce();
+  });
+  it('returns focus to the heading when terminal recovery has no surviving picker', () => {
+    const view = render(<ConversationAttachment target={target} form={form({ phase: 'unknown', pending: true })} />);
+    screen.getByRole('button', { name: 'Check original submission' }).focus();
+    view.rerender(<ConversationAttachment target={target} form={form({ phase: 'recorded', status: null })} />);
+    expect(screen.getByRole('heading', { name: 'Image follow-up' })).toHaveFocus();
+  });
+  it('does not steal focus from outside the attachment controls on terminal recovery', () => {
+    const tree = (phase: AttachmentForm['phase']) => <><button>Other drawer control</button><ConversationAttachment target={target} form={form({ phase, pending: phase === 'unknown' })} /></>;
+    const view = render(tree('unknown'));
+    screen.getByRole('button', { name: 'Check original submission' }).focus();
+    const elsewhere = screen.getByRole('button', { name: 'Other drawer control' }); elsewhere.focus();
+    view.rerender(tree('recorded')); expect(elsewhere).toHaveFocus();
+  });
+  it('does not restore recovery focus while the page is hidden', () => {
+    const view = render(<ConversationAttachment target={target} form={form({ phase: 'unknown', pending: true })} />);
+    screen.getByRole('button', { name: 'Check original submission' }).focus();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    view.rerender(<ConversationAttachment target={target} form={form({ phase: 'recorded' })} />);
+    expect(screen.getByLabelText('Attach image')).not.toHaveFocus();
+    expect(screen.getByRole('heading', { name: 'Image follow-up' })).not.toHaveFocus();
+  });
+  it('does not restore focus when the attachment form unmounts', () => {
+    const view = render(<ConversationAttachment target={target} form={form({ phase: 'unknown', pending: true })} />);
+    screen.getByRole('button', { name: 'Check original submission' }).focus();
+    view.unmount(); expect(document.body).toHaveFocus();
   });
 });

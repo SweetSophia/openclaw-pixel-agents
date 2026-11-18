@@ -1,4 +1,4 @@
-import React, { useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ControlTarget } from '../../shared/control';
 import type { AttachmentForm } from '../control/useImageAttachments';
 import './ConversationAttachment.css';
@@ -45,10 +45,19 @@ const unavailable = { disabled: 'Image sending is not enabled for this office.',
 export function ConversationAttachment({ form, target }: { form: AttachmentForm; target: ControlTarget | null }) {
   const inputId = useId(); const hintId = useId(); const picker = useRef<HTMLInputElement>(null); const check = useRef<HTMLButtonElement>(null); const heading = useRef<HTMLHeadingElement>(null);
   const previousReview = useRef(false);
+  const recoveryOwnedFocus = useRef(false);
+  const setCheck = useCallback((node: HTMLButtonElement | null) => {
+    // Capture ownership before removal resets document focus to the body.
+    if (!node && check.current === document.activeElement) recoveryOwnedFocus.current = true;
+    check.current = node;
+  }, []);
   const admitted = ['confirming', 'unknown', 'accepted'].includes(form.phase);
   useLayoutEffect(() => {
     const prior = previousReview.current; previousReview.current = !!form.review;
-    if (prior && !form.review && document.visibilityState !== 'hidden') (admitted ? check.current : picker.current ?? heading.current)?.focus();
+    const restoreRecovery = recoveryOwnedFocus.current; recoveryOwnedFocus.current = false;
+    if (document.visibilityState === 'hidden') return;
+    if (prior && !form.review) (admitted ? check.current : picker.current ?? heading.current)?.focus();
+    else if (restoreRecovery && !check.current && document.activeElement === document.body) (picker.current ?? heading.current)?.focus();
   });
   const reason = form.status?.reason ? unavailable[form.status.reason] : form.disabledReason;
   return <section className="conversation-attachment" aria-label="Image follow-up">
@@ -72,6 +81,6 @@ export function ConversationAttachment({ form, target }: { form: AttachmentForm;
     {form.phase in outcomes && <p role="status">{outcomes[form.phase as keyof typeof outcomes]}</p>}
     {form.receipt && <p role="status">{form.receipt.imageEvidence === 'reference-recorded' ? 'Attachment reference recorded. A reference is not verification of image bytes or provider processing.' : form.receipt.imageEvidence === 'omitted' ? 'The native source reports the attachment was omitted.' : 'Attachment evidence is unverified.'}</p>}
     {reason && <p role="status">{reason}</p>}
-    {admitted && <button type="button" ref={check} onClick={() => { void form.check(); }}>Check original submission</button>}
+    {admitted && <button type="button" ref={setCheck} onClick={() => { void form.check(); }}>Check original submission</button>}
   </section>;
 }

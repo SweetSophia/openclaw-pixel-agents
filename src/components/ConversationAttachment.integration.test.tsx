@@ -18,6 +18,7 @@ const capability = { enabled: true, canPrepare: true, reason: null, epoch: 'epoc
 let access: ControlAccess;
 let requests: { path: string; body: any }[];
 let confirmReply: () => Response | Promise<Response>;
+let receiptReply: () => Response | Promise<Response>;
 let textPhase: 'unknown' | 'persisted';
 function receipt(phase: AttachmentReceipt['phase'] = 'unknown', imageEvidence: AttachmentReceipt['imageEvidence'] = 'unverified') {
   return json({ operationId: 'image-op-1', target, phase, nativeInvoked: !['prepared', 'not-dispatched'].includes(phase), imageEvidence,
@@ -46,7 +47,7 @@ async function review() {
 }
 const count = (suffix: string) => requests.filter(row => row.path.endsWith(suffix)).length;
 beforeEach(() => {
-  requests = []; confirmReply = () => receipt(); textPhase = 'persisted';
+  requests = []; confirmReply = () => receipt(); receiptReply = () => receipt(); textPhase = 'persisted';
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
   vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit = {}) => {
     const body = init.body ? JSON.parse(String(init.body)) : null; requests.push({ path, body });
@@ -56,7 +57,7 @@ beforeEach(() => {
     if (path.endsWith('/prepare')) return json({ operationId: 'image-op-1', reviewToken: 'private-token', target, message: body.message,
       image: { filename: body.image.filename, mimeType: 'image/png', bytes: 33, width: 1, height: 1, sha256: 'a'.repeat(64) }, manifestDigest: 'b'.repeat(64), expiresInMs: 300_000 });
     if (path.endsWith('/confirm')) return confirmReply();
-    if (path.endsWith('/receipt')) return receipt();
+    if (path.endsWith('/receipt')) return receiptReply();
     if (path.endsWith('/discard')) return json({ ok: true });
     if (path.endsWith('/send')) return json({ target, idempotencyKey: body.idempotencyKey, phase: textPhase, ...(textPhase === 'persisted' ? { messageId: 'text-1', messageSeq: 1 } : {}) });
     throw new Error(`Unexpected synthetic path: ${path}`);
@@ -109,6 +110,40 @@ describe('real private image composer coordination', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
     expect(screen.queryByText(/Messages stay in this conversation/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry original submission' })).toBeNull(); expect(count('/send')).toBe(0);
+  });
+  it.each(['recorded', 'rejected', 'not-dispatched'] as const)('returns recovery focus after a delayed %s confirmation', async phase => {
+    await setup(); await review();
+    let finish!: (value: Response) => void;
+    confirmReply = () => new Promise(resolve => { finish = resolve; });
+    fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Send image follow-up' }));
+    expect(screen.getByRole('button', { name: 'Check original submission' })).toHaveFocus();
+    await act(async () => finish(receipt(phase)));
+    await waitFor(() => expect(screen.getByLabelText('Attach image')).toHaveFocus());
+    expect(screen.queryByRole('button', { name: 'Check original submission' })).toBeNull();
+    expect(count('/confirm')).toBe(1); expect(count('/send')).toBe(0);
+  });
+  it.each(['recorded', 'rejected', 'not-dispatched'] as const)('returns recovery focus when Check observes %s', async phase => {
+    await setup(); await review();
+    confirmReply = async () => { throw Error('lost confirmation reply'); };
+    fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Send image follow-up' }));
+    await screen.findByText(/Image outcome unknown/);
+    const check = await screen.findByRole('button', { name: 'Check original submission' });
+    expect(check).toHaveFocus();
+    receiptReply = () => receipt(phase); fireEvent.click(check);
+    await waitFor(() => expect(screen.getByLabelText('Attach image')).toHaveFocus());
+    expect(screen.queryByRole('button', { name: 'Check original submission' })).toBeNull();
+    expect(count('/receipt')).toBe(1); expect(count('/confirm')).toBe(1); expect(count('/send')).toBe(0);
+  });
+  it('preserves focus moved to the newer draft before a delayed terminal receipt', async () => {
+    await setup(); await review();
+    let finish!: (value: Response) => void;
+    confirmReply = () => new Promise(resolve => { finish = resolve; });
+    fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Send image follow-up' }));
+    expect(screen.getByRole('button', { name: 'Check original submission' })).toHaveFocus();
+    const message = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(message, { target: { value: 'newer draft' } }); message.focus();
+    await act(async () => finish(receipt('recorded')));
+    expect(message).toHaveFocus(); expect(message).toHaveValue('newer draft');
   });
   it('image_unknown_has_no_text_retry and survives mode changes, removal and remount', async () => {
     const view = await setup(); await review();
