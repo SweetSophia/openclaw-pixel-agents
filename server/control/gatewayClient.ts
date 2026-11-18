@@ -41,6 +41,7 @@ export interface ControlGateway {
   onEvent(listener: (event: GatewayEvent) => void): () => void; close(): void;
   artifactConnection?(): { id: string; generation: number; gatewayUrl: string } | null;
   modelCapabilities?(): { canRead: boolean; canChange: boolean; disabledReason?: 'unsupported' | 'permission' | null };
+  readSourceKey?(): string | null;
   attachmentCapabilities?(): AttachmentGatewayCapabilities | null;
   sendImageFollowup?(input: NativeImageFollowup, expectedEpoch: string): Promise<unknown>;
 }
@@ -95,7 +96,7 @@ function createSignedGateway(profile: GatewayProfile) {
   let deviceId: string | undefined; let epoch: string | null = null; let manageGranted = false;
   let scheduleReason: ScheduleManagement['reason'] = config.enabled ? 'unavailable' : 'disabled';
   let memoryGrant: DeviceGrant | undefined;
-  let attachmentCaps: AttachmentGatewayCapabilities | null = null; let attachmentEndpoint: string | undefined;
+  let attachmentCaps: AttachmentGatewayCapabilities | null = null; let sourceEndpoint: string | undefined; let sourceKey: string | null = null;
   let reconnect: ReturnType<typeof setTimeout> | undefined; let handshake: ReturnType<typeof setTimeout> | undefined;
   const pending = new Map<string, Pending>(); const listeners = new Set<(event: GatewayEvent) => void>();
   const emit = (event: GatewayEvent) => { for (const listener of listeners) listener(event); };
@@ -106,7 +107,7 @@ function createSignedGateway(profile: GatewayProfile) {
   function fail(next: ControlGatewayState, retryable = false, retryAfterMs?: unknown): void {
     generation++; state = next; writeGranted = false; stopGranted = false; writeScopeGranted = false; approvalScopeGranted = false; approvalsGranted = false; negotiatedMethods = []; connectionId = undefined; clearTimeout(handshake); handshake = undefined;
     epoch = null; deviceId = undefined; manageGranted = false;
-    attachmentCaps = null; attachmentEndpoint = undefined;
+    attachmentCaps = null; sourceEndpoint = undefined; sourceKey = null;
     scheduleReason = next === 'auth-error' ? 'permission' : next === 'pairing-required' ? 'pairing-required' : next === 'unsupported' ? 'unsupported' : next === 'disabled' ? 'disabled' : 'unavailable';
     const old = socket; socket = undefined;
     if (old && old.readyState < 2) old.close();
@@ -119,15 +120,16 @@ function createSignedGateway(profile: GatewayProfile) {
   function connect(): void {
     if (stopped || !config.enabled || socket) return;
     clearTimeout(reconnect); reconnect = undefined;
+    const endpoint = config.url!;
     let identity: ReturnType<typeof loadOrCreateDeviceIdentity>;
     let cached: DeviceGrant | undefined;
     try {
       identity = loadOrCreateDeviceIdentity(config.deviceDirectory);
-      cached = memoryGrant?.deviceId === identity.deviceId && memoryGrant.endpoint === config.url ? memoryGrant
-        : readDeviceGrantDetails(config.deviceDirectory, config.url!, identity.deviceId);
+      cached = memoryGrant?.deviceId === identity.deviceId && memoryGrant.endpoint === endpoint ? memoryGrant
+        : readDeviceGrantDetails(config.deviceDirectory, endpoint, identity.deviceId);
     } catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); if (retryable) scheduleReason = 'storage-unavailable'; return; }
     state = 'connecting'; sequence = undefined;
-    const current = ++generation; const ws = new WebSocket(config.url!); socket = ws;
+    const current = ++generation; const ws = new WebSocket(endpoint); socket = ws;
     let connectId: string | undefined;
     const readOnlyFallback = !config.token && !config.password && cached?.scopes.includes('operator.read') && !cached.scopes.includes('operator.write');
     // Cached scheduling grants bound authority even when bootstrap secrets remain configured.
@@ -206,15 +208,15 @@ function createSignedGateway(profile: GatewayProfile) {
           const actualScopes = (management ? SCHEDULE_SCOPES : ['operator.read', 'operator.write', 'operator.approvals']).filter(scope => grants.includes(scope) && (!management || scopes.includes(scope)));
           const retainedScopes = !management && cached?.token === auth.deviceToken ? [...new Set([...cached.scopes, ...actualScopes])] : actualScopes;
           // A rotated token may immediately invalidate the old disk token. Keep it for safe I/O retries.
-          memoryGrant = { deviceId: identity.deviceId, endpoint: config.url!, token: auth.deviceToken, scopes: retainedScopes };
-          try { writeDeviceGrant(config.deviceDirectory, config.url!, identity.deviceId, memoryGrant.token, memoryGrant.scopes); }
+          memoryGrant = { deviceId: identity.deviceId, endpoint, token: auth.deviceToken, scopes: retainedScopes };
+          try { writeDeviceGrant(config.deviceDirectory, endpoint, identity.deviceId, memoryGrant.token, memoryGrant.scopes); }
           catch (error) { const retryable = isDeviceStorageError(error); fail(retryable ? 'unavailable' : 'auth-error', retryable); if (retryable) scheduleReason = 'storage-unavailable'; return; }
         }
         deviceId = identity.deviceId; epoch = manageGranted ? randomUUID() : null; scheduleReason = manageGranted ? null : 'permission';
+        sourceEndpoint = endpoint;
+        sourceKey = createHash('sha256').update(JSON.stringify(['pixel-attachment-source-v1', endpoint, identity.deviceId])).digest('hex');
         if (control?.attachmentsEnabled && writeGranted) {
-          const sourceKey = createHash('sha256').update(JSON.stringify(['pixel-attachment-source-v1', config.url, identity.deviceId])).digest('hex');
           attachmentCaps = qualifyAttachmentPolicy(server.version, policy, randomUUID(), sourceKey);
-          attachmentEndpoint = config.url;
         }
         clearTimeout(handshake); handshake = undefined; retry = 0; state = 'ready'; emit({ event: 'source.ready', payload: null }); return;
       }
@@ -269,9 +271,12 @@ function createSignedGateway(profile: GatewayProfile) {
       }
     });
   }
+  function currentReadSourceKey(): string | null {
+    return state === 'ready' && config.enabled && socket?.readyState === WebSocket.OPEN && config.url === sourceEndpoint ? sourceKey : null;
+  }
   function currentAttachmentCapabilities(): AttachmentGatewayCapabilities | null {
     return state === 'ready' && config.enabled && control?.attachmentsEnabled && control.sendEnabled && writeGranted
-      && socket?.readyState === WebSocket.OPEN && config.url === attachmentEndpoint && attachmentCaps ? { ...attachmentCaps } : null;
+      && attachmentCaps && currentReadSourceKey() === attachmentCaps.sourceKey ? { ...attachmentCaps } : null;
   }
   function dispatch(method: GatewayMethod, params: Record<string, unknown>, approval: boolean, signal?: AbortSignal, imageEpoch?: string): Promise<unknown> {
     if (signal?.aborted) return Promise.reject(Error('Task request cancelled'));
@@ -316,6 +321,7 @@ function createSignedGateway(profile: GatewayProfile) {
         canChange: state === 'ready' && writeScopeGranted && !modelAdminGranted && !unsupported,
         disabledReason: unsupported ? 'unsupported' : !writeScopeGranted || modelAdminGranted ? 'permission' : null };
     },
+    readSourceKey: currentReadSourceKey,
     attachmentCapabilities: currentAttachmentCapabilities,
     sendImageFollowup(input: NativeImageFollowup, expectedEpoch: string): Promise<unknown> {
       if (typeof expectedEpoch !== 'string' || !expectedEpoch) return Promise.reject(new AttachmentGatewayRequestError('attachment-changed'));

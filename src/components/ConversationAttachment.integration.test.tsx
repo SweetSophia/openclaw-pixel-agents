@@ -20,13 +20,14 @@ let requests: { path: string; body: any }[];
 let confirmReply: () => Response | Promise<Response>;
 let receiptReply: () => Response | Promise<Response>;
 let textPhase: 'unknown' | 'persisted';
+let canSend: boolean;
 function receipt(phase: AttachmentReceipt['phase'] = 'unknown', imageEvidence: AttachmentReceipt['imageEvidence'] = 'unverified') {
   return json({ operationId: 'image-op-1', target, phase, nativeInvoked: !['prepared', 'not-dispatched'].includes(phase), imageEvidence,
     ...(phase === 'recorded' ? { runId: 'image-op-1', messageId: 'user-1', messageSeq: 1 } : {}) });
 }
 function Access() { access = useControlAccess(); return null; }
-function Tree({ readOnly = false, show = true }: { readOnly?: boolean; show?: boolean }) {
-  return <ControlAccessProvider><Access />{show && <AgentConversation target={target} agentId="main" active busy readOnly={readOnly} onCreated={() => {}} />}</ControlAccessProvider>;
+function Tree({ readOnly = false, show = true, selected = target }: { readOnly?: boolean; show?: boolean; selected?: typeof target }) {
+  return <ControlAccessProvider><Access />{show && <AgentConversation target={selected} agentId="main" active busy readOnly={readOnly} onCreated={() => {}} />}</ControlAccessProvider>;
 }
 async function setup() {
   const view = render(<Tree />); await act(() => access.unlock('synthetic-key'));
@@ -47,11 +48,11 @@ async function review() {
 }
 const count = (suffix: string) => requests.filter(row => row.path.endsWith(suffix)).length;
 beforeEach(() => {
-  requests = []; confirmReply = () => receipt(); receiptReply = () => receipt(); textPhase = 'persisted';
+  requests = []; confirmReply = () => receipt(); receiptReply = () => receipt(); textPhase = 'persisted'; canSend = true;
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
   vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit = {}) => {
     const body = init.body ? JSON.parse(String(init.body)) : null; requests.push({ path, body });
-    if (path === '/api/control/status') return json({ configured: true, state: 'ready', canRead: true, canSend: true });
+    if (path === '/api/control/status') return json({ configured: true, state: 'ready', canRead: true, canSend });
     if (path.endsWith('/attachments/status')) return json(capability);
     if (path.endsWith('/history')) return json({ target, messages: [], source: { state: 'current', observedAt: 10 } });
     if (path.endsWith('/prepare')) return json({ operationId: 'image-op-1', reviewToken: 'private-token', target, message: body.message,
@@ -66,6 +67,38 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('real private image composer coordination', () => {
+  it('read-only provider status refresh keeps Check available without new preparation or confirmation', async () => {
+    await setup(); await review(); confirmReply = async () => { throw Error('lost confirmation reply'); };
+    fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Send image follow-up' }));
+    await screen.findByText(/Image outcome unknown/);
+    canSend = false; await act(() => access.request('/api/control/status'));
+    expect(access.status).toMatchObject({ canRead: true, canSend: false });
+    expect(screen.queryByLabelText('Attach image')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send image follow-up' })).toBeNull();
+    receiptReply = () => receipt('recorded'); fireEvent.click(screen.getByRole('button', { name: 'Check original submission' }));
+    await waitFor(() => expect(count('/receipt')).toBe(1));
+    await screen.findByText(/Message recorded in the conversation/);
+    expect(requests.find(row => row.path.endsWith('/receipt'))?.body).toEqual({ operationId: 'image-op-1' });
+    expect(count('/prepare')).toBe(1); expect(count('/confirm')).toBe(1); expect(count('/discard')).toBe(0); expect(count('/send')).toBe(0);
+  });
+  it.each(['lost response', 'accepted receipt'] as const)('displays the original submission leaf after append and remount with %s', async outcome => {
+    const view = await setup(); await review();
+    confirmReply = outcome === 'lost response' ? async () => { throw Error('lost confirmation reply'); } : () => receipt('accepted');
+    fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Send image follow-up' }));
+    await screen.findByText(outcome === 'lost response' ? /Image outcome unknown/ : /Native message accepted/);
+    const selected = { ...target, activeLeafEntryId: 'leaf-2' }; view.rerender(<Tree selected={selected} />);
+    const imagePanel = screen.getByRole('region', { name: 'Image follow-up' });
+    expect(within(imagePanel).queryByText('leaf-2', { exact: true })).toBeNull();
+    const original = within(imagePanel).getByRole('group', { name: 'Original image submission target' });
+    expect(within(original).getByText('leaf-1', { exact: true })).toBeInTheDocument();
+    view.rerender(<Tree selected={selected} show={false} />); view.rerender(<Tree selected={selected} />);
+    expect(within(screen.getByRole('group', { name: 'Original image submission target' })).getByText('leaf-1', { exact: true })).toBeInTheDocument();
+    receiptReply = () => receipt('recorded'); fireEvent.click(screen.getByRole('button', { name: 'Check original submission' }));
+    await screen.findByText(/Message recorded in the conversation/);
+    expect(within(screen.getByRole('group', { name: 'Original image submission target' })).getByText('leaf-1', { exact: true })).toBeInTheDocument();
+    expect(requests.filter(row => row.path.endsWith('/receipt')).map(row => row.body)).toEqual([{ operationId: 'image-op-1' }]);
+    expect(count('/prepare')).toBe(1); expect(count('/confirm')).toBe(1); expect(count('/send')).toBe(0);
+  });
   it('keyboard_reviews_but_never_confirms', async () => {
     await setup(); await select();
     expect(screen.queryByText(/Messages stay in this conversation/)).toBeNull();

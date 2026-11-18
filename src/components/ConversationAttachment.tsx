@@ -62,7 +62,9 @@ export function ConversationAttachment({ form, target }: { form: AttachmentForm;
   const reason = form.status?.reason ? unavailable[form.status.reason] : form.disabledReason;
   return <section className="conversation-attachment" aria-label="Image follow-up">
     <h3 ref={heading} tabIndex={-1}>Image follow-up</h3>
-    {!form.review && target && <Target target={target} />}
+    {!form.review && (form.originalTarget ? <div role="group" aria-label="Original image submission target">
+      <h4>Original submission target</h4><Target target={form.originalTarget} />
+    </div> : target && <Target target={target} />)}
     {form.status?.canPrepare && !admitted && <>
       <label htmlFor={inputId}>Attach image</label>
       <input ref={picker} id={inputId} type="file" accept="image/png,image/jpeg" disabled={form.pending} aria-describedby={hintId} onChange={event => {

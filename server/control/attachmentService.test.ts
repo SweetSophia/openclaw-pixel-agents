@@ -349,7 +349,7 @@ describe('target-bound image service', () => {
     const message = nativeImageMessage(review.operationId); f.state.history.messages = [message];
     if (change === 'foreign-run') message.__openclaw.runId = 'other';
     if (change === 'foreign-session') f.state.historyOverride = { sessionId: 's2' };
-    if (change === 'source') f.state.caps!.sourceKey = 'source-2';
+    if (change === 'source') f.state.sourceKey = 'source-2';
     if (change === 'lifecycle') f.state.afterRequest = method => { if (method === 'chat.history') f.state.session.lifecycleRevision = 'life-2'; };
     if (change === 'bad-sequence') message.__openclaw.seq = 0;
     if (change === 'duplicate-custody') f.state.history.inputReceipts = [{ runId: review.operationId, state: 'pending' }, { runId: review.operationId, state: 'consumed', consumedByEventId: 'other' }];

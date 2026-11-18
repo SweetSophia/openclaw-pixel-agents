@@ -98,9 +98,10 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
     return meta;
   }
   function readFence(meta: AttachmentOperationMeta, version: number, signal?: AbortSignal): void {
-    if (closed || signal?.aborted || !gateway.status().canRead) throw new ControlError('unavailable');
+    const source = gateway.status();
+    if (closed || signal?.aborted || source.state !== 'ready' || !source.canRead) throw new ControlError('unavailable');
     if (!registeredAgentIds().has(meta.receipt.target.agentId) || generation !== version
-      || capabilities()?.sourceKey !== meta.sourceKey) throw new ControlError('attachment-changed');
+      || gateway.readSourceKey?.() !== meta.sourceKey) throw new ControlError('attachment-changed');
   }
   async function reconcile(meta: AttachmentOperationMeta, signal?: AbortSignal): Promise<AttachmentReceipt> {
     const target = meta.receipt.target, id = meta.receipt.operationId, version = generation;

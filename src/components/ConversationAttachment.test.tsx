@@ -6,7 +6,7 @@ import { ConversationAttachment } from './ConversationAttachment';
 
 const target = { agentId: 'main', sessionKey: 'agent:main:one', sessionId: 'one', activeLeafEntryId: 'leaf-1' };
 function form(changes: Partial<AttachmentForm> = {}): AttachmentForm {
-  return { status: { enabled: true, canPrepare: true, reason: null, epoch: 'epoch', maxBytes: 1024 }, selection: null, review: null, receipt: null,
+  return { status: { enabled: true, canPrepare: true, reason: null, epoch: 'epoch', maxBytes: 1024 }, selection: null, review: null, receipt: null, originalTarget: null,
     phase: 'idle', pending: false, disabledReason: '', select: vi.fn(), prepare: vi.fn(), confirm: vi.fn(), check: vi.fn(), remove: vi.fn(), ...changes };
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });

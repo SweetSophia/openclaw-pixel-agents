@@ -7,7 +7,7 @@ import { ControlApiError, targetIdentity } from './api';
 
 export interface AttachmentForm {
   status: AttachmentStatus | null; selection: Omit<AttachmentImage, 'sha256'> | null;
-  review: AttachmentReview | null; receipt: AttachmentReceipt | null;
+  review: AttachmentReview | null; receipt: AttachmentReceipt | null; originalTarget: ControlTarget | null;
   phase: 'idle' | 'reading' | 'preparing' | 'review' | 'confirming' | 'accepted' | 'recorded' | 'not-dispatched' | 'rejected' | 'unknown';
   disabledReason: string; pending: boolean;
   select(file: File | null): Promise<void>; prepare(): Promise<void>; confirm(sharingAcknowledged: boolean): Promise<void>;
@@ -40,8 +40,9 @@ export function useImageAttachments(options: Options): AttachmentForm {
   const target = options.target ? parseControlTarget(options.target) : null;
   const operationKey = target ? JSON.stringify([access.generation, targetIdentity(target)]) : '';
   const owner = JSON.stringify([access.generation, options.agentId, target, options.active, options.readOnly, options.isNew, options.intent]);
-  const enabled = options.active && !options.readOnly && !options.isNew && options.intent === 'followup' && !!target
-    && target.agentId === options.agentId && !!target.activeLeafEntryId && access.state === 'unlocked' && access.status?.canRead === true && access.status.canSend;
+  const readable = options.active && !options.readOnly && !options.isNew && options.intent === 'followup' && !!target
+    && target.agentId === options.agentId && !!target.activeLeafEntryId && access.state === 'unlocked' && access.status?.canRead === true;
+  const enabled = readable && access.status?.canSend === true;
   const [local, render] = useState(() => empty(owner)); const data = useRef(local); const [, redraw] = useState(0);
   const [visible, setVisible] = useState(document.visibilityState !== 'hidden');
   const mounted = useRef(false); const version = useRef(0); const content = useRef<string | null>(null);
@@ -49,14 +50,16 @@ export function useImageAttachments(options: Options): AttachmentForm {
   const localOperation = useRef<{ key: string; admitted: AttachmentClientOperation } | null>(null);
   const reviewGeneration = useRef<number | null>(null);
   const reads = useRef(new Set<AbortController>()); const checking = useRef(false);
-  const context = useRef({ options, access, target, operationKey, owner, enabled });
-  context.current = { options, access, target, operationKey, owner, enabled };
+  const context = useRef({ options, access, target, operationKey, owner, readable, enabled });
+  context.current = { options, access, target, operationKey, owner, readable, enabled };
   const update = useCallback((value: Local) => { data.current = value; if (mounted.current) render(value); }, []);
   const notify = useCallback(() => { listeners.get(operations)?.forEach(listener => listener()); }, [operations]);
   const currentGeneration = (generation: number) => access.isCurrentGeneration(generation);
-  const permitted = () => mounted.current && context.current.enabled && document.visibilityState !== 'hidden'
+  const readPermitted = () => mounted.current && context.current.readable && document.visibilityState !== 'hidden'
     && context.current.access.isCurrentGeneration(context.current.access.generation);
-  const same = (captured: string, token: number) => permitted() && context.current.owner === captured && version.current === token;
+  const permitted = () => context.current.enabled && readPermitted();
+  const sameRead = (captured: string, token: number) => readPermitted() && context.current.owner === captured && version.current === token;
+  const same = (captured: string, token: number) => context.current.enabled && sameRead(captured, token);
   const discard = useCallback((agentId: string, operationId: string, generation: number) => {
     if (!access.isCurrentGeneration(generation)) return;
     void access.request(path(agentId, 'discard'), { method: 'POST', body: JSON.stringify({ operationId }) }).catch(() => {});
@@ -74,7 +77,7 @@ export function useImageAttachments(options: Options): AttachmentForm {
     mounted.current = true; clear();
     const unsubscribe = access.onInvalidate(() => clear());
     return () => { unsubscribe(); mounted.current = false; clear(); };
-  }, [owner, enabled, access.onInvalidate, clear]);
+  }, [owner, readable, enabled, access.onInvalidate, clear]);
   useLayoutEffect(() => {
     let entries = listeners.get(operations);
     if (!entries) { entries = new Set(); listeners.set(operations, entries); }
@@ -183,7 +186,7 @@ export function useImageAttachments(options: Options): AttachmentForm {
     const current = context.current; const state = data.current;
     if (!review || review !== state.review || !sharingAcknowledged || !permitted() || current.options.textPending || !state.status?.canPrepare
       || state.owner !== current.owner || state.phase !== 'review' || performance.now() >= state.expiresAt || unresolved(operations.get(current.operationKey))) return;
-    const admitted: AttachmentClientOperation = { operationId: review.operationId, target: { ...review.target }, generation: current.access.generation, phase: 'confirming' };
+    const admitted: AttachmentClientOperation = { operationId: review.operationId, target: Object.freeze({ ...review.target }), generation: current.access.generation, phase: 'confirming' };
     // Latch uncertainty before entering the network. Remounts retain this metadata, never the token/text/bytes.
     operations.set(current.operationKey, admitted); notify();
     localOperation.current = { key: current.operationKey, admitted }; reviewGeneration.current = null;
@@ -199,10 +202,10 @@ export function useImageAttachments(options: Options): AttachmentForm {
   }, [operations, notify, update]);
   const check = useCallback(async () => {
     const current = context.current; const admitted = operations.get(current.operationKey);
-    if (!permitted() || !admitted || admitted.generation !== current.access.generation || checking.current) return;
+    if (!readPermitted() || !admitted || admitted.generation !== current.access.generation || checking.current) return;
     checking.current = true;
     const controller = new AbortController(); reads.current.add(controller); const token = version.current;
-    const ownsCheck = () => same(current.owner, token) && !controller.signal.aborted && operations.get(current.operationKey) === admitted;
+    const ownsCheck = () => sameRead(current.owner, token) && !controller.signal.aborted && operations.get(current.operationKey) === admitted;
     try {
       const value = await current.access.request(path(admitted.target.agentId, 'receipt'), { method: 'POST', signal: controller.signal, body: JSON.stringify({ operationId: admitted.operationId }) });
       if (!ownsCheck()) return;
@@ -228,7 +231,7 @@ export function useImageAttachments(options: Options): AttachmentForm {
         : admitted?.phase === 'rejected' ? 'The native image upload was rejected. Other task panels remain available.'
           : displayed.error || (!displayed.status?.canPrepare ? 'Image sending is unavailable for this connection.'
             : !ordinary(displayed.review?.message ?? options.message) ? 'An image requires nonempty ordinary follow-up text of at most 8,000 characters, not commands.' : '');
-  return { status: displayed.status, selection: displayed.selection, review: displayed.review, receipt: admitted?.receipt ?? null, phase,
+  return { status: displayed.status, selection: displayed.selection, review: displayed.review, receipt: admitted?.receipt ?? null, originalTarget: admitted?.target ?? null, phase,
     disabledReason, pending: unresolved(admitted) || ['reading', 'preparing'].includes(displayed.phase), select, prepare,
     confirm: acknowledged => confirm(displayed.review, acknowledged), check, remove: () => clear(true) };
 }

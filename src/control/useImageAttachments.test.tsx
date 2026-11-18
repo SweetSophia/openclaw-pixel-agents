@@ -172,6 +172,22 @@ describe('private image follow-up state', () => {
     respond = () => json(receipt('recorded')); await act(() => form.check());
     expect(options.onRecorded).toHaveBeenCalledExactlyOnceWith('original text'); expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(3);
   });
+  it.each(['receipt', 'discard'] as const)('invalidates a read-only Check across temporary loss of read authority during %s', async stage => {
+    await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));
+    let canRead = true; const reply = deferred<Response>();
+    respond = path => path === '/api/control/status' ? json({ ...privateStatus, canRead, canSend: false })
+      : path.endsWith(`/${stage}`) ? reply.promise : json(receipt('prepared'));
+    await act(() => access.request('/api/control/status'));
+    const oldPrepare = form.prepare, oldConfirm = form.confirm;
+    await act(() => form.select(image())); await act(() => oldPrepare()); await act(() => oldConfirm(true));
+    expect(form.selection).toBeNull(); expect(form.review).toBeNull();
+    let checking!: Promise<void>; act(() => { checking = form.check(); }); await waitFor(() => expect(count(stage)).toBe(1));
+    canRead = false; await act(() => access.request('/api/control/status'));
+    canRead = true; await act(() => access.request('/api/control/status'));
+    await act(async () => { reply.resolve(json(stage === 'discard' ? { ok: true } : receipt('prepared'))); await checking; });
+    expect(count('receipt')).toBe(1); expect(count('discard')).toBe(stage === 'discard' ? 1 : 0);
+    expect(count('confirm')).toBe(1); expect(count('prepare')).toBe(1); expect(form.phase).toBe('unknown');
+  });
   it.each((['receipt', 'discard'] as const).flatMap(stage => (['lock', 'generation', 'target', 'hidden', 'unmount'] as const).map(transition => ({ stage, transition }))))('does not issue a follow-up request after $transition during $stage', async ({ transition, stage }) => {
     const view = await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));
     const delayedReply = deferred<Response>();

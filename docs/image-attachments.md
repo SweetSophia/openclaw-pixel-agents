@@ -50,7 +50,8 @@ server verifies bytes, format and dimensions and computes SHA-256. It normalizes
 the filename; review the displayed name, type, byte count, dimensions and digest.
 There is no image thumbnail or object URL in the review.
 
-Preparation sends nothing to the Gateway. A review expires after **five minutes**.
+Preparation sends no image message to the Gateway; it only verifies the target
+with read-only requests. A review expires after **five minutes**.
 Read the warning and check the initially unchecked acknowledgment before confirming:
 
 > The image, including embedded metadata, will be sent to OpenClaw and may be processed by its model and tools. OpenClaw sharing and retention settings apply, including existing or later public session shares. The office does not make the image exclusive to this conversation. Sending cannot be undone by Lock or closing this panel.

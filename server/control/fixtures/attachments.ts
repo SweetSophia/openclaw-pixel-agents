@@ -28,7 +28,7 @@ export function nativeImageMessage(runId = 'operation-1', kind: 'inline' | 'offl
 export function attachmentGatewayFixture() {
   const listeners = new Set<(event: GatewayEvent) => void>();
   const state = {
-    enabled: true, registered: new Set(['main']), canRead: true, canSend: true,
+    enabled: true, registered: new Set(['main']), canRead: true, canSend: true, sourceKey: 'source-1',
     caps: { epoch: 'epoch-1', sourceKey: 'source-1', maxBytes: 4_194_304, maxImageBytes: 4_194_304,
       maxPayload: 6_291_456, maxBufferedBytes: 6_291_456 } as AttachmentGatewayCapabilities | null,
     session: { ...attachmentTarget, key: attachmentTarget.sessionKey } as Record<string, unknown>,
@@ -41,6 +41,7 @@ export function attachmentGatewayFixture() {
   const requests: { method: string; params: Record<string, unknown> }[] = [], nativeSends: NativeImageRequestFrame[] = [];
   const gateway: ControlGateway = {
     start() {}, close() {}, status: () => ({ configured: true, state: 'ready', canRead: state.canRead, canSend: state.canSend }),
+    readSourceKey: () => state.canRead ? state.sourceKey : null,
     attachmentCapabilities: () => state.caps && { ...state.caps },
     onEvent(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async request(method, params, signal) {
@@ -70,6 +71,10 @@ export interface AttachmentHostOptions {
   reply?: 'hold' | 'accepted' | 'recorded' | 'uploads-disabled';
   version?: string;
   policy?: Record<string, unknown>;
+  grants?: string[];
+  session?: Partial<ControlTarget>;
+  history?: { messages: unknown[]; inputReceipts: unknown[] };
+  beforeConnect?: () => void;
   beforeRead?: (frame: HostFrame) => void | Promise<void>;
 }
 
@@ -88,7 +93,7 @@ export async function attachmentHost(options: AttachmentHostOptions = {}) {
     else { header[1] = 127; header.writeBigUInt64BE(BigInt(data.length), 2); }
     return Buffer.concat([header, data]);
   }
-  const session = () => ({ ...attachmentTarget, key: attachmentTarget.sessionKey, displayName: 'Synthetic image conversation',
+  const session = () => ({ ...attachmentTarget, ...options.session, key: attachmentTarget.sessionKey, displayName: 'Synthetic image conversation',
     hasActiveRun: false, activeRunIds: [], status: 'idle', updatedAt: 123, snapshotAt: 123 });
   function reply(frame: HostFrame, socket: Duplex) {
     if (socket.destroyed) return;
@@ -111,9 +116,10 @@ export async function attachmentHost(options: AttachmentHostOptions = {}) {
       const signed = ['v3', p.device.id, 'cli', 'backend', 'operator', p.scopes.join(','), '123',
         p.auth.token, 'attachment-nonce', process.platform, ''].join('|');
       assert.equal(verify(null, Buffer.from(signed), key, Buffer.from(p.device.signature, 'base64url')), true);
+      options.beforeConnect?.();
       payload = { type: 'hello-ok', protocol: 4, server: { version: options.version ?? '2026.11.2', connId: randomUUID() },
         features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.send', 'sessions.create'], events: [] }, snapshot: {},
-        auth: { role: 'operator', scopes: ['operator.read', 'operator.write'], deviceToken: 'synthetic-attachment-grant' },
+        auth: { role: 'operator', scopes: options.grants ?? ['operator.read', 'operator.write'], deviceToken: 'synthetic-attachment-grant' },
         policy: options.policy ?? { maxPayload: 6291456, maxBufferedBytes: 6291456, tickIntervalMs: 15000,
           attachments: { maxBytes: 4194304, maxImageBytes: 4194304 } } };
     } else if (frame.method === 'chat.send') {
@@ -131,7 +137,7 @@ export async function attachmentHost(options: AttachmentHostOptions = {}) {
         // Ordinary run history reserves envelope headroom below the same hard result cap.
         assert(Number.isSafeInteger(frame.params.maxBytes) && frame.params.maxBytes > 0 && frame.params.maxBytes <= 262144);
         payload = { sessionKey: 'agent:main:fixture', sessionId: 's1', sessionInfo: session(), messages: [],
-          inputReceipts: [], totalMessages: 0, hasMore: false };
+          inputReceipts: [], totalMessages: 0, hasMore: false, ...options.history };
       } else { assert.equal(frame.method, 'sessions.subscribe'); payload = {}; }
     }
     if (!socket.destroyed) socket.write(encode({ type: 'res', id: frame.id, ok: true, payload }));
@@ -176,6 +182,8 @@ export async function attachmentHost(options: AttachmentHostOptions = {}) {
       });
     },
     releaseReply() { for (const entry of pending.splice(0)) reply(entry.frame, entry.socket); },
+    emit(event: string) { for (const socket of sockets) if (!socket.destroyed) socket.write(encode({ type: 'event', event, payload: null })); },
+    disconnect() { for (const socket of sockets) socket.destroy(); },
     async close() { if (closed) return; closed = true; for (const wake of waiters) wake();
       for (const socket of sockets) socket.destroy(); await new Promise<void>(accept => server.close(() => accept())); },
   };
