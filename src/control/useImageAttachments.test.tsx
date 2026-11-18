@@ -120,12 +120,79 @@ describe('private image follow-up state', () => {
     expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(count('confirm')).toBe(1); expect(count('prepare')).toBe(1);
     expect(form.disabledReason).not.toMatch(/retry|resend|try again/i);
   });
-  it('a prepared receipt proves no dispatch but cannot restore confirmation authority', async () => {
+  it('a prepared snapshot stays blocked until acknowledged discard and fresh not-dispatched proof', async () => {
+    await setup(); await prepare(); const confirmReply = deferred<Response>(); const discardReply = deferred<Response>(); const proofReply = deferred<Response>();
+    respond = path => path.endsWith('/confirm') ? confirmReply.promise : path.endsWith('/discard') ? discardReply.promise
+      : count('receipt') === 1 ? json(receipt('prepared')) : proofReply.promise;
+    let confirming!: Promise<void>; act(() => { confirming = form.confirm(true); }); let checking!: Promise<void>; act(() => { checking = form.check(); });
+    await waitFor(() => expect(count('discard')).toBe(1));
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(count('receipt')).toBe(1);
+    await act(() => form.select(image())); await act(() => form.prepare()); await act(() => form.confirm(true));
+    expect(count('prepare')).toBe(1); expect(count('confirm')).toBe(1);
+    await act(async () => { discardReply.resolve(json({ ok: true })); }); await waitFor(() => expect(count('receipt')).toBe(2));
+    expect(form.pending).toBe(true);
+    await act(async () => { proofReply.resolve(json(receipt('not-dispatched'))); await checking; });
+    expect(form.phase).toBe('not-dispatched'); expect(form.pending).toBe(false); expect(form.review).toBeNull(); expect(form.selection).toBeNull();
+    await act(async () => { confirmReply.reject(Error('lost original confirmation reply')); await confirming; });
+    expect(form.phase).toBe('not-dispatched'); expect(count('discard')).toBe(1); expect(count('confirm')).toBe(1);
+  });
+  it.each(['failure', 'malformed'] as const)('a %s discard cannot resolve a prepared observation', async outcome => {
     await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));
-    respond = path => path.endsWith('/discard') ? json({ ok: true }) : json(receipt('prepared'));
+    respond = path => path.endsWith('/discard') ? outcome === 'failure' ? Promise.reject(Error('discard failed')) : json({ ok: true, unexpected: true }) : json(receipt('prepared'));
     await act(() => form.check()); await act(() => form.confirm(true));
-    expect(form.phase).toBe('not-dispatched'); expect(form.review).toBeNull(); expect(form.selection).toBeNull(); expect(form.pending).toBe(false);
-    expect(count('discard')).toBeGreaterThan(0); expect(count('confirm')).toBe(1);
+    await act(() => form.select(image())); await act(() => form.prepare());
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(form.review).toBeNull(); expect(form.selection).toBeNull();
+    expect(count('discard')).toBe(1); expect(count('receipt')).toBe(1); expect(count('prepare')).toBe(1); expect(count('confirm')).toBe(1);
+  });
+  it.each(['prepared', 'sending', 'unknown', 'failed', 'expired', 'malformed', 'foreign'] as const)('post-discard %s reconciliation remains blocked with no read loop', async outcome => {
+    await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));
+    respond = path => path.endsWith('/discard') ? json({ ok: true }) : count('receipt') === 1 ? json(receipt('prepared'))
+      : outcome === 'failed' ? Promise.reject(Error('receipt connection lost')) : outcome === 'expired' ? json({ code: 'attachment-expired' }, 409) : outcome === 'malformed' ? json({ ...receipt('not-dispatched'), extra: true })
+        : outcome === 'foreign' ? json({ ...receipt('not-dispatched'), operationId: 'foreign-op' }) : json(receipt(outcome));
+    await act(() => form.check()); await act(() => form.select(image())); await act(() => form.prepare()); await act(() => form.confirm(true));
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(count('receipt')).toBe(2); expect(count('discard')).toBe(1);
+    expect(count('prepare')).toBe(1); expect(count('confirm')).toBe(1);
+  });
+  it('direct authoritative not-dispatched evidence needs no discard or additional read', async () => {
+    await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));
+    respond = () => json(receipt('not-dispatched')); await act(() => form.check());
+    expect(form.phase).toBe('not-dispatched'); expect(form.pending).toBe(false); expect(count('receipt')).toBe(1); expect(count('discard')).toBe(0);
+  });
+  it('a confirmation that wins the discard race stays blocked after its reply is lost', async () => {
+    await setup(); await prepare(); const confirmReply = deferred<Response>(); const discardReply = deferred<Response>();
+    let dispatched = false;
+    respond = path => path.endsWith('/confirm') ? confirmReply.promise : path.endsWith('/discard') ? discardReply.promise
+      : json(receipt(dispatched ? 'unknown' : 'prepared'));
+    let confirming!: Promise<void>; act(() => { confirming = form.confirm(true); }); let checking!: Promise<void>; act(() => { checking = form.check(); });
+    await waitFor(() => expect(count('discard')).toBe(1));
+    await act(async () => { dispatched = true; confirmReply.reject(Error('lost dispatched confirmation')); await confirming; discardReply.resolve(json({ ok: true })); await checking; });
+    expect(form.phase).toBe('unknown'); expect(form.receipt?.nativeInvoked).toBe(true); expect(form.pending).toBe(true);
+    await act(() => form.select(image())); await act(() => form.prepare()); await act(() => form.confirm(true));
+    expect(count('confirm')).toBe(1); expect(count('prepare')).toBe(1); expect(count('receipt')).toBe(2); expect(count('discard')).toBe(1);
+    respond = () => json(receipt('recorded')); await act(() => form.check());
+    expect(options.onRecorded).toHaveBeenCalledExactlyOnceWith('original text'); expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(3);
+  });
+  it.each((['receipt', 'discard'] as const).flatMap(stage => (['lock', 'generation', 'target', 'hidden', 'unmount'] as const).map(transition => ({ stage, transition }))))('does not issue a follow-up request after $transition during $stage', async ({ transition, stage }) => {
+    const view = await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));
+    const delayedReply = deferred<Response>();
+    respond = path => path.endsWith(`/${stage}`) ? delayedReply.promise : path.endsWith('/receipt') ? json(receipt('prepared')) : json(path.includes('/attachments/') ? capability : privateStatus);
+    let checking!: Promise<void>; act(() => { checking = form.check(); }); await waitFor(() => expect(count(stage)).toBe(1));
+    if (transition === 'lock' || transition === 'generation') { act(() => access.lock()); if (transition === 'generation') await act(() => access.unlock('new-synthetic-key')); }
+    else if (transition === 'target') { options = { ...options, target: { ...target, sessionId: 'replacement' } }; view.rerender(<Tree />); }
+    else if (transition === 'hidden') { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); act(() => document.dispatchEvent(new Event('visibilitychange'))); }
+    else view.rerender(<Tree show={false} />);
+    await act(async () => { delayedReply.resolve(json(stage === 'discard' ? { ok: true } : receipt('prepared'))); await checking; });
+    expect(count('receipt')).toBe(1); expect(count('discard')).toBe(stage === 'discard' ? 1 : 0); expect(count('confirm')).toBe(1); expect(count('prepare')).toBe(1); expect(form.review).toBeNull();
+  });
+  it.each(['sending', 'unknown'] as const)('an older %s Check cannot replace definitive uploads-disabled rejection', async stale => {
+    await setup(); await prepare(); const confirmReply = deferred<Response>(); const checkReply = deferred<Response>();
+    respond = path => path.endsWith('/confirm') ? confirmReply.promise : checkReply.promise;
+    let confirming!: Promise<void>; act(() => { confirming = form.confirm(true); }); let checking!: Promise<void>; act(() => { checking = form.check(); });
+    await act(async () => { confirmReply.resolve(json({ ...receipt('rejected'), reason: 'uploads-disabled' })); await confirming; });
+    expect(form.phase).toBe('rejected'); expect(form.pending).toBe(false);
+    await act(async () => { checkReply.resolve(json(receipt(stale))); await checking; });
+    expect(form.phase).toBe('rejected'); expect(form.receipt?.reason).toBe('uploads-disabled'); expect(form.pending).toBe(false);
+    expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(1); expect(count('discard')).toBe(0);
   });
   it('retains the original leaf in a stable conversation marker after an append', async () => {
     const view = await setup(); await prepare(); respond = () => Promise.reject(Error('lost reply')); await act(() => form.confirm(true));

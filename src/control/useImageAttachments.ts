@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { isControlCommand, parseControlTarget, type ControlTarget } from '../../shared/control';
+import { controlRecord, isControlCommand, parseControlTarget, type ControlTarget } from '../../shared/control';
 import { ATTACHMENT_LIMITS, parseAttachmentReceipt, parseAttachmentReview, parseAttachmentStatus, type AttachmentImage, type AttachmentReceipt, type AttachmentReview, type AttachmentStatus } from '../../shared/controlAttachments';
 import { inspectAttachmentImage, normalizeAttachmentFilename } from '../../shared/imageAttachment';
 import { useAttachmentOperations, useControlAccess, type AttachmentClientOperation } from './ControlAccess';
@@ -166,17 +166,18 @@ export function useImageAttachments(options: Options): AttachmentForm {
     const receipt = parseAttachmentReceipt(value);
     if (!receipt || receipt.operationId !== admitted.operationId || !exactTarget(receipt.target, admitted.target)) throw new ControlApiError('invalid-source');
     if (!currentGeneration(admitted.generation) || operations.get(key) !== admitted) return;
-    if (admitted.phase === 'recorded' || (admitted.receipt?.nativeInvoked && !receipt.nativeInvoked)
+    if (['recorded', 'rejected', 'not-dispatched'].includes(admitted.phase) || (admitted.receipt?.nativeInvoked && !receipt.nativeInvoked)
       || (admitted.phase === 'accepted' && ['unknown', 'sending'].includes(receipt.phase))) return;
     admitted.receipt = receipt;
-    admitted.phase = receipt.phase === 'sending' ? 'unknown' : receipt.phase === 'prepared' ? 'not-dispatched' : receipt.phase;
-    if (!receipt.nativeInvoked) discard(admitted.target.agentId, admitted.operationId, admitted.generation);
-    if (['rejected', 'not-dispatched', 'prepared'].includes(receipt.phase)) frozen.current = null;
+    // Prepared is only an observation: the admitted confirmation may still reach the server.
+    admitted.phase = receipt.phase === 'sending' || receipt.phase === 'prepared' ? 'unknown' : receipt.phase;
+    if (['rejected', 'not-dispatched'].includes(receipt.phase)) frozen.current = null;
     notify();
     const original = frozen.current;
     if (permitted() && context.current.operationKey === key && original?.operationId === admitted.operationId && !original.notified && receipt.phase === 'recorded') {
       original.notified = true; context.current.options.onRecorded(original.message); frozen.current = null;
     }
+    return receipt;
   };
   const confirm = useCallback(async (review: AttachmentReview | null, sharingAcknowledged: boolean) => {
     const current = context.current; const state = data.current;
@@ -200,10 +201,20 @@ export function useImageAttachments(options: Options): AttachmentForm {
     const current = context.current; const admitted = operations.get(current.operationKey);
     if (!permitted() || !admitted || admitted.generation !== current.access.generation || checking.current) return;
     checking.current = true;
-    const controller = new AbortController(); reads.current.add(controller);
+    const controller = new AbortController(); reads.current.add(controller); const token = version.current;
+    const ownsCheck = () => same(current.owner, token) && !controller.signal.aborted && operations.get(current.operationKey) === admitted;
     try {
       const value = await current.access.request(path(admitted.target.agentId, 'receipt'), { method: 'POST', signal: controller.signal, body: JSON.stringify({ operationId: admitted.operationId }) });
-      if (!controller.signal.aborted) settle(current.operationKey, admitted, value);
+      if (!ownsCheck()) return;
+      const observed = settle(current.operationKey, admitted, value);
+      if (observed?.phase !== 'prepared' || !ownsCheck()) return;
+      // Cleanup discard is best-effort elsewhere. Recovery requires acknowledgment AND a fresh terminal receipt.
+      const discarded = await current.access.request(path(admitted.target.agentId, 'discard'), { method: 'POST', signal: controller.signal, body: JSON.stringify({ operationId: admitted.operationId }) });
+      if (!ownsCheck()) return;
+      const acknowledgment = controlRecord(discarded);
+      if (!acknowledgment || Object.keys(acknowledgment).length !== 1 || acknowledgment.ok !== true) throw new ControlApiError('invalid-source');
+      const proof = await current.access.request(path(admitted.target.agentId, 'receipt'), { method: 'POST', signal: controller.signal, body: JSON.stringify({ operationId: admitted.operationId }) });
+      if (ownsCheck()) settle(current.operationKey, admitted, proof);
     } catch {
       if (currentGeneration(admitted.generation) && operations.get(current.operationKey) === admitted && admitted.phase === 'confirming') { admitted.phase = 'unknown'; notify(); }
     } finally { reads.current.delete(controller); if (!controller.signal.aborted) checking.current = false; }
