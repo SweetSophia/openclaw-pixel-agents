@@ -15,14 +15,14 @@ export interface AttachmentDispatch {
 export interface AttachmentOperationMeta { receipt: AttachmentReceipt; sourceKey: string; image: AttachmentImage; submittedTextDigest: string }
 interface Preparation { target: ControlTarget; message: string; payload: ValidatedAttachmentPayload; connection: AttachmentGatewayCapabilities; lease: AttachmentLease }
 export interface AttachmentAdmission {
-  acquire(): AttachmentLease; prepare(input: Preparation): AttachmentReview;
+  acquire(): AttachmentLease; beginPreparation(lease: AttachmentLease): void; prepare(input: Preparation): AttachmentReview;
   confirm(agentId: string, request: AttachmentConfirmRequest, start: (operation: AttachmentDispatch) => Promise<AttachmentReceipt>): Promise<AttachmentReceipt>;
   read(agentId: string, operationId: string): AttachmentOperationMeta | null;
   record(receipt: AttachmentReceipt): AttachmentReceipt; discard(agentId: string, operationId: string): void;
   invalidatePrepared(): void; close(): void;
 }
 
-interface LeaseState { expires: number; operationId?: string }
+interface LeaseState { expires: number; preparing?: boolean; operationId?: string }
 interface Staged {
   review: AttachmentReview; payload: ValidatedAttachmentPayload; connection: AttachmentGatewayCapabilities; lease: AttachmentLease;
 }
@@ -54,7 +54,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     if (closed) return;
     let deadline = Infinity;
     for (const row of operations.values()) if (!row.staged || !row.pending || !row.invoked) deadline = Math.min(deadline, row.expires);
-    for (const row of leases.values()) if (!row.operationId) deadline = Math.min(deadline, row.expires);
+    for (const row of leases.values()) if (!row.operationId && !row.preparing) deadline = Math.min(deadline, row.expires);
     if (deadline !== Infinity) {
       cleanup = setTimeout(prune, Math.max(1, deadline - now())); cleanup.unref?.();
     }
@@ -75,19 +75,26 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
       if (!row.pending || !row.staged) { dropStaged(row); operations.delete(id); }
       else if (row.staged && !row.invoked) stopPrepared(row, 'expired');
     }
-    for (const [lease, state] of leases) if (!state.operationId && state.expires <= time) leases.delete(lease);
+    for (const [lease, state] of leases) if (!state.operationId && !state.preparing && state.expires <= time) leases.delete(lease);
     schedule();
   }
   function acquire(): AttachmentLease {
     open(); prune();
-    const receiving = [...leases.values()].filter(row => !row.operationId).length;
-    if (leases.size >= ATTACHMENT_LIMITS.slots || operations.size + receiving >= ATTACHMENT_LIMITS.receipts) throw new ControlError('rate-limited');
+    const unstaged = [...leases.values()].filter(row => !row.operationId).length;
+    if (leases.size >= ATTACHMENT_LIMITS.slots || operations.size + unstaged >= ATTACHMENT_LIMITS.receipts) throw new ControlError('rate-limited');
     const lease: AttachmentLease = Object.freeze({ release() {
       // Successful preparation transfers the lease to the store. A request's finally
       // cannot release a slot while its staged image or native request still owns it.
       if (!leases.get(lease)?.operationId) { leases.delete(lease); schedule(); }
     } });
     leases.set(lease, { expires: now() + ATTACHMENT_LIMITS.bodyTimeoutMs }); schedule(); return lease;
+  }
+  function beginPreparation(lease: AttachmentLease): void {
+    open(); prune(); const state = leases.get(lease);
+    if (!state || state.operationId || state.preparing) throw new ControlError('attachment-expired');
+    // Body reception is finished. The service now owns this counted slot until
+    // it stages a verified review or releases custody; the deadline is unchanged.
+    state.preparing = true; schedule();
   }
   function prepare(input: Preparation): AttachmentReview {
     open(); prune(); const state = leases.get(input.lease);
@@ -207,5 +214,5 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     for (const row of operations.values()) dropStaged(row);
     operations.clear(); leases.clear();
   }
-  return { acquire, prepare, confirm, read, record, discard, invalidatePrepared, close };
+  return { acquire, beginPreparation, prepare, confirm, read, record, discard, invalidatePrepared, close };
 }

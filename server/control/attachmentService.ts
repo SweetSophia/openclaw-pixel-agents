@@ -146,17 +146,23 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
     status,
     acquirePreparation(agentId) { requireConnection(agentId); return admission.acquire(); },
     async prepare(agentId, input, lease, signal) {
+      // Refused transitions must not release another preparation's (or store's)
+      // lease. Once this succeeds, only this preparation owns its cleanup.
+      admission.beginPreparation(lease);
+      const controller = new AbortController(), abort = () => controller.abort(); controllers.add(controller);
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) controller.abort();
       try {
-        const caps = requireConnection(agentId, undefined, undefined, signal), version = generation;
+        const caps = requireConnection(agentId, undefined, undefined, controller.signal), version = generation;
         const parsed = parseAttachmentPrepareRequest(input);
         if (!parsed) throw new ControlError('invalid-request');
         if (parsed.target.agentId !== agentId) throw new ControlError('invalid-target');
         if (!opaque(parsed.target.activeLeafEntryId)) throw new ControlError('unsupported');
         const payload = validateAttachmentPayload(parsed.image, Math.min(caps.maxBytes, caps.maxImageBytes));
-        await preflight(parsed.target, caps, version, signal);
-        requireConnection(agentId, caps, version, signal);
+        await preflight(parsed.target, caps, version, controller.signal);
+        requireConnection(agentId, caps, version, controller.signal);
         return admission.prepare({ target: parsed.target, message: parsed.message, payload, connection: caps, lease });
-      } finally { lease.release(); }
+      } finally { signal?.removeEventListener('abort', abort); controllers.delete(controller); lease.release(); }
     },
     confirm(agentId, input) {
       if (closed) return Promise.reject(new ControlError('unavailable'));

@@ -9,6 +9,7 @@ import { attachmentGatewayFixture, attachmentInput, attachmentMessage, attachmen
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { cleanups.splice(0).forEach(close => close()); vi.useRealTimers(); });
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function fixture() {
   const f = attachmentGatewayFixture(); let elapsed = 0;
   const admission = createAttachmentAdmission({ now: () => elapsed });
@@ -53,6 +54,91 @@ describe('target-bound image service', () => {
     await expect(f.service.prepare('main', { target: attachmentTarget, message: attachmentMessage, image: attachmentInput }, f.service.acquirePreparation('main'), aborted.signal)).rejects.toMatchObject({ code: 'unavailable' });
     const a = f.service.acquirePreparation('main'), b = f.service.acquirePreparation('main'); a.release(); b.release();
     expect(f.nativeSends).toHaveLength(0);
+  });
+  it('counts preparing custody across the original receiving deadline while target preflight is deferred', async () => {
+    vi.useFakeTimers(); const f = fixture(); const lease = f.service.acquirePreparation('main');
+    f.advance(29_999); vi.advanceTimersByTime(29_999);
+    const entered = deferred<void>(), gate = deferred<void>();
+    f.state.afterRequest = async method => { if (method === 'sessions.describe') { entered.resolve(); await gate.promise; } };
+    const pending = f.service.prepare('main', { target: attachmentTarget, message: attachmentMessage, image: attachmentInput }, lease);
+    const outcome = pending.then(review => ({ review }), error => ({ error }));
+    await entered.promise;
+    const other = f.service.acquirePreparation('main'); f.advance(2); vi.advanceTimersByTime(2);
+    try {
+      expect(() => f.service.acquirePreparation('main')).toThrow('rate-limited');
+      expect(f.nativeSends).toHaveLength(0);
+    } finally { gate.resolve(); other.release(); }
+    const settled = await outcome;
+    expect(settled).toHaveProperty('review');
+    if (!('review' in settled)) return;
+    lease.release(); lease.release(); const receiving = f.service.acquirePreparation('main');
+    expect(() => f.service.acquirePreparation('main')).toThrow('rate-limited');
+    f.service.discard('main', f.operation(settled.review)); const freed = f.service.acquirePreparation('main');
+    receiving.release(); freed.release();
+  });
+  it('close aborts the service-owned preparation preflight and cannot mint a late review', async () => {
+    const f = fixture(); const entered = deferred<void>(), gate = deferred<void>();
+    let readSignal: AbortSignal | undefined; const request = f.gateway.request;
+    vi.spyOn(f.gateway, 'request').mockImplementation((method, params, signal) => {
+      if (method === 'sessions.describe') readSignal = signal;
+      return request(method, params, signal);
+    });
+    f.state.afterRequest = async method => { if (method === 'sessions.describe') { entered.resolve(); await gate.promise; } };
+    const outcome = f.prepare().then(review => ({ review }), error => ({ error }));
+    await entered.promise;
+    try {
+      f.service.close(); expect(readSignal?.aborted).toBe(true);
+      expect(() => f.admission.acquire()).toThrow('unavailable');
+    } finally { gate.resolve(); }
+    expect(await outcome).toHaveProperty('error'); expect(f.nativeSends).toHaveLength(0);
+  });
+  it.each(['expired', 'released', 'foreign'] as const)('rejects a %s preparation lease before source reads or payload custody', async kind => {
+    const f = fixture(), foreign = createAttachmentAdmission();
+    const lease = kind === 'foreign' ? foreign.acquire() : f.service.acquirePreparation('main');
+    if (kind === 'expired') f.advance(30_000);
+    if (kind === 'released') lease.release();
+    try {
+      await expect(f.service.prepare('main', { target: attachmentTarget, message: attachmentMessage, image: attachmentInput }, lease)).rejects.toMatchObject({ code: 'attachment-expired' });
+      expect(f.requests.filter(r => r.method !== 'sessions.subscribe')).toHaveLength(0);
+      if (kind === 'foreign') {
+        foreign.beginPreparation(lease); const other = foreign.acquire();
+        expect(() => foreign.acquire()).toThrow('rate-limited'); other.release();
+      }
+    } finally { lease.release(); foreign.close(); }
+    expect(f.nativeSends).toHaveLength(0);
+  });
+  it.each(['failure', 'abort'] as const)('releases pending preparing custody after %s without minting a review', async kind => {
+    vi.useFakeTimers(); const f = fixture(), consumer = new AbortController(); const lease = f.service.acquirePreparation('main');
+    f.advance(29_999); vi.advanceTimersByTime(29_999);
+    const entered = deferred<void>(), gate = deferred<void>(); let readSignal: AbortSignal | undefined; const request = f.gateway.request;
+    vi.spyOn(f.gateway, 'request').mockImplementation((method, params, signal) => { if (method === 'sessions.describe') readSignal = signal; return request(method, params, signal); });
+    f.state.afterRequest = async method => { if (method === 'sessions.describe') { entered.resolve(); await gate.promise; } };
+    const outcome = f.service.prepare('main', { target: attachmentTarget, message: attachmentMessage, image: attachmentInput }, lease, consumer.signal)
+      .then(review => ({ review }), error => ({ error }));
+    await entered.promise; const other = f.service.acquirePreparation('main'); f.advance(2); vi.advanceTimersByTime(2);
+    try {
+      if (kind === 'abort') { consumer.abort(); expect(readSignal?.aborted).toBe(true); }
+      else f.state.session.lifecycleRevision = 'life-changed';
+      expect(() => f.service.acquirePreparation('main')).toThrow('rate-limited');
+    } finally { gate.resolve(); other.release(); }
+    expect(await outcome).toHaveProperty('error');
+    const a = f.service.acquirePreparation('main'), b = f.service.acquirePreparation('main'); a.release(); b.release();
+    expect(f.nativeSends).toHaveLength(0);
+  });
+  it('a duplicate prepare cannot release the first preparation custody when its own lease transition is refused', async () => {
+    const f = fixture(), entered = deferred<void>(), gate = deferred<void>(); const lease = f.service.acquirePreparation('main');
+    f.state.afterRequest = async method => { if (method === 'sessions.describe') { entered.resolve(); await gate.promise; } };
+    const pending = f.service.prepare('main', { target: attachmentTarget, message: attachmentMessage, image: attachmentInput }, lease);
+    const outcome = pending.then(review => ({ review }), error => ({ error })); await entered.promise;
+    let duplicateResult: unknown;
+    const duplicate = f.service.prepare('main', { target: attachmentTarget, message: attachmentMessage, image: attachmentInput }, lease)
+      .then(review => { duplicateResult = { review }; }, error => { duplicateResult = { error }; });
+    try {
+      await Promise.resolve(); expect(duplicateResult).toMatchObject({ error: { code: 'attachment-expired' } });
+      const other = f.service.acquirePreparation('main');
+      try { expect(() => f.service.acquirePreparation('main')).toThrow('rate-limited'); } finally { other.release(); }
+    } finally { gate.resolve(); await duplicate; await outcome; }
+    expect(await outcome).toHaveProperty('review'); expect(f.nativeSends).toHaveLength(0);
   });
   it('prepare_never_sends', async () => {
     const f = fixture(); const review = await f.prepare();

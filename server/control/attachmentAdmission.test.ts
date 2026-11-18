@@ -89,6 +89,45 @@ describe('duplicate_confirmation_has_one_attempt', () => {
 });
 
 describe('monotonic_expiry_releases_orphan_slots', () => {
+  it('transfers a live receiving lease to preparing custody without restarting the body deadline or minting a review', () => {
+    vi.useFakeTimers(); const { admission, advance } = fixture(); const preparing = admission.acquire();
+    advance(29_999); vi.advanceTimersByTime(29_999);
+    admission.beginPreparation(preparing);
+    expect(vi.getTimerCount()).toBe(0);
+    const receiving = admission.acquire(); advance(2); vi.advanceTimersByTime(2);
+    expect(() => admission.acquire()).toThrow('rate-limited');
+    // Only the unrelated, still-receiving lease retains its original deadline.
+    advance(29_998); vi.advanceTimersByTime(29_998);
+    const replacement = admission.acquire(); expect(() => admission.acquire()).toThrow('rate-limited');
+    preparing.release(); replacement.release(); receiving.release(); admission.close();
+  });
+
+  it('does not revive expired, released, foreign or already-owned preparation leases', () => {
+    const { admission, advance } = fixture(), foreign = createAttachmentAdmission();
+    const expired = admission.acquire(); advance(30_000);
+    expect(() => admission.beginPreparation(expired)).toThrow('attachment-expired');
+    const released = admission.acquire(); released.release();
+    expect(() => admission.beginPreparation(released)).toThrow('attachment-expired');
+    const foreignLease = foreign.acquire();
+    expect(() => admission.beginPreparation(foreignLease)).toThrow('attachment-expired');
+    const preparing = admission.acquire(); admission.beginPreparation(preparing);
+    expect(() => admission.beginPreparation(preparing)).toThrow('attachment-expired');
+    const review = admission.prepare({ target, message: 'Read it', payload: payload(), connection, lease: preparing });
+    expect(() => admission.beginPreparation(preparing)).toThrow('attachment-expired');
+    admission.discard('main', review.operationId); foreignLease.release(); foreign.close(); admission.close();
+    expect(() => admission.beginPreparation(expired)).toThrow('unavailable');
+  });
+
+  it('releases preparing custody idempotently and preserves staged ownership against the old finally release', () => {
+    const { admission, advance } = fixture(); const released = admission.acquire(); admission.beginPreparation(released);
+    released.release(); released.release(); const preparing = admission.acquire(); admission.beginPreparation(preparing);
+    advance(30_001);
+    const review = admission.prepare({ target, message: 'Read it', payload: payload(), connection, lease: preparing });
+    preparing.release(); preparing.release(); const other = admission.acquire();
+    expect(() => admission.acquire()).toThrow('rate-limited');
+    admission.discard('main', review.operationId); const freed = admission.acquire(); other.release(); freed.release(); admission.close();
+  });
+
   it('expires preparation at five minutes independently of a backwards wall clock', async () => {
     const { admission, prepare, advance } = fixture(); const review = prepare(); prepare();
     const wall = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
