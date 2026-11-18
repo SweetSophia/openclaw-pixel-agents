@@ -138,6 +138,22 @@ clean only owned synthetic resources. Never pair a live device or schedule a rea
 
 ## npm package and releases
 
+For [native image follow-ups](docs/image-attachments.md), run
+`npm test -- server/control/attachmentIntegration.test.ts` for actual child-process
+restart/ACK-loss proof. Build and qualify the production client only against a
+signed disposable synthetic Gateway and owned roster/data. Check
+320/390/768/1024/1440px, short landscape and 200% text zoom; actual 44px hits,
+keyboard/focus, PNG/JPEG boundaries, metadata review and unchecked acknowledgment.
+Delay File reads and private responses while switching target/agent, locking,
+hiding and unmounting. Exercise capability denial, typed native upload denial,
+lost acknowledgment and Check-only recovery without replay. Inspect screenshots
+visually and record findings, source revision, console/network, storage and public
+socket evidence. Never use real task uploads, live credentials or user browser
+profiles. Retain synthetic screenshots only in the qualification plan's scratch.
+Package smoke must include the guide while default-off startup creates no image
+identity, connection or store. Local checks do not replace exact-head hosted CI
+or authorize publication, deployment or activation.
+
 `npm run test:package` installs the actual tarball with production dependencies in a disposable directory and checks setup instructions with lifecycle scripts disabled, a separately enabled foreground install notice, configured startup, assets, key generation and restart persistence. Both setup and the notice must leave office data/configuration untouched. It does not contact a real Gateway or publish anything. Run it after building whenever package files, startup or deployment setup changes.
 
 See [the release guide](docs/releases.md) for the `NPM_TOKEN` secret and stable GitHub Release publication. A pull request never publishes to npm.

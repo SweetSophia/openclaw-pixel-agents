@@ -79,6 +79,13 @@ For sending, steering, stopping or changing a conversation's model, set `CONTROL
 
 Approval review has a separate opt-in and scope; neither read nor write authority enables it. Follow [private approval handling](#private-approval-handling) before granting it.
 
+Native image follow-ups are an [unreleased source feature](image-attachments.md),
+disabled by default. They require `CONTROL_ATTACHMENTS_ENABLED=true`, the existing
+send opt-in and the same ordinary read/write device, followed by an office restart.
+No separate image identity or administrator grant is needed. Read the image guide's
+sharing/retention warning and check-only uncertainty policy before enabling them;
+Lock or disabling cannot undo an already dispatched action.
+
 ## 4. Unlock task details
 
 Open an agent's **Task** tab and paste the **office key from step 1** into **Unlock task details**. It is retained only in that browser tab. Lock or reload clears it.

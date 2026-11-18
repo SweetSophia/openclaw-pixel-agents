@@ -10,6 +10,12 @@ The user subsequently authorized the seven-delivery [phase-two plan](superpowers
 
 ## 1.8.0 release preparation — 2026-11-11
 
+Native image follow-ups are currently an **unreleased, default-off source feature**
+under local qualification; see the [operator guide](image-attachments.md). They
+reuse ordinary private read/write authority, require both send/image opt-ins and
+an office restart, and add no automatic activation. This note does not claim npm
+availability, hosted CI clearance, merge, deployment or real-upload acceptance.
+
 The merged source through `18554ae` includes run history, Stop/Steer, approvals,
 model selection and its hardening, guided configuration, custom rosters and native
 scheduling. [1.8.0 release notes](releases/1.8.0.md) describe that combined delivery.

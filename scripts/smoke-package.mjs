@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -55,17 +55,18 @@ try {
   for (const required of ['bin/openclaw-pixel-agents.mjs', 'bin/setup.mjs', 'bin/configure.mjs', 'bin/configure-values.mjs', 'bin/configure-files.mjs', 'scripts/install-notice.mjs', 'dist/client/index.html',
     'dist/server/server/index.js', 'dist/server/shared/characterRecipes.js',
     'shared/agentRoster.cjs', 'dist/server/shared/agentRoster.cjs', 'agents.example.json',
-    'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', 'docs/configuration.md', 'docs/schedules.md', 'docs/agent-documents.md', '.env.example',
+    'scripts/generate-control-key.mjs', 'docs/task-access-setup.md', 'docs/configuration.md', 'docs/schedules.md', 'docs/agent-documents.md', 'docs/image-attachments.md', '.env.example',
     'collector/.env.collector.example', 'LICENSE', 'README.md']) assert(files.has(required), `Missing ${required}`);
   for (const path of files) {
     assert(!/(^|\/)(data|node_modules|coverage|\.git|\.superpowers|\.worktrees)(\/|$)/.test(path), `Runtime/private path packed: ${path}`);
     assert(!/\.(test|spec)\.|\.map$|(^|\/)\.env($|\.(?!example$|collector\.example$))/.test(path), `Development/private file packed: ${path}`);
-    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|(?:shared|dist\/server\/shared)\/agentRoster\.cjs$|agents\.example\.json$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|schedules|agent-documents|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
+    assert(/^(dist\/client\/|dist\/server\/(server|shared)\/.*\.js$|(?:shared|dist\/server\/shared)\/agentRoster\.cjs$|agents\.example\.json$|bin\/(openclaw-pixel-agents|setup|configure|configure-values|configure-files)\.mjs$|scripts\/(generate-control-key|install-notice)\.mjs$|collector\/(README\.md|push-pixel-agents\.mjs|\.env\.collector\.example|systemd\/[^/]+)$|docs\/(task-access-setup|configuration|schedules|agent-documents|image-attachments|editor|releases)\.md$|package\.json$|README\.md$|LICENSE$|\.env\.example$)/.test(path), `Unexpected package file: ${path}`);
   }
   const tarball = join(destination, packed.filename);
   command([npmCli, 'install', '--prefix', consumer, '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', `${pkg.name}@file:${tarball}`]);
   const installed = join(consumer, 'node_modules', pkg.name);
   assert((await readFile(join(installed, 'docs/agent-documents.md'))).length > 0, 'Installed document guide is not readable');
+  assert((await readFile(join(installed, 'docs/image-attachments.md'))).length > 0, 'Installed image guide is not readable');
   assert.match(await readFile(join(installed, 'docs/configuration.md'), 'utf8'), /\]\(schedules\.md\)/);
   assert.match(await readFile(join(installed, 'docs/schedules.md'), 'utf8'), /500 records/);
   const sourceRoster = await import(pathToFileURL(join(installed, 'shared/agentRoster.cjs')).href);
@@ -155,6 +156,30 @@ try {
   assert.deepEqual((await observeSocket()).map(({ id, name }) => ({ id, name })), [main, { id: 'researcher', name: 'Research Assistant' }]);
   assert(!existsSync(join(generated.DATA_DIR, 'control-schedules')), 'Default-off packaged startup created scheduling state');
   assert(!existsSync(join(generated.DATA_DIR, 'control-documents')), 'Default-off packaged startup created document identity');
+  async function package_keeps_attachment_feature_opt_in() {
+    assert(!existsSync(join(generated.DATA_DIR, 'control')), 'Default-off startup created a private task identity');
+    assert(!existsSync(join(generated.DATA_DIR, 'control-attachments')), 'Default-off startup created image state');
+    const dataEntries = async () => existsSync(generated.DATA_DIR) ? (await readdir(generated.DATA_DIR)).sort() : [];
+    const before = await dataEntries();
+    await stop();
+    let connections = 0;
+    const probe = createServer(socket => { connections++; socket.destroy(); });
+    await new Promise(accept => probe.listen(0, '127.0.0.1', accept));
+    try {
+      const gatewayUrl = `ws://127.0.0.1:${probe.address().port}`;
+      // An image flag alone grants neither task access nor a native connection.
+      for (const feature of [{}, { CONTROL_ATTACHMENTS_ENABLED: 'true' }]) {
+        await start({ OPENCLAW_GATEWAY_URL: gatewayUrl, ...feature });
+        assert(!existsSync(join(generated.DATA_DIR, 'control')), 'Image opt-in without private access created an identity');
+        assert(!existsSync(join(generated.DATA_DIR, 'control-attachments')), 'Image opt-in created a durable image store');
+        assert.deepEqual(await dataEntries(), before);
+        await stop();
+      }
+      assert.equal(connections, 0, 'Default-off/image-only startup connected to a Gateway');
+    } finally { await stop(); await new Promise(accept => probe.close(accept)); }
+    console.log('package_keeps_attachment_feature_opt_in passed');
+  }
+  await package_keeps_attachment_feature_opt_in();
   await stop();
   for (const scheduling of [{}, { CONTROL_SCHEDULES_MANAGE_ENABLED: 'true' }]) {
     await start({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:9', PIXEL_CONTROL_TOKEN: firstKey,
@@ -165,6 +190,10 @@ try {
     const documents = await fetch(`${origin}/api/control/agents/main/documents/status`, { headers: { Authorization: `Bearer ${firstKey}` } });
     assert.equal(documents.status, 200); assert.deepEqual(await documents.json(), { configured: false, state: 'disabled', canEdit: false, epoch: null, reason: 'disabled' });
     assert(!existsSync(join(generated.DATA_DIR, 'control-documents')), 'Default-off document status created identity despite separate bootstrap credentials');
+    const attachments = await fetch(`${origin}/api/control/agents/main/attachments/status`, { headers: { Authorization: `Bearer ${firstKey}` } });
+    assert.equal(attachments.status, 200);
+    assert.deepEqual(await attachments.json(), { enabled: false, canPrepare: false, reason: 'disabled', epoch: null, maxBytes: null });
+    assert(!existsSync(join(generated.DATA_DIR, 'control-attachments')), 'Default-off private status created image state');
     await stop();
   }
   await start({ OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:9', PIXEL_CONTROL_TOKEN: firstKey,
