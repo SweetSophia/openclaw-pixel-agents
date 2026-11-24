@@ -29,7 +29,7 @@ const path = (agentId: string, action: string) => `/api/control/agents/${encodeU
 const ordinary = (message: string) => !!message.trim() && message.length <= ATTACHMENT_LIMITS.message && !isControlCommand(message);
 function imageError(error: unknown, admitted = false): string {
   if (admitted && error instanceof ControlApiError && error.code === 'attachment-changed')
-    return 'This image review changed. Check the original submission before selecting a new image.';
+    return 'This image review changed. Check the original submission.';
   if (error instanceof ControlApiError && error.code.startsWith('attachment-')) return error.message;
   return 'The private image request could not be verified. No replacement submission is sent automatically.';
 }
@@ -177,7 +177,8 @@ export function useImageAttachments(options: Options): AttachmentForm {
     admitted.phase = receipt.phase === 'sending' || receipt.phase === 'prepared' ? 'unknown' : receipt.phase;
     if (['rejected', 'not-dispatched'].includes(receipt.phase)) frozen.current = null;
     notify();
-    if (context.current.operationKey === key && data.current.owner === context.current.owner && data.current.error) update({ ...data.current, error: '' });
+    if (['accepted', 'recorded', 'rejected', 'not-dispatched'].includes(receipt.phase)
+      && context.current.operationKey === key && data.current.owner === context.current.owner && data.current.error) update({ ...data.current, error: '' });
     const original = frozen.current;
     if (permitted() && context.current.operationKey === key && original?.operationId === admitted.operationId && !original.notified && receipt.phase === 'recorded') {
       original.notified = true; context.current.options.onRecorded(original.message); frozen.current = null;

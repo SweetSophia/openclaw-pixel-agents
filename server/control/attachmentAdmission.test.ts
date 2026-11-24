@@ -46,19 +46,19 @@ describe('duplicate_confirmation_has_one_attempt', () => {
     expect(starts).toBe(1); expect(sends).toBe(1);
   });
 
-  it('latches before synchronous callback entry and never retries thrown native work', async () => {
-    const { admission, prepare } = fixture(); const review = prepare(); let sends = 0, invokedAtEntry = false;
+  it('latches an attempt before callback entry and marks invocation only at the socket boundary', async () => {
+    const { admission, prepare } = fixture(); const review = prepare(); let sends = 0, invokedAfterMark = false;
     let secondError: unknown, nativeError: unknown;
     const result = await admission.confirm('main', confirmation(review), async operation => {
       try { await operation.attempt(async mark => {
         mark();
-        sends++; invokedAtEntry = operation.nativeInvoked;
+        sends++; invokedAfterMark = operation.nativeInvoked;
         try { await operation.attempt(async () => { sends++; }); } catch (error) { secondError = error; }
         throw Error('private native error');
       }); } catch (error) { nativeError = error; }
       throw Error('private dispatch error');
     });
-    expect(invokedAtEntry).toBe(true); expect(secondError).toMatchObject({ message: 'attachment-changed' });
+    expect(invokedAfterMark).toBe(true); expect(secondError).toMatchObject({ message: 'attachment-changed' });
     expect(nativeError).toMatchObject({ message: 'private native error' });
     expect(result).toMatchObject({ phase: 'unknown', nativeInvoked: true });
     expect(await admission.confirm('main', confirmation(review), sendAccepted)).toEqual(result);
@@ -90,6 +90,21 @@ describe('duplicate_confirmation_has_one_attempt', () => {
 });
 
 describe('monotonic_expiry_releases_orphan_slots', () => {
+  it('retains a slot and staged authority while an attempt waits before its socket mark', async () => {
+    const { admission, prepare, advance } = fixture(); const review = prepare();
+    const entered = deferred<void>(), beforeMark = deferred<void>(), afterMark = deferred<void>();
+    const pending = admission.confirm('main', confirmation(review), operation => operation.attempt(async mark => {
+      entered.resolve(); await beforeMark.promise; mark(); await afterMark.promise; return accepted(operation);
+    }));
+    await entered.promise; advance(300_001);
+    expect(admission.read('main', review.operationId)?.receipt).toMatchObject({ phase: 'sending', nativeInvoked: false });
+    admission.invalidatePrepared();
+    expect(admission.read('main', review.operationId)?.receipt).toMatchObject({ phase: 'sending', nativeInvoked: false });
+    const second = admission.acquire(); expect(() => admission.acquire()).toThrow('rate-limited');
+    beforeMark.resolve(); await Promise.resolve();
+    expect(admission.read('main', review.operationId)?.receipt.nativeInvoked).toBe(true);
+    afterMark.resolve(); expect((await pending).phase).toBe('accepted'); second.release();
+  });
   it('transfers a live receiving lease to preparing custody without restarting the body deadline or minting a review', () => {
     vi.useFakeTimers(); const { admission, advance } = fixture(); const preparing = admission.acquire();
     advance(29_999); vi.advanceTimersByTime(29_999);

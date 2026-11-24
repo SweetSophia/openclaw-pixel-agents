@@ -190,7 +190,7 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
           if (!result || result.runId !== review.operationId) throw Error('Unqualified image acknowledgment');
           const hasIdentity = result.messageId !== undefined || result.messageSeq !== undefined;
           if (hasIdentity && (!opaque(result.messageId) || !positive(result.messageSeq))) throw Error('Malformed image acknowledgment');
-          return { ...base, nativeInvoked: true, runId: review.operationId, phase: hasIdentity ? 'recorded' : 'accepted',
+          return { ...base, nativeInvoked: dispatch.nativeInvoked, runId: review.operationId, phase: hasIdentity ? 'recorded' : 'accepted',
             ...(hasIdentity ? { messageId: result.messageId as string, messageSeq: result.messageSeq as number } : {}) };
         } catch (error) {
           if (!dispatch.nativeInvoked) return { ...base, phase: 'not-dispatched', nativeInvoked: false, reason: reason(error) };

@@ -148,7 +148,8 @@ describe('private image follow-up state', () => {
     respond = path => path.endsWith('/confirm') ? json({ code: 'attachment-changed' }, 409) : json(receipt());
     await act(() => form.confirm(true));
     expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true);
-    expect(form.error).toMatch(/Check the original submission before selecting a new image/i);
+    expect(form.error).toMatch(/Check the original submission/i);
+    expect(form.error).not.toMatch(/selecting a new image/i);
     expect(form.error).not.toMatch(/^This image review changed\. Explicitly select/i);
   });
   it('shows a typed receipt rejection without treating expiry as proof of non-delivery', async () => {
@@ -167,6 +168,15 @@ describe('private image follow-up state', () => {
     respond = () => json(receipt('accepted')); await act(() => form.check());
     expect(form.phase).toBe('accepted'); expect(form.error).toBe('');
     expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(2);
+  });
+  it.each(['unknown', 'prepared'] as const)('keeps an expiry diagnosis after a still-%s Check receipt', async phase => {
+    await setup(); await prepare();
+    respond = () => Promise.reject(Error('lost confirmation reply')); await act(() => form.confirm(true));
+    respond = () => json({ code: 'attachment-expired' }, 409); await act(() => form.check());
+    const diagnosis = form.error; expect(diagnosis).toMatch(/expiry does not prove non-delivery/i);
+    respond = path => path.endsWith('/discard') ? json({ ok: true }) : json(receipt(phase)); await act(() => form.check());
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(form.error).toBe(diagnosis);
+    expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(phase === 'prepared' ? 3 : 2);
   });
   it('a prepared snapshot stays blocked until acknowledged discard and fresh not-dispatched proof', async () => {
     await setup(); await prepare(); const confirmReply = deferred<Response>(); const discardReply = deferred<Response>(); const proofReply = deferred<Response>();

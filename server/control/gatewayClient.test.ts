@@ -257,7 +257,9 @@ describe('scoped task Gateway client', () => {
     const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     const input = imageInput(); input.attachments[0].content = 'AR==';
-    await expect(gateway.sendImageFollowup!(input, gateway.attachmentCapabilities!()!.epoch)).rejects.toMatchObject({ code: 'attachment-changed' });
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(input, gateway.attachmentCapabilities!()!.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(invoked).not.toHaveBeenCalled();
     expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
   });
   it('admits an exact complete UTF-8 frame budget and rejects one escaped byte more', async () => {
@@ -268,18 +270,28 @@ describe('scoped task Gateway client', () => {
       : { type: 'res', id: frame.id, ok: true, payload: { runId: 'image-operation' } })));
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     const epoch = gateway.attachmentCapabilities!()!.epoch;
-    await expect(gateway.sendImageFollowup!(input, epoch)).resolves.toEqual({ runId: 'image-operation' });
+    await expect(gateway.sendImageFollowup!(input, epoch, vi.fn())).resolves.toEqual({ runId: 'image-operation' });
     expect(Buffer.byteLength(JSON.stringify(host.frames[1]))).toBe(exactBytes);
-    await expect(gateway.sendImageFollowup!({ ...input, message: input.message + '"' }, epoch)).rejects.toMatchObject({ code: 'attachment-too-large' });
+    await expect(gateway.sendImageFollowup!({ ...input, message: input.message + '"' }, epoch, vi.fn())).rejects.toMatchObject({ code: 'attachment-too-large' });
     expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(1);
   });
-  it('classifies a thrown socket send as uncertain and never queues a replacement', async () => {
+  it('keeps a throwing socket write uncertain because partial handoff cannot be ruled out', async () => {
     const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     const send = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(() => { throw Error('private-socket-detail'); });
-    const result = await gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch).catch(error => error);
+    const invoked = vi.fn();
+    const result = await gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch, invoked).catch(error => error);
     expect(result).toMatchObject({ code: 'attachment-outcome-unknown' }); expect((result as Error).message).not.toContain('private-socket-detail');
+    expect(invoked).toHaveBeenCalledOnce();
     send.mockRestore(); await expect(gateway.request('sessions.list', {})).resolves.toBeDefined();
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
+  });
+  it('rejects a missing or throwing image invocation marker before any socket write', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    const epoch = gateway.attachmentCapabilities!()!.epoch;
+    await expect(gateway.sendImageFollowup!(imageInput(), epoch, undefined as unknown as () => void)).rejects.toMatchObject({ code: 'attachment-changed' });
+    await expect(gateway.sendImageFollowup!(imageInput(), epoch, () => { throw Error('marker failed'); })).rejects.toMatchObject({ code: 'attachment-changed' });
     expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
   });
   it('checks live outgoing buffer and final epoch immediately before dispatch', async () => {
@@ -287,9 +299,11 @@ describe('scoped task Gateway client', () => {
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     expect(typeof gateway.attachmentCapabilities).toBe('function'); const caps = gateway.attachmentCapabilities!()!;
     const buffered = vi.spyOn(WebSocket.prototype, 'bufferedAmount', 'get').mockReturnValue(12_582_912);
-    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch)).rejects.toMatchObject({ code: 'attachment-too-large' });
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-too-large' });
     buffered.mockImplementation(() => { gateway.close(); return 0; });
-    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch)).rejects.toMatchObject({ code: 'attachment-changed' });
+    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(invoked).not.toHaveBeenCalled();
     expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0); expect(gateway.attachmentCapabilities!()).toBeNull();
   });
   it('blocks attachments from ordinary chat.send even when image capability is available', async () => {
@@ -313,7 +327,7 @@ describe('scoped task Gateway client', () => {
       : { type: 'res', id: frame.id, ok: true, payload: { sessions: [] } })));
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     expect(typeof gateway.attachmentCapabilities).toBe('function');
-    const error = await gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch).catch(error => error);
+    const error = await gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch, vi.fn()).catch(error => error);
     expect(error).toMatchObject({ code: 'uploads-disabled' }); expect((error as Error).message).not.toContain('private-source-detail');
     expect(gateway.status()).toMatchObject({ canRead: true, canSend: true });
     await expect(gateway.request('sessions.list', {})).resolves.toEqual({ sessions: [] });
@@ -325,7 +339,7 @@ describe('scoped task Gateway client', () => {
     let ordinaryRequestSettled = false, imageRequestSettled = false;
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const ordinary = gateway.request('sessions.list', {}).catch(error => { ordinaryRequestSettled = true; return error; });
-    const image = gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch).catch(error => { imageRequestSettled = true; return error; });
+    const image = gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch, vi.fn()).catch(error => { imageRequestSettled = true; return error; });
     await vi.advanceTimersByTimeAsync(5_000); expect(ordinaryRequestSettled).toBe(true); expect(imageRequestSettled).toBe(false);
     await vi.advanceTimersByTimeAsync(25_000); expect(imageRequestSettled).toBe(true);
     expect(await image).toMatchObject({ code: 'attachment-outcome-unknown' }); await ordinary;
@@ -341,7 +355,7 @@ describe('scoped task Gateway client', () => {
     });
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     expect(typeof gateway.attachmentCapabilities).toBe('function'); const before = gateway.attachmentCapabilities!()!;
-    await expect(gateway.sendImageFollowup!(imageInput(), before.epoch)).rejects.toMatchObject({ code: 'attachment-outcome-unknown' });
+    await expect(gateway.sendImageFollowup!(imageInput(), before.epoch, vi.fn())).rejects.toMatchObject({ code: 'attachment-outcome-unknown' });
     if (failure === 'disconnect') {
       await vi.waitFor(() => expect(gateway.attachmentCapabilities?.()?.epoch).toBeDefined());
       expect(gateway.attachmentCapabilities!()!.epoch).not.toBe(before.epoch);
@@ -355,7 +369,7 @@ describe('scoped task Gateway client', () => {
     expect(typeof gateway.attachmentCapabilities).toBe('function'); const before = gateway.attachmentCapabilities!()!;
     for (const socket of host.sockets) socket.write(encode({ type: 'event', event: 'config.changed', payload: {} }));
     await vi.waitFor(() => expect(gateway.attachmentCapabilities!()).toBeNull());
-    await expect(gateway.sendImageFollowup!(imageInput(), before.epoch)).rejects.toMatchObject({ code: 'attachment-changed' });
+    await expect(gateway.sendImageFollowup!(imageInput(), before.epoch, vi.fn())).rejects.toMatchObject({ code: 'attachment-changed' });
     expect(gateway.status()).toMatchObject({ canRead: true, canSend: true }); expect(host.frames).toHaveLength(1);
   });
   it('ordinary_methods_unchanged_without_cron', async () => {

@@ -47,6 +47,12 @@ describe('target-bound image service', () => {
     expect(await f.confirm(review)).toMatchObject({ phase: 'not-dispatched', nativeInvoked: false, reason: 'changed' });
     expect(f.nativeSends).toHaveLength(0);
   });
+  it('does not trust an acknowledgment from a Gateway adapter that skipped the invocation mark', async () => {
+    const f = fixture(); const review = await f.prepare();
+    f.gateway.sendImageFollowup = async () => ({ runId: review.operationId });
+    expect(await f.confirm(review)).toMatchObject({ phase: 'not-dispatched', nativeInvoked: false });
+    expect(f.nativeSends).toHaveLength(0);
+  });
   it('uses the lower negotiated image cap and rejects malformed browser authority without any source reads', async () => {
     const f = fixture(); f.state.caps!.maxImageBytes = 67;
     expect(f.service.status('main')).toEqual({ enabled: true, canPrepare: true, reason: null, epoch: 'epoch-1', maxBytes: 67 });

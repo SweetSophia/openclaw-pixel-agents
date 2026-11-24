@@ -62,10 +62,11 @@ async function fixture() {
 
 describe('authenticated streamed attachment ingress', () => {
   it('destroys a response with flushed headers instead of attempting a second JSON write', () => {
-    const destroy = vi.fn(); const status = vi.fn(() => { throw Error('Headers already sent'); });
-    const response = { destroyed: false, writableEnded: false, headersSent: true, destroy, status } as unknown as express.Response;
+    const destroy = vi.fn(); const status = vi.fn().mockReturnThis();
+    const json = vi.fn(() => { throw Error('Headers already sent'); });
+    const response = { destroyed: false, writableEnded: false, headersSent: true, destroy, status, json } as unknown as express.Response;
     expect(() => attachmentFailure(response, Error('late route failure'))).not.toThrow();
-    expect(destroy).toHaveBeenCalledOnce(); expect(status).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledOnce(); expect(status).not.toHaveBeenCalled(); expect(json).not.toHaveBeenCalled();
   });
   it('auth_precedes_large_body_read', async () => {
     const f = await fixture(); const large = '{"private":"' + 'x'.repeat(120 * 1024);

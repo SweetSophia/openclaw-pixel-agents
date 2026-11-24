@@ -53,7 +53,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     cleanup = undefined;
     if (closed) return;
     let deadline = Infinity;
-    for (const row of operations.values()) if (!row.staged || !row.pending || !row.invoked) deadline = Math.min(deadline, row.expires);
+    for (const row of operations.values()) if (!row.staged || !row.pending || !row.attempted) deadline = Math.min(deadline, row.expires);
     for (const row of leases.values()) if (!row.operationId && !row.preparing) deadline = Math.min(deadline, row.expires);
     if (deadline !== Infinity) {
       cleanup = setTimeout(prune, Math.max(1, deadline - now())); cleanup.unref?.();
@@ -73,7 +73,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     const time = now();
     for (const [id, row] of operations) if (row.expires <= time) {
       if (!row.pending || !row.staged) { dropStaged(row); operations.delete(id); }
-      else if (row.staged && !row.invoked) stopPrepared(row, 'expired');
+      else if (row.staged && !row.attempted) stopPrepared(row, 'expired');
     }
     for (const [lease, state] of leases) if (!state.operationId && !state.preparing && state.expires <= time) leases.delete(lease);
     schedule();
@@ -212,7 +212,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     if (row?.meta.receipt.target.agentId === agentId && row.staged && !row.pending) { stopPrepared(row); schedule(); }
   }
   function invalidatePrepared(): void {
-    prune(); for (const row of operations.values()) if (row.staged && !row.invoked) stopPrepared(row); schedule();
+    prune(); for (const row of operations.values()) if (row.staged && !row.attempted) stopPrepared(row); schedule();
   }
   function close(): void {
     if (closed) return; closed = true;

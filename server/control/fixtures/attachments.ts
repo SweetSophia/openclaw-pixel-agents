@@ -59,7 +59,7 @@ export function attachmentGatewayFixture() {
     async sendImageFollowup(params, epoch, markNativeInvocation) {
       if (epoch !== state.caps?.epoch) throw Error('Wrong synthetic source epoch');
       const wire = serializeImageFollowupFrame({ type: 'req', id: 'native-request-1', method: 'chat.send', params }, state.caps, 0);
-      markNativeInvocation?.();
+      markNativeInvocation();
       nativeSends.push(JSON.parse(wire) as NativeImageRequestFrame);
       return state.nativeResult(params.idempotencyKey);
     },
