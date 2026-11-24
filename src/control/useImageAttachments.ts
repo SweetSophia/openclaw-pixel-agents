@@ -9,7 +9,7 @@ export interface AttachmentForm {
   status: AttachmentStatus | null; selection: Omit<AttachmentImage, 'sha256'> | null;
   review: AttachmentReview | null; receipt: AttachmentReceipt | null; originalTarget: ControlTarget | null;
   phase: 'idle' | 'reading' | 'preparing' | 'review' | 'confirming' | 'accepted' | 'recorded' | 'not-dispatched' | 'rejected' | 'unknown';
-  disabledReason: string; pending: boolean;
+  disabledReason: string; error: string; pending: boolean;
   select(file: File | null): Promise<void>; prepare(): Promise<void>; confirm(sharingAcknowledged: boolean): Promise<void>;
   check(): Promise<void>; remove(): void;
 }
@@ -27,7 +27,9 @@ const unresolved = (operation?: AttachmentClientOperation) => !!operation && ['c
 const exactTarget = (left: ControlTarget, right: ControlTarget) => targetIdentity(left) === targetIdentity(right) && left.activeLeafEntryId === right.activeLeafEntryId;
 const path = (agentId: string, action: string) => `/api/control/agents/${encodeURIComponent(agentId)}/attachments/${action}`;
 const ordinary = (message: string) => !!message.trim() && message.length <= ATTACHMENT_LIMITS.message && !isControlCommand(message);
-function imageError(error: unknown): string {
+function imageError(error: unknown, admitted = false): string {
+  if (admitted && error instanceof ControlApiError && error.code === 'attachment-changed')
+    return 'This image review changed. Check the original submission before selecting a new image.';
   if (error instanceof ControlApiError && error.code.startsWith('attachment-')) return error.message;
   return 'The private image request could not be verified. No replacement submission is sent automatically.';
 }
@@ -61,9 +63,8 @@ export function useImageAttachments(options: Options): AttachmentForm {
   const sameRead = (captured: string, token: number) => readPermitted() && context.current.owner === captured && version.current === token;
   const same = (captured: string, token: number) => context.current.enabled && sameRead(captured, token);
   const discard = useCallback((agentId: string, operationId: string, generation: number) => {
-    if (!access.isCurrentGeneration(generation)) return;
-    void access.request(path(agentId, 'discard'), { method: 'POST', body: JSON.stringify({ operationId }) }).catch(() => {});
-  }, [access.request, access.isCurrentGeneration]);
+    access.discardAttachmentPreparation(agentId, operationId, generation);
+  }, [access.discardAttachmentPreparation]);
   const clear = useCallback((keepStatus = false) => {
     version.current++; content.current = null; frozen.current = null;
     for (const read of reads.current) read.abort(); reads.current.clear(); checking.current = false;
@@ -176,6 +177,7 @@ export function useImageAttachments(options: Options): AttachmentForm {
     admitted.phase = receipt.phase === 'sending' || receipt.phase === 'prepared' ? 'unknown' : receipt.phase;
     if (['rejected', 'not-dispatched'].includes(receipt.phase)) frozen.current = null;
     notify();
+    if (context.current.operationKey === key && data.current.owner === context.current.owner && data.current.error) update({ ...data.current, error: '' });
     const original = frozen.current;
     if (permitted() && context.current.operationKey === key && original?.operationId === admitted.operationId && !original.notified && receipt.phase === 'recorded') {
       original.notified = true; context.current.options.onRecorded(original.message); frozen.current = null;
@@ -186,6 +188,7 @@ export function useImageAttachments(options: Options): AttachmentForm {
     const current = context.current; const state = data.current;
     if (!review || review !== state.review || !sharingAcknowledged || !permitted() || current.options.textPending || !state.status?.canPrepare
       || state.owner !== current.owner || state.phase !== 'review' || performance.now() >= state.expiresAt || unresolved(operations.get(current.operationKey))) return;
+    const token = version.current;
     const admitted: AttachmentClientOperation = { operationId: review.operationId, target: Object.freeze({ ...review.target }), generation: current.access.generation, phase: 'confirming' };
     // Latch uncertainty before entering the network. Remounts retain this metadata, never the token/text/bytes.
     operations.set(current.operationKey, admitted); notify();
@@ -196,8 +199,9 @@ export function useImageAttachments(options: Options): AttachmentForm {
       const value = await current.access.request(path(review.target.agentId, 'confirm'), { method: 'POST',
         body: JSON.stringify({ operationId: review.operationId, reviewToken: review.reviewToken, sharingAcknowledged: true }) });
       settle(current.operationKey, admitted, value);
-    } catch {
+    } catch (error) {
       if (currentGeneration(admitted.generation) && operations.get(current.operationKey) === admitted && admitted.phase === 'confirming') { admitted.phase = 'unknown'; notify(); }
+      if (sameRead(current.owner, token) && operations.get(current.operationKey) === admitted && admitted.phase === 'unknown') update({ ...data.current, error: imageError(error, true) });
     }
   }, [operations, notify, update]);
   const check = useCallback(async () => {
@@ -218,8 +222,9 @@ export function useImageAttachments(options: Options): AttachmentForm {
       if (!acknowledgment || Object.keys(acknowledgment).length !== 1 || acknowledgment.ok !== true) throw new ControlApiError('invalid-source');
       const proof = await current.access.request(path(admitted.target.agentId, 'receipt'), { method: 'POST', signal: controller.signal, body: JSON.stringify({ operationId: admitted.operationId }) });
       if (ownsCheck()) settle(current.operationKey, admitted, proof);
-    } catch {
+    } catch (error) {
       if (currentGeneration(admitted.generation) && operations.get(current.operationKey) === admitted && admitted.phase === 'confirming') { admitted.phase = 'unknown'; notify(); }
+      if (ownsCheck()) update({ ...data.current, error: imageError(error, true) });
     } finally { reads.current.delete(controller); if (!controller.signal.aborted) checking.current = false; }
   }, [operations, notify]);
   const displayed = enabled && visible && local.owner === owner && access.isCurrentGeneration(access.generation) ? local : empty(owner);
@@ -232,6 +237,6 @@ export function useImageAttachments(options: Options): AttachmentForm {
           : displayed.error || (!displayed.status?.canPrepare ? 'Image sending is unavailable for this connection.'
             : !ordinary(displayed.review?.message ?? options.message) ? 'An image requires nonempty ordinary follow-up text of at most 8,000 characters, not commands.' : '');
   return { status: displayed.status, selection: displayed.selection, review: displayed.review, receipt: admitted?.receipt ?? null, originalTarget: admitted?.target ?? null, phase,
-    disabledReason, pending: unresolved(admitted) || ['reading', 'preparing'].includes(displayed.phase), select, prepare,
+    disabledReason, error: displayed.error, pending: unresolved(admitted) || ['reading', 'preparing'].includes(displayed.phase), select, prepare,
     confirm: acknowledged => confirm(displayed.review, acknowledged), check, remove: () => clear(true) };
 }

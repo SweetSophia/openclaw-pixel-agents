@@ -8,7 +8,7 @@ import type { ScheduleConfig } from './scheduleConfig';
 import { loadOrCreateDeviceIdentity, readDeviceGrantDetails, writeDeviceGrant, type DeviceGrant } from './deviceIdentity';
 import { isDeviceStorageError } from './errors';
 import { ATTACHMENT_LIMITS } from '../../shared/controlAttachments';
-import { qualifyAttachmentPolicy, serializeImageFollowupFrame, type AttachmentGatewayCapabilities, type NativeImageFollowup } from './gatewayAttachmentPolicy';
+import { AttachmentFrameError, qualifyAttachmentPolicy, serializeImageFollowupFrame, type AttachmentGatewayCapabilities, type NativeImageFollowup } from './gatewayAttachmentPolicy';
 import { supportsStableGatewayVersion } from './gatewayVersion';
 
 const READ_METHODS = ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe'] as const;
@@ -43,7 +43,7 @@ export interface ControlGateway {
   modelCapabilities?(): { canRead: boolean; canChange: boolean; disabledReason?: 'unsupported' | 'permission' | null };
   readSourceKey?(): string | null;
   attachmentCapabilities?(): AttachmentGatewayCapabilities | null;
-  sendImageFollowup?(input: NativeImageFollowup, expectedEpoch: string): Promise<unknown>;
+  sendImageFollowup?(input: NativeImageFollowup, expectedEpoch: string, markNativeInvocation?: () => void): Promise<unknown>;
 }
 export interface ScheduleGateway {
   start(): void; close(): void; status(): ScheduleManagement;
@@ -278,7 +278,7 @@ function createSignedGateway(profile: GatewayProfile) {
     return state === 'ready' && config.enabled && control?.attachmentsEnabled && control.sendEnabled && writeGranted
       && attachmentCaps && currentReadSourceKey() === attachmentCaps.sourceKey ? { ...attachmentCaps } : null;
   }
-  function dispatch(method: GatewayMethod, params: Record<string, unknown>, approval: boolean, signal?: AbortSignal, imageEpoch?: string): Promise<unknown> {
+  function dispatch(method: GatewayMethod, params: Record<string, unknown>, approval: boolean, signal?: AbortSignal, imageEpoch?: string, markNativeInvocation?: () => void): Promise<unknown> {
     if (signal?.aborted) return Promise.reject(Error('Task request cancelled'));
     if (pending.size >= 8) return Promise.reject(Error('Too many pending task requests'));
     return new Promise((resolve, reject) => {
@@ -291,7 +291,7 @@ function createSignedGateway(profile: GatewayProfile) {
         const caps = currentAttachmentCapabilities();
         if (!caps || caps.epoch !== imageEpoch) { reject(new AttachmentGatewayRequestError('attachment-changed')); return; }
         try { serialized = serializeImageFollowupFrame({ type: 'req', id, method: 'chat.send', params: params as unknown as NativeImageFollowup }, caps, 0); }
-        catch { reject(new AttachmentGatewayRequestError('attachment-too-large')); return; }
+        catch (error) { reject(new AttachmentGatewayRequestError(error instanceof AttachmentFrameError && error.kind === 'too-large' ? 'attachment-too-large' : 'attachment-changed')); return; }
         const buffered = outgoing!.bufferedAmount;
         // Do not wait for drain/reconnect. Recheck identity after all serialization and socket getters.
         if (outgoing !== socket || currentAttachmentCapabilities()?.epoch !== imageEpoch) { reject(new AttachmentGatewayRequestError('attachment-changed')); return; }
@@ -303,7 +303,7 @@ function createSignedGateway(profile: GatewayProfile) {
       const timer = setTimeout(() => { const item = pending.get(id); if (!item) return; item.cleanup(); pending.delete(id); reject(uncertain('Task request timed out')); }, image ? ATTACHMENT_LIMITS.nativeTimeoutMs : 5000);
       const cleanup = () => signal?.removeEventListener('abort', cancel);
       pending.set(id, { method, approval, image, resolve, reject, timer, cleanup }); signal?.addEventListener('abort', cancel, { once: true });
-      try { outgoing!.send(serialized); }
+      try { if (image) markNativeInvocation?.(); outgoing!.send(serialized); }
       catch { clearTimeout(timer); cleanup(); pending.delete(id); reject(uncertain('Task source unavailable')); }
     });
   }
@@ -323,15 +323,16 @@ function createSignedGateway(profile: GatewayProfile) {
     },
     readSourceKey: currentReadSourceKey,
     attachmentCapabilities: currentAttachmentCapabilities,
-    sendImageFollowup(input: NativeImageFollowup, expectedEpoch: string): Promise<unknown> {
+    sendImageFollowup(input: NativeImageFollowup, expectedEpoch: string, markNativeInvocation?: () => void): Promise<unknown> {
       if (typeof expectedEpoch !== 'string' || !expectedEpoch) return Promise.reject(new AttachmentGatewayRequestError('attachment-changed'));
-      return dispatch('chat.send', input as unknown as Record<string, unknown>, false, undefined, expectedEpoch);
+      return dispatch('chat.send', input as unknown as Record<string, unknown>, false, undefined, expectedEpoch, markNativeInvocation);
     },
     scheduleStatus: (): ScheduleManagement => ({ configured: config.enabled, state, canManage: state === 'ready' && manageGranted && epoch !== null, epoch, reason: scheduleReason }),
     documentStatus: (): AgentDocumentManagement => ({ configured: config.enabled, state, canEdit: state === 'ready' && manageGranted && epoch !== null, epoch, reason: state === 'connecting' ? 'unavailable' : scheduleReason }),
     scheduleConnection: () => state === 'ready' && manageGranted && epoch && deviceId && socket?.readyState === WebSocket.OPEN && config.url
       ? { epoch, gatewayUrl: config.url, deviceId } : null,
     request(method: GatewayMethod, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+      if (!params || typeof params !== 'object' || Array.isArray(params)) return Promise.reject(new GatewayRequestError('invalid-request'));
       if (method === 'chat.send' && 'attachments' in params) return Promise.reject(new GatewayRequestError('invalid-request'));
       if (documents && !(DOCUMENT_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('document-denied'));
       if (scheduling && !(SCHEDULE_METHODS as readonly string[]).includes(method)) return Promise.reject(new GatewayRequestError('schedule-denied'));

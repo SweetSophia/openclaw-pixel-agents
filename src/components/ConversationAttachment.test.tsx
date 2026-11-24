@@ -7,7 +7,7 @@ import { ConversationAttachment } from './ConversationAttachment';
 const target = { agentId: 'main', sessionKey: 'agent:main:one', sessionId: 'one', activeLeafEntryId: 'leaf-1' };
 function form(changes: Partial<AttachmentForm> = {}): AttachmentForm {
   return { status: { enabled: true, canPrepare: true, reason: null, epoch: 'epoch', maxBytes: 1024 }, selection: null, review: null, receipt: null, originalTarget: null,
-    phase: 'idle', pending: false, disabledReason: '', select: vi.fn(), prepare: vi.fn(), confirm: vi.fn(), check: vi.fn(), remove: vi.fn(), ...changes };
+    phase: 'idle', pending: false, disabledReason: '', error: '', select: vi.fn(), prepare: vi.fn(), confirm: vi.fn(), check: vi.fn(), remove: vi.fn(), ...changes };
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('attachment metadata controls', () => {
@@ -22,6 +22,21 @@ describe('attachment metadata controls', () => {
     expect(screen.getByText(/1,024 bytes/)).toHaveTextContent(/PNG.*JPEG/);
     expect(screen.getByLabelText('Attach image')).toHaveAttribute('accept', 'image/png,image/jpeg');
     expect(screen.queryByRole('img')).toBeNull();
+  });
+  it('updates one persistent live region with phase, evidence, and a typed error', () => {
+    const view = render(<ConversationAttachment target={target} form={form()} />);
+    const live = screen.getByRole('status');
+    view.rerender(<ConversationAttachment target={target} form={form({ phase: 'preparing' })} />);
+    expect(screen.getByRole('status')).toBe(live);
+    expect(live).toHaveTextContent(/Uploading to the private office server/);
+    view.rerender(<ConversationAttachment target={target} form={form({ phase: 'unknown', pending: true,
+      receipt: { operationId: 'op-1', target, phase: 'unknown', nativeInvoked: true, imageEvidence: 'unverified', runId: 'op-1' },
+      disabledReason: 'Check the original image submission.', error: 'The original image receipt expired.' })} />);
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByRole('status')).toBe(live);
+    expect(live).toHaveTextContent(/Image outcome unknown/);
+    expect(live).toHaveTextContent(/Attachment evidence is unverified/);
+    expect(live).toHaveTextContent(/receipt expired/);
   });
   it.each(['   ', '/stop'])('blocks a selected-image review with invalid ordinary text: %j', message => {
     const state = form({ selection: { filename: 'photo.png', mimeType: 'image/png', bytes: 33, width: 1, height: 1 }, disabledReason: `Invalid text: ${message}` });

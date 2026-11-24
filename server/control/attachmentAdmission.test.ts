@@ -24,7 +24,7 @@ function fixture() {
 }
 const accepted = (operation: AttachmentDispatch): AttachmentReceipt => ({ operationId: operation.review.operationId,
   target: { ...operation.review.target }, phase: 'accepted', nativeInvoked: true, imageEvidence: 'unverified', runId: operation.review.operationId });
-const sendAccepted = (operation: AttachmentDispatch) => operation.attempt(async () => accepted(operation));
+const sendAccepted = (operation: AttachmentDispatch) => operation.attempt(async mark => { mark(); return accepted(operation); });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('duplicate_confirmation_has_one_attempt', () => {
@@ -33,7 +33,7 @@ describe('duplicate_confirmation_has_one_attempt', () => {
     const preflight = deferred<void>(), native = deferred<void>(); let starts = 0, sends = 0;
     const start = async (operation: AttachmentDispatch) => {
       starts++; await preflight.promise;
-      return operation.attempt(async () => { sends++; await native.promise; return accepted(operation); });
+      return operation.attempt(async mark => { mark(); sends++; await native.promise; return accepted(operation); });
     };
     const first = admission.confirm('main', confirmation(review), start);
     const second = admission.confirm('main', confirmation(review), start);
@@ -50,7 +50,8 @@ describe('duplicate_confirmation_has_one_attempt', () => {
     const { admission, prepare } = fixture(); const review = prepare(); let sends = 0, invokedAtEntry = false;
     let secondError: unknown, nativeError: unknown;
     const result = await admission.confirm('main', confirmation(review), async operation => {
-      try { await operation.attempt(async () => {
+      try { await operation.attempt(async mark => {
+        mark();
         sends++; invokedAtEntry = operation.nativeInvoked;
         try { await operation.attempt(async () => { sends++; }); } catch (error) { secondError = error; }
         throw Error('private native error');
@@ -81,7 +82,7 @@ describe('duplicate_confirmation_has_one_attempt', () => {
     expect((await admission.confirm('main', confirmation(discarded), sendAccepted)).phase).toBe('not-dispatched');
     const review = prepare(); const wait = deferred<void>(); let sends = 0;
     const pending = admission.confirm('main', confirmation(review), async operation => {
-      await wait.promise; return operation.attempt(async () => { sends++; return accepted(operation); });
+      await wait.promise; return operation.attempt(async mark => { mark(); sends++; return accepted(operation); });
     });
     admission.discard('main', review.operationId); wait.resolve();
     expect((await pending).phase).toBe('accepted'); expect(sends).toBe(1);
@@ -151,7 +152,7 @@ describe('monotonic_expiry_releases_orphan_slots', () => {
 
   it('keeps slots through preflight and native settlement, not just the preparation deadline', async () => {
     const { admission, prepare, advance } = fixture(); const review = prepare(), other = prepare(); const wait = deferred<void>();
-    const pending = admission.confirm('main', confirmation(review), operation => operation.attempt(async () => { await wait.promise; return accepted(operation); }));
+    const pending = admission.confirm('main', confirmation(review), operation => operation.attempt(async mark => { mark(); await wait.promise; return accepted(operation); }));
     await Promise.resolve(); advance(300_001); expect(admission.read('main', other.operationId)).toBeNull();
     const receiving = admission.acquire(); expect(() => admission.acquire()).toThrow('rate-limited');
     wait.resolve(); await pending; const released = admission.acquire(); receiving.release(); released.release();
@@ -196,6 +197,16 @@ describe('monotonic_expiry_releases_orphan_slots', () => {
 });
 
 describe('capacity_never_evicts_live_operation', () => {
+  it('records a pre-dispatch native rejection as not-dispatched without inventing an invocation', async () => {
+    const { admission, prepare } = fixture(); const review = prepare();
+    const result = await admission.confirm('main', confirmation(review), async operation => {
+      await operation.attempt(async () => { throw Error('Rejected before native dispatch'); });
+      return accepted(operation);
+    });
+    expect(result).toMatchObject({ phase: 'not-dispatched', nativeInvoked: false, reason: 'unavailable' });
+    expect(admission.read('main', review.operationId)?.receipt).toEqual(result);
+    const first = admission.acquire(), second = admission.acquire(); first.release(); second.release();
+  });
   it('reserves only two slots across receiving and prepared states without transferred-lease bypass', () => {
     const { admission } = fixture(); const lease = admission.acquire();
     const review = admission.prepare({ target, message: 'Read it', payload: payload(), connection, lease });
@@ -208,7 +219,7 @@ describe('capacity_never_evicts_live_operation', () => {
 
   it('refuses the 129th record rather than evicting retained or pending operations', async () => {
     const { admission, prepare } = fixture(); const first = prepare(); const gate = deferred<void>();
-    const pending = admission.confirm('main', confirmation(first), operation => operation.attempt(async () => { await gate.promise; return accepted(operation); }));
+    const pending = admission.confirm('main', confirmation(first), operation => operation.attempt(async mark => { mark(); await gate.promise; return accepted(operation); }));
     for (let i = 0; i < 127; i++) { const review = prepare(); await admission.confirm('main', confirmation(review), sendAccepted); }
     expect(() => admission.acquire()).toThrow('rate-limited');
     expect(admission.read('main', first.operationId)?.receipt.phase).toBe('sending');
@@ -227,7 +238,8 @@ describe('capacity_never_evicts_live_operation', () => {
     const dispatches: AttachmentDispatch[] = []; let starts = 0, nativeSettled = 0;
     const start = async (operation: AttachmentDispatch): Promise<AttachmentReceipt> => {
       starts++; dispatches.push(operation);
-      void operation.attempt(async () => {
+      void operation.attempt(async mark => {
+        mark();
         await native.promise; nativeSettled++;
         if (outcome === 'native-rejection') throw Error('native request rejected');
       });
@@ -255,7 +267,7 @@ describe('capacity_never_evicts_live_operation', () => {
 describe('late_ack_cannot_downgrade_recorded_receipt', () => {
   it('preserves recorded evidence when a late native acknowledgment resolves', async () => {
     const { admission, prepare } = fixture(); const review = prepare(); const gate = deferred<void>();
-    const pending = admission.confirm('main', confirmation(review), operation => operation.attempt(async () => { await gate.promise; return accepted(operation); }));
+    const pending = admission.confirm('main', confirmation(review), operation => operation.attempt(async mark => { mark(); await gate.promise; return accepted(operation); }));
     await Promise.resolve();
     const recorded: AttachmentReceipt = { operationId: review.operationId, target, runId: review.operationId,
       phase: 'recorded', nativeInvoked: true, imageEvidence: 'reference-recorded', messageId: 'message-1', messageSeq: 7 };
@@ -296,7 +308,7 @@ describe('late_ack_cannot_downgrade_recorded_receipt', () => {
     const foreignReceipt = await admission.confirm('main', confirmation(foreign), sendAccepted);
     const current = prepare();
     const result = await admission.confirm('main', confirmation(current), async operation => {
-      if (invoked) await operation.attempt(async () => {});
+      if (invoked) await operation.attempt(async mark => { mark(); });
       return { ...foreignReceipt, imageEvidence: 'omitted' };
     });
     expect(result).toMatchObject({ operationId: current.operationId, phase: invoked ? 'unknown' : 'not-dispatched', nativeInvoked: invoked });
@@ -319,21 +331,21 @@ describe('old_identity_cannot_create_operation', () => {
   it('invalidates prepared and awaiting preflight work but never replays an invoked operation', async () => {
     const { admission, prepare } = fixture(); const before = prepare(), preflight = prepare(); const gate = deferred<void>(); let sends = 0;
     const pending = admission.confirm('main', confirmation(preflight), async operation => {
-      await gate.promise; return operation.attempt(async () => { sends++; return accepted(operation); });
+      await gate.promise; return operation.attempt(async mark => { mark(); sends++; return accepted(operation); });
     });
     await Promise.resolve(); admission.invalidatePrepared(); gate.resolve();
     expect(await pending).toMatchObject({ phase: 'not-dispatched', reason: 'changed', nativeInvoked: false });
     expect((await admission.confirm('main', confirmation(before), sendAccepted)).phase).toBe('not-dispatched');
     expect(sends).toBe(0);
     const review = prepare(), native = deferred<void>();
-    const running = admission.confirm('main', confirmation(review), operation => operation.attempt(async () => { sends++; await native.promise; return accepted(operation); }));
+    const running = admission.confirm('main', confirmation(review), operation => operation.attempt(async mark => { mark(); sends++; await native.promise; return accepted(operation); }));
     await Promise.resolve(); admission.invalidatePrepared(); native.resolve(); expect((await running).phase).toBe('accepted');
     expect(sends).toBe(1);
   });
 
   it('close drops owned state and blocks a delayed callback or late acknowledgment from reviving it', async () => {
     const { admission, prepare } = fixture(); const review = prepare(); const gate = deferred<void>(); let dispatch!: AttachmentDispatch;
-    const pending = admission.confirm('main', confirmation(review), operation => { dispatch = operation; return operation.attempt(async () => { await gate.promise; return {
+    const pending = admission.confirm('main', confirmation(review), operation => { dispatch = operation; return operation.attempt(async mark => { mark(); await gate.promise; return {
       operationId: review.operationId, target, phase: 'accepted', nativeInvoked: true, imageEvidence: 'unverified' }; }); });
     await Promise.resolve(); admission.close(); admission.close(); gate.resolve();
     await expect(pending).rejects.toThrow('unavailable');
@@ -346,7 +358,7 @@ describe('old_identity_cannot_create_operation', () => {
   it('expiry during awaited preflight revokes its delayed attempt', async () => {
     const { admission, prepare, advance } = fixture(); const review = prepare(); const gate = deferred<void>(); let sends = 0;
     const pending = admission.confirm('main', confirmation(review), async operation => {
-      await gate.promise; return operation.attempt(async () => { sends++; return accepted(operation); });
+      await gate.promise; return operation.attempt(async mark => { mark(); sends++; return accepted(operation); });
     });
     await Promise.resolve(); advance(300_000); gate.resolve();
     expect(await pending).toMatchObject({ phase: 'not-dispatched', nativeInvoked: false, reason: 'expired' }); expect(sends).toBe(0);

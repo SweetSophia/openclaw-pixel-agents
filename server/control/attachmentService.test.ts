@@ -35,6 +35,18 @@ describe('target-bound image service', () => {
     expect(f.requests.filter(r => r.method !== 'sessions.subscribe')).toHaveLength(0);
     expect(f.nativeSends).toHaveLength(0);
   });
+  it('does not advertise image preparation when read-source reconciliation is unavailable', () => {
+    const f = fixture(); f.gateway.readSourceKey = undefined;
+    expect(f.service.status('main')).toMatchObject({ canPrepare: false, reason: 'unsupported' });
+    expect(() => f.service.acquirePreparation('main')).toThrow('unsupported');
+    expect(f.nativeSends).toHaveLength(0);
+  });
+  it('preserves a structural pre-dispatch Gateway rejection as a changed, not-dispatched receipt', async () => {
+    const f = fixture(); const review = await f.prepare();
+    f.gateway.sendImageFollowup = async () => { throw new AttachmentGatewayRequestError('attachment-changed'); };
+    expect(await f.confirm(review)).toMatchObject({ phase: 'not-dispatched', nativeInvoked: false, reason: 'changed' });
+    expect(f.nativeSends).toHaveLength(0);
+  });
   it('uses the lower negotiated image cap and rejects malformed browser authority without any source reads', async () => {
     const f = fixture(); f.state.caps!.maxImageBytes = 67;
     expect(f.service.status('main')).toEqual({ enabled: true, canPrepare: true, reason: null, epoch: 'epoch-1', maxBytes: 67 });

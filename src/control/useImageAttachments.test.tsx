@@ -55,6 +55,20 @@ describe('private image follow-up state', () => {
     await act(async () => { read.resolve(bytes.slice().buffer); await selected; });
     expect(form.selection).toBeNull(); expect(form.review).toBeNull(); expect(form.phase).toBe('idle'); expect(count('prepare')).toBe(0);
   });
+  it('Lock sends a staged-review discard with the retiring key without aborting it', async () => {
+    await setup(); await prepare();
+    const reply = deferred<Response>();
+    respond = path => path.endsWith('/discard') ? reply.promise : json({ ok: true });
+    act(() => access.lock());
+    await waitFor(() => expect(count('discard')).toBe(1));
+    const discard = requests.find(row => row.path.endsWith('/discard'))!;
+    expect(new Headers(discard.init.headers).get('Authorization')).toBe('Bearer synthetic-key');
+    expect(discard.init.signal?.aborted).not.toBe(true);
+    expect(discard.init.keepalive).toBe(true);
+    expect(JSON.parse(discard.init.body as string)).toEqual({ operationId: 'image-op-1' });
+    expect(form.review).toBeNull(); expect(operations.size).toBe(0);
+    await act(async () => reply.resolve(json({ ok: true })));
+  });
   it('drops a delayed preparation after lock without restoring its review', async () => {
     await setup(); await act(() => form.select(image())); const reply = deferred<Response>();
     respond = path => path.endsWith('/prepare') ? reply.promise : json({ ok: true });
@@ -119,6 +133,40 @@ describe('private image follow-up state', () => {
     respond = () => json({ code: 'attachment-expired' }, 409); await act(() => form.check()); await act(() => form.check()); await act(() => form.prepare()); await act(() => form.confirm(true));
     expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(count('confirm')).toBe(1); expect(count('prepare')).toBe(1);
     expect(form.disabledReason).not.toMatch(/retry|resend|try again/i);
+  });
+  it('shows a typed confirm rejection while keeping the original outcome blocked', async () => {
+    await setup(); await prepare();
+    respond = path => path.endsWith('/confirm') ? json({ code: 'attachment-expired' }, 409) : json(receipt());
+    await act(() => form.confirm(true));
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true);
+    expect(form.error).toMatch(/review expired/i);
+    expect(form.disabledReason).toMatch(/Check the original image submission/);
+    expect(count('confirm')).toBe(1);
+  });
+  it('does not invite a replacement image when a changed confirm is still uncertain', async () => {
+    await setup(); await prepare();
+    respond = path => path.endsWith('/confirm') ? json({ code: 'attachment-changed' }, 409) : json(receipt());
+    await act(() => form.confirm(true));
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true);
+    expect(form.error).toMatch(/Check the original submission before selecting a new image/i);
+    expect(form.error).not.toMatch(/^This image review changed\. Explicitly select/i);
+  });
+  it('shows a typed receipt rejection without treating expiry as proof of non-delivery', async () => {
+    await setup(); await prepare();
+    respond = () => Promise.reject(Error('lost confirmation reply')); await act(() => form.confirm(true));
+    respond = () => json({ code: 'attachment-expired' }, 409); await act(() => form.check());
+    expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true);
+    expect(form.error).toMatch(/expiry does not prove non-delivery/i);
+    expect(count('receipt')).toBe(1); expect(count('confirm')).toBe(1);
+  });
+  it('clears an obsolete check error after a fresh accepted receipt', async () => {
+    await setup(); await prepare();
+    respond = () => Promise.reject(Error('lost confirmation reply')); await act(() => form.confirm(true));
+    respond = () => json({ code: 'attachment-expired' }, 409); await act(() => form.check());
+    expect(form.error).toMatch(/expired/i);
+    respond = () => json(receipt('accepted')); await act(() => form.check());
+    expect(form.phase).toBe('accepted'); expect(form.error).toBe('');
+    expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(2);
   });
   it('a prepared snapshot stays blocked until acknowledged discard and fresh not-dispatched proof', async () => {
     await setup(); await prepare(); const confirmReply = deferred<Response>(); const discardReply = deferred<Response>(); const proofReply = deferred<Response>();

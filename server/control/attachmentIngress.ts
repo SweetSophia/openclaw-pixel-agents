@@ -16,6 +16,7 @@ export function isAttachmentPreparationRequest(req: { method: string; originalUr
 
 export function attachmentFailure(res: Response, error: unknown): void {
   if (res.destroyed || res.writableEnded) return;
+  if (res.headersSent) { res.destroy(); return; }
   const code = error instanceof ControlError || error instanceof GatewayRequestError ? error.code : 'unavailable';
   const status = code === 'invalid-request' || code === 'command-not-supported' ? 400
     : code === 'invalid-target' ? 404 : code === 'scope-required' || code === 'pairing-required' ? 403

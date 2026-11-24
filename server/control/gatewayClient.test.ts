@@ -228,7 +228,9 @@ describe('scoped task Gateway client', () => {
     const signed = ['v3', connect.device.id, 'cli', 'backend', 'operator', 'operator.read,operator.write', '123', connect.auth.token, 'fixture-nonce', process.platform, ''].join('|');
     // Signature token is the synthetic bootstrap configured by client(), not an image-specific grant.
     expect(verify(null, Buffer.from(signed), key, Buffer.from(connect.device.signature, 'base64url'))).toBe(true);
-    await expect(gateway.sendImageFollowup!(imageInput(), caps!.epoch)).resolves.toEqual({ runId: 'image-operation' });
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(imageInput(), caps!.epoch, invoked)).resolves.toEqual({ runId: 'image-operation' });
+    expect(invoked).toHaveBeenCalledOnce();
     expect(host.frames[1]).toEqual({ type: 'req', id: expect.any(String), method: 'chat.send', params: imageInput() });
     expect(JSON.stringify(gateway.status())).not.toMatch(/sourceKey|epoch|image-fixture|device|token/i);
     caps!.maxPayload = 1; expect(gateway.attachmentCapabilities!()!.maxPayload).toBe(6_291_456);
@@ -245,8 +247,17 @@ describe('scoped task Gateway client', () => {
     const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id, { policy: { maxPayload: 350, maxBufferedBytes: 700, tickIntervalMs: 15000, attachments: { maxBytes: 100, maxImageBytes: 100 } } }))));
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     expect(typeof gateway.attachmentCapabilities).toBe('function'); const caps = gateway.attachmentCapabilities!()!;
-    await expect(gateway.sendImageFollowup!(imageInput(), 'stale-epoch')).rejects.toMatchObject({ code: 'attachment-changed' });
-    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch)).rejects.toMatchObject({ code: 'attachment-too-large' });
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(imageInput(), 'stale-epoch', invoked)).rejects.toMatchObject({ code: 'attachment-changed' });
+    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-too-large' });
+    expect(invoked).not.toHaveBeenCalled();
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
+  });
+  it('reports a structurally invalid image frame as changed, not oversized', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    const input = imageInput(); input.attachments[0].content = 'AR==';
+    await expect(gateway.sendImageFollowup!(input, gateway.attachmentCapabilities!()!.epoch)).rejects.toMatchObject({ code: 'attachment-changed' });
     expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
   });
   it('admits an exact complete UTF-8 frame budget and rejects one escaped byte more', async () => {
@@ -286,6 +297,14 @@ describe('scoped task Gateway client', () => {
     const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
     await expect(gateway.request('chat.send', imageInput() as unknown as Record<string, unknown>)).rejects.toMatchObject({ code: 'invalid-request' });
     await expect(gateway.request('chat.send', { attachments: undefined })).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(host.frames).toHaveLength(1);
+  });
+  it('rejects a null ordinary request as a promise without bypassing the attachment guard', async () => {
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(imageHello(frame.id))); });
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    let pending: Promise<unknown> | undefined;
+    expect(() => { pending = gateway.request('chat.send', null as unknown as Record<string, unknown>); }).not.toThrow();
+    await expect(pending).rejects.toMatchObject({ code: 'invalid-request' });
     expect(host.frames).toHaveLength(1);
   });
   it('uploads_disabled_does_not_lock_reader', async () => {

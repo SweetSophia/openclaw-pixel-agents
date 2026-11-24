@@ -8,7 +8,7 @@ import { createAttachmentAdmission } from './attachmentAdmission';
 import { createAttachmentService } from './attachmentService';
 import { createTaskService } from './taskService';
 import { attachmentGatewayFixture, attachmentInput, attachmentMessage, attachmentTarget } from './fixtures/attachments';
-import { isAttachmentPreparationRequest } from './attachmentIngress';
+import { attachmentFailure, isAttachmentPreparationRequest } from './attachmentIngress';
 
 const preparePath = '/api/control/agents/main/attachments/prepare';
 const body = JSON.stringify({ target: attachmentTarget, message: attachmentMessage, image: attachmentInput });
@@ -61,6 +61,12 @@ async function fixture() {
 }
 
 describe('authenticated streamed attachment ingress', () => {
+  it('destroys a response with flushed headers instead of attempting a second JSON write', () => {
+    const destroy = vi.fn(); const status = vi.fn(() => { throw Error('Headers already sent'); });
+    const response = { destroyed: false, writableEnded: false, headersSent: true, destroy, status } as unknown as express.Response;
+    expect(() => attachmentFailure(response, Error('late route failure'))).not.toThrow();
+    expect(destroy).toHaveBeenCalledOnce(); expect(status).not.toHaveBeenCalled();
+  });
   it('auth_precedes_large_body_read', async () => {
     const f = await fixture(); const large = '{"private":"' + 'x'.repeat(120 * 1024);
     for (const [headers, status] of [

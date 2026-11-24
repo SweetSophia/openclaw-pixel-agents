@@ -10,7 +10,7 @@ import { ControlError } from './errors';
 export interface AttachmentLease { release(): void }
 export interface AttachmentDispatch {
   review: Readonly<AttachmentReview>; payload: Readonly<ValidatedAttachmentPayload>; connection: Readonly<AttachmentGatewayCapabilities>;
-  readonly nativeInvoked: boolean; attempt<T>(send: () => Promise<T>): Promise<T>;
+  readonly nativeInvoked: boolean; attempt<T>(send: (markNativeInvocation: () => void) => Promise<T>): Promise<T>;
 }
 export interface AttachmentOperationMeta { receipt: AttachmentReceipt; sourceKey: string; image: AttachmentImage; submittedTextDigest: string }
 interface Preparation { target: ControlTarget; message: string; payload: ValidatedAttachmentPayload; connection: AttachmentGatewayCapabilities; lease: AttachmentLease }
@@ -28,7 +28,7 @@ interface Staged {
 }
 interface Operation {
   meta: AttachmentOperationMeta; tokenDigest: Buffer; expires: number; staged?: Staged;
-  invoked: boolean; pending?: Promise<AttachmentReceipt>; attempt?: Promise<void>;
+  invoked: boolean; attempted: boolean; pending?: Promise<AttachmentReceipt>; attempt?: Promise<void>;
 }
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex');
 const tokenHash = (token: string): Buffer => createHash('sha256').update(token).digest();
@@ -114,7 +114,7 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     const row: Operation = { meta: { receipt: { operationId, target, phase: 'prepared', nativeInvoked: false, imageEvidence: 'unverified' },
       image, sourceKey: connection.sourceKey, submittedTextDigest: hash(input.message.trim()) },
       tokenDigest: tokenHash(reviewToken), expires: now() + ATTACHMENT_LIMITS.preparedTtlMs,
-      invoked: false, staged: { review, payload, connection, lease: input.lease } };
+      invoked: false, attempted: false, staged: { review, payload, connection, lease: input.lease } };
     operations.set(operationId, row); state.operationId = operationId; schedule(); return review;
   }
   function read(agentId: string, operationId: string): AttachmentOperationMeta | null {
@@ -148,15 +148,21 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
     return Object.freeze({
       get review() { return staged(row).review; }, get payload() { return staged(row).payload; },
       get connection() { return staged(row).connection; }, get nativeInvoked() { return row.invoked; },
-      attempt<T>(send: () => Promise<T>): Promise<T> {
+      attempt<T>(send: (markNativeInvocation: () => void) => Promise<T>): Promise<T> {
         try {
           staged(row);
-          if (row.invoked) throw new ControlError('attachment-changed');
-          row.invoked = true;
-          row.meta.receipt = { ...row.meta.receipt, nativeInvoked: true, runId: row.meta.receipt.operationId };
+          if (row.attempted) throw new ControlError('attachment-changed');
+          row.attempted = true;
           schedule();
+          const markNativeInvocation = () => {
+            staged(row);
+            if (row.invoked) throw new ControlError('attachment-changed');
+            row.invoked = true;
+            row.meta.receipt = { ...row.meta.receipt, nativeInvoked: true, runId: row.meta.receipt.operationId };
+            schedule();
+          };
           let native: Promise<T>;
-          try { native = Promise.resolve(send()); } catch (error) { native = Promise.reject(error); }
+          try { native = Promise.resolve(send(markNativeInvocation)); } catch (error) { native = Promise.reject(error); }
           // Track settlement without retaining its value/error. This also observes
           // rejection when a callback returns early without awaiting its attempt.
           row.attempt = native.then(() => undefined, () => undefined);

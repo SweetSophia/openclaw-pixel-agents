@@ -44,7 +44,7 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
         : source.state === 'unsupported' ? 'unsupported' : source.state !== 'ready' || !source.canRead ? 'unavailable'
           : !source.canSend ? 'permission' : null;
     const caps = reason === null ? capabilities() : null;
-    if (reason === null && (!caps || !gateway.sendImageFollowup)) reason = 'unsupported';
+    if (reason === null && (!caps || !gateway.sendImageFollowup || !gateway.readSourceKey)) reason = 'unsupported';
     return { enabled: active, canPrepare: reason === null, reason, epoch: caps?.epoch ?? null,
       maxBytes: caps ? Math.min(ATTACHMENT_LIMITS.maxBytes, caps.maxBytes, caps.maxImageBytes) : null };
   }
@@ -83,7 +83,7 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
     requireConnection(target.agentId, caps, version, signal); writable(target, current);
   }
   function reason(error: unknown): AttachmentReceipt['reason'] {
-    const code = error instanceof ControlError ? error.code : undefined;
+    const code = error instanceof ControlError || error instanceof AttachmentGatewayRequestError ? error.code : undefined;
     return code === 'scope-required' || code === 'disabled' || code === 'pairing-required' ? 'permission'
       : code === 'unsupported' ? 'unsupported' : code === 'attachment-expired' ? 'expired'
         : code === 'attachment-changed' || code === 'session-changed' || code === 'invalid-target' || code === 'invalid-source' ? 'changed' : 'unavailable';
@@ -100,8 +100,11 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
   function readFence(meta: AttachmentOperationMeta, version: number, signal?: AbortSignal): void {
     const source = gateway.status();
     if (closed || signal?.aborted || source.state !== 'ready' || !source.canRead) throw new ControlError('unavailable');
+    if (!gateway.readSourceKey) throw new ControlError('unsupported');
+    const sourceKey = gateway.readSourceKey();
+    if (sourceKey === null) throw new ControlError('unavailable');
     if (!registeredAgentIds().has(meta.receipt.target.agentId) || generation !== version
-      || gateway.readSourceKey?.() !== meta.sourceKey) throw new ControlError('attachment-changed');
+      || sourceKey !== meta.sourceKey) throw new ControlError('attachment-changed');
   }
   async function reconcile(meta: AttachmentOperationMeta, signal?: AbortSignal): Promise<AttachmentReceipt> {
     const target = meta.receipt.target, id = meta.receipt.operationId, version = generation;
@@ -174,14 +177,14 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
         try {
           await preflight(target, connection, version, controller.signal);
           requireConnection(agentId, connection, version, controller.signal);
-          const result = controlRecord(await dispatch.attempt(() => {
+          const result = controlRecord(await dispatch.attempt(markNativeInvocation => {
             // Do not retain the payload across preflight awaits: invalidation
             // may already have released the store's staged image and lease.
             const payload = dispatch.payload;
             return gateway.sendImageFollowup!({ agentId, sessionKey: target.sessionKey,
               sessionId: target.sessionId, expectedLeafEntryId: target.activeLeafEntryId!, message: review.message,
               idempotencyKey: review.operationId, queueMode: 'followup', deliver: false,
-              attachments: [{ mimeType: payload.image.mimeType, fileName: payload.image.filename, origin: 'file', content: payload.contentBase64 }] }, connection.epoch);
+              attachments: [{ mimeType: payload.image.mimeType, fileName: payload.image.filename, origin: 'file', content: payload.contentBase64 }] }, connection.epoch, markNativeInvocation);
           }));
           requireConnection(agentId, connection, version, controller.signal);
           if (!result || result.runId !== review.operationId) throw Error('Unqualified image acknowledgment');

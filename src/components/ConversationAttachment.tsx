@@ -60,6 +60,12 @@ export function ConversationAttachment({ form, target }: { form: AttachmentForm;
     else if (restoreRecovery && !check.current && document.activeElement === document.body) (picker.current ?? heading.current)?.focus();
   });
   const reason = form.status?.reason ? unavailable[form.status.reason] : form.disabledReason;
+  const phaseStatus = form.phase in outcomes ? outcomes[form.phase as keyof typeof outcomes] : '';
+  const evidenceStatus = form.receipt?.imageEvidence === 'reference-recorded'
+    ? 'Attachment reference recorded. A reference is not verification of image bytes or provider processing.'
+    : form.receipt?.imageEvidence === 'omitted' ? 'The native source reports the attachment was omitted.'
+      : form.receipt ? 'Attachment evidence is unverified.' : '';
+  const statusText = [phaseStatus, evidenceStatus, reason === form.error ? '' : reason, form.error].filter(Boolean).join(' ');
   return <section className="conversation-attachment" aria-label="Image follow-up">
     <h3 ref={heading} tabIndex={-1}>Image follow-up</h3>
     {!form.review && (form.originalTarget ? <div role="group" aria-label="Original image submission target">
@@ -80,9 +86,7 @@ export function ConversationAttachment({ form, target }: { form: AttachmentForm;
       <button type="button" disabled={!!form.disabledReason || form.pending} onClick={() => { if (!form.disabledReason && !form.pending) void form.prepare(); }}>Review image message</button>
     </>}
     {form.review && <Review key={form.review.operationId} form={form} />}
-    {form.phase in outcomes && <p role="status">{outcomes[form.phase as keyof typeof outcomes]}</p>}
-    {form.receipt && <p role="status">{form.receipt.imageEvidence === 'reference-recorded' ? 'Attachment reference recorded. A reference is not verification of image bytes or provider processing.' : form.receipt.imageEvidence === 'omitted' ? 'The native source reports the attachment was omitted.' : 'Attachment evidence is unverified.'}</p>}
-    {reason && <p role="status">{reason}</p>}
+    <p role="status" aria-live="polite" aria-atomic="true">{statusText}</p>
     {admitted && <button type="button" ref={setCheck} onClick={() => { void form.check(); }}>Check original submission</button>}
   </section>;
 }
