@@ -68,7 +68,8 @@ export function createAttachmentAdmission(options?: { now?: () => number }): Att
       phase: 'not-dispatched', nativeInvoked: false, imageEvidence: 'unverified', reason };
     dropStaged(row); row.expires = now() + ATTACHMENT_LIMITS.receiptTtlMs;
   }
-  // Both collections are bounded; receiving leases have their own shorter deadline.
+  // Both collections are count-bounded. Attempted rows retain custody until
+  // settlement; the signed Gateway bounds its native request to 30 seconds.
   function prune(): void {
     const time = now();
     for (const [id, row] of operations) if (row.expires <= time) {

@@ -187,6 +187,7 @@ export function createAttachmentService({ gateway, tasks, enabled, registeredAge
               attachments: [{ mimeType: payload.image.mimeType, fileName: payload.image.filename, origin: 'file', content: payload.contentBase64 }] }, connection.epoch, markNativeInvocation);
           }));
           requireConnection(agentId, connection, version, controller.signal);
+          if (!dispatch.nativeInvoked) return { ...base, phase: 'not-dispatched', nativeInvoked: false, reason: 'changed' };
           if (!result || result.runId !== review.operationId) throw Error('Unqualified image acknowledgment');
           const hasIdentity = result.messageId !== undefined || result.messageSeq !== undefined;
           if (hasIdentity && (!opaque(result.messageId) || !positive(result.messageSeq))) throw Error('Malformed image acknowledgment');

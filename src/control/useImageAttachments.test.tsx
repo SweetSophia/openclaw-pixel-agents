@@ -169,14 +169,28 @@ describe('private image follow-up state', () => {
     expect(form.phase).toBe('accepted'); expect(form.error).toBe('');
     expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(2);
   });
-  it.each(['unknown', 'prepared'] as const)('keeps an expiry diagnosis after a still-%s Check receipt', async phase => {
+  it('keeps an expiry diagnosis after a still-unknown Check receipt', async () => {
     await setup(); await prepare();
     respond = () => Promise.reject(Error('lost confirmation reply')); await act(() => form.confirm(true));
     respond = () => json({ code: 'attachment-expired' }, 409); await act(() => form.check());
     const diagnosis = form.error; expect(diagnosis).toMatch(/expiry does not prove non-delivery/i);
-    respond = path => path.endsWith('/discard') ? json({ ok: true }) : json(receipt(phase)); await act(() => form.check());
+    respond = () => json(receipt('unknown')); await act(() => form.check());
     expect(form.phase).toBe('unknown'); expect(form.pending).toBe(true); expect(form.error).toBe(diagnosis);
-    expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(phase === 'prepared' ? 3 : 2);
+    expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(2);
+  });
+  it.each(['sending', 'not-dispatched'] as const)('handles a prepared Check followed by %s discard proof', async phase => {
+    await setup(); await prepare();
+    respond = () => Promise.reject(Error('lost confirmation reply')); await act(() => form.confirm(true));
+    respond = () => json({ code: 'attachment-expired' }, 409); await act(() => form.check());
+    const diagnosis = form.error; expect(diagnosis).toMatch(/expiry does not prove non-delivery/i);
+    const proof = phase === 'sending' ? { ...receipt('prepared'), phase: 'sending' as const } : receipt('not-dispatched');
+    let read = 0;
+    respond = path => path.endsWith('/discard') ? json({ ok: true }) : json(++read === 1 ? receipt('prepared') : proof);
+    await act(() => form.check());
+    expect(form.phase).toBe(phase === 'sending' ? 'unknown' : 'not-dispatched');
+    expect(form.pending).toBe(phase === 'sending');
+    expect(form.error).toBe(phase === 'sending' ? diagnosis : '');
+    expect(count('confirm')).toBe(1); expect(count('receipt')).toBe(3); expect(count('discard')).toBe(1);
   });
   it('a prepared snapshot stays blocked until acknowledged discard and fresh not-dispatched proof', async () => {
     await setup(); await prepare(); const confirmReply = deferred<Response>(); const discardReply = deferred<Response>(); const proofReply = deferred<Response>();

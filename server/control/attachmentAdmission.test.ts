@@ -77,6 +77,18 @@ describe('duplicate_confirmation_has_one_attempt', () => {
     wait.resolve(); expect((await pending).phase).toBe('accepted');
   });
 
+  it('does not treat a changed-token 409 as proof the original operation was never invoked', async () => {
+    const { admission, prepare } = fixture(); const review = prepare(); const sent = deferred<void>(), done = deferred<void>();
+    const pending = admission.confirm('main', confirmation(review), operation => operation.attempt(async mark => {
+      mark(); sent.resolve(); await done.promise; return accepted(operation);
+    }));
+    await sent.promise;
+    await expect(admission.confirm('main', { ...confirmation(review), reviewToken: 'foreign' }, sendAccepted))
+      .rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(admission.read('main', review.operationId)?.receipt.nativeInvoked).toBe(true);
+    done.resolve(); expect((await pending).phase).toBe('accepted');
+  });
+
   it('discards unconfirmed bytes but cannot cancel or replay an admitted confirmation', async () => {
     const { admission, prepare } = fixture(); const discarded = prepare(); admission.discard('main', discarded.operationId);
     expect((await admission.confirm('main', confirmation(discarded), sendAccepted)).phase).toBe('not-dispatched');
