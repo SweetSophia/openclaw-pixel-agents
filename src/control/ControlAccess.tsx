@@ -2,32 +2,64 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { parseControlStatus, type ControlStatus } from '../../shared/control';
 import { ControlApiError, controlFetch, controlFetchFile, type ControlFileResponse } from './api';
 import { io, type Socket } from 'socket.io-client';
+import type { ControlTarget } from '../../shared/control';
+import type { AttachmentReceipt } from '../../shared/controlAttachments';
 
 export interface ControlAccess {
   state: 'locked' | 'unlocked'; status: ControlStatus | null; generation: number;
   unlock(key: string): Promise<void>; lock(): void; request(path: string, init?: RequestInit): Promise<unknown>;
   requestFile(path: string, init?: RequestInit): Promise<ControlFileResponse>;
+  discardAttachmentPreparation(agentId: string, operationId: string, generation: number): void;
+  isCurrentGeneration(generation: number): boolean;
+  onInvalidate(listener: () => void): () => void;
   openSocket?(): Socket | null;
 }
 const disabled: ControlStatus = { configured: false, state: 'disabled', canRead: false, canSend: false };
 const Context = createContext<ControlAccess>({ state: 'locked', status: disabled, generation: 0,
   unlock: async () => { throw new ControlApiError('disabled'); }, lock() {}, request: async () => disabled,
-  requestFile: async () => { throw new ControlApiError('locked'); } });
+  requestFile: async () => { throw new ControlApiError('locked'); }, discardAttachmentPreparation() {},
+  isCurrentGeneration: () => false, onInvalidate: () => () => {} });
 const DraftsContext = createContext<Map<string, unknown> | undefined>(undefined);
 export function useConversationDrafts() { return useContext(DraftsContext); }
+export interface AttachmentClientOperation {
+  operationId: string; target: ControlTarget; generation: number;
+  phase: 'confirming' | 'unknown' | 'accepted' | 'recorded' | 'rejected' | 'not-dispatched'; receipt?: AttachmentReceipt;
+}
+const AttachmentOperationsContext = createContext(new Map<string, AttachmentClientOperation>());
+export function useAttachmentOperations(): Map<string, AttachmentClientOperation> { return useContext(AttachmentOperationsContext); }
 
 export function ControlAccessProvider({ children }: React.PropsWithChildren) {
   const key = useRef<string | undefined>(undefined); const revision = useRef(0); const controllers = useRef(new Set<AbortController>());
+  const retiring = useRef<{ key: string; generation: number } | null>(null);
   const sockets = useRef(new Set<Socket>()); const drafts = useRef(new Map<string, unknown>());
+  const operations = useRef(new Map<string, AttachmentClientOperation>()); const invalidations = useRef(new Set<() => void>());
   const [state, setState] = useState<'locked' | 'unlocked'>('locked'); const [status, setStatus] = useState<ControlStatus | null>(null);
   const [generation, setGeneration] = useState(0);
   const clear = useCallback(() => {
+    const previous = key.current ? { key: key.current, generation: revision.current } : null;
     revision.current++; key.current = undefined;
     drafts.current.clear();
+    operations.current.clear();
+    // Invalidation listeners may release prepared server custody after Lock has
+    // removed the key. The retiring key is available only during this callback.
+    retiring.current = previous;
+    try { for (const invalidate of invalidations.current) invalidate(); }
+    finally { retiring.current = null; }
     for (const controller of controllers.current) controller.abort(); controllers.current.clear();
     for (const socket of sockets.current) socket.disconnect(); sockets.current.clear();
   }, []);
   const lock = useCallback(() => { clear(); setGeneration(revision.current); setState('locked'); setStatus(null); }, [clear]);
+  const isCurrentGeneration = useCallback((generation: number) => generation === revision.current && key.current !== undefined, []);
+  const discardAttachmentPreparation = useCallback((agentId: string, operationId: string, generation: number) => {
+    const candidate = generation === revision.current ? key.current
+      : retiring.current?.generation === generation ? retiring.current.key : undefined;
+    if (!candidate) return;
+    // Best-effort custody release is deliberately outside normal abortable reads.
+    // A Lock must clear private state immediately without cancelling this POST.
+    void controlFetch(`/api/control/agents/${encodeURIComponent(agentId)}/attachments/discard`, candidate,
+      { method: 'POST', body: JSON.stringify({ operationId }), keepalive: true }).catch(() => {});
+  }, []);
+  const onInvalidate = useCallback((listener: () => void) => { invalidations.current.add(listener); return () => { invalidations.current.delete(listener); }; }, []);
   useEffect(() => () => clear(), [clear]);
   const perform = useCallback(async (path: string, candidate: string | undefined, init: RequestInit = {}, file = false) => {
     const current = revision.current; const controller = new AbortController(); controllers.current.add(controller);
@@ -81,7 +113,7 @@ export function ControlAccessProvider({ children }: React.PropsWithChildren) {
     socket.disconnect = () => { sockets.current.delete(socket); return disconnect(); };
     return socket;
   }, []);
-  const value = useMemo(() => ({ state, status, generation, unlock, lock, request, requestFile, openSocket }), [state, status, generation, unlock, lock, request, requestFile, openSocket]);
-  return <Context.Provider value={value}><DraftsContext.Provider value={drafts.current}>{children}</DraftsContext.Provider></Context.Provider>;
+  const value = useMemo(() => ({ state, status, generation, unlock, lock, request, requestFile, discardAttachmentPreparation, openSocket, isCurrentGeneration, onInvalidate }), [state, status, generation, unlock, lock, request, requestFile, discardAttachmentPreparation, openSocket, isCurrentGeneration, onInvalidate]);
+  return <Context.Provider value={value}><DraftsContext.Provider value={drafts.current}><AttachmentOperationsContext.Provider value={operations.current}>{children}</AttachmentOperationsContext.Provider></DraftsContext.Provider></Context.Provider>;
 }
 export function useControlAccess(): ControlAccess { return useContext(Context); }

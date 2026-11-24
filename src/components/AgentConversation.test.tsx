@@ -6,6 +6,11 @@ const f = vi.hoisted(() => ({ send: vi.fn(), setDraft: vi.fn(), setIntent: vi.fn
 vi.mock('../control/useConversation', () => ({ useConversation: () => ({ ...f, messages: [{ id: 'a1', role: 'assistant', text: '<script>literal</script>', truncated: false }], loading: false, error: null }) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); f.disabledReason = ''; f.submission = null; f.intent = 'followup'; f.isNew = false; });
 describe('conversation composer', () => {
+  it('recorded_mode_has_no_image_controls or writable composer', () => {
+    render(<AgentConversation target={{ agentId: 'cylena', sessionKey: 'agent:cylena:main', sessionId: 'session-1' }} agentId="cylena" active readOnly />);
+    expect(screen.queryByLabelText('Attach image')).toBeNull(); expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    expect(f.send).not.toHaveBeenCalled();
+  });
   it('shows explanation instead of model controls in the reactive new-draft mode', () => {
     f.isNew = true; render(<AgentConversation target={{ agentId: 'cylena', sessionKey: 'agent:cylena:main', sessionId: 'session-1' }} agentId="cylena" active />);
     expect(screen.getByText(/Model selection is available for the live conversation only/)).toBeInTheDocument();

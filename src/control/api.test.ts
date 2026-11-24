@@ -38,6 +38,14 @@ it.each(['document-denied', 'document-changed', 'document-outcome-unknown'])('pr
   expect(caught).toMatchObject({ code, message: expect.stringMatching(/document/i) });
   expect((caught as Error).message).not.toMatch(/retry|try again|resubmit/i);
 });
+it.each(['attachment-denied', 'attachment-changed', 'attachment-expired', 'attachment-outcome-unknown'])('keeps %s image-specific without text retry advice', async code => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code, error: 'Private image request failed.' }), { status: 409 })));
+  let caught: unknown;
+  try { await controlFetch('/api/control/agents/main/attachments/confirm', 'fixture-key', { method: 'POST', body: '{}' }); }
+  catch (error) { caught = error; }
+  expect(caught).toMatchObject({ code, message: expect.stringMatching(/image/i) });
+  expect((caught as Error).message).not.toMatch(/retry|resend|try again/i);
+});
 it.each(['approval-changed', 'approval-unavailable', 'rate-limited'])('parses only closed proven-not-dispatched approval rejection %s', async code => {
   for (const [extra, expected] of [[{ approvalDisposition: 'not-dispatched' }, 'not-dispatched'], [{}, undefined], [{ approvalDisposition: 'attempted' }, undefined], [{ approvalDisposition: 'not-dispatched', unexpected: true }, undefined]] as const) {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code, error: 'Rejected before native dispatch.', ...extra }), { status: code === 'rate-limited' ? 429 : 409 })));

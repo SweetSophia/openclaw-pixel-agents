@@ -19,6 +19,7 @@ import { createRunControlService } from './runControlService';
 import { createAgentDocumentGateway, createScheduleGateway, type AgentDocumentMethod } from './gatewayClient';
 import { loadScheduleConfig } from './scheduleConfig';
 import { documentFixture, encodeDocumentFrame } from './fixtures/agentDocuments';
+import type { NativeImageFollowup } from './gatewayAttachmentPolicy';
 
 type Frame = { type: string; id: string; method: string; params: Record<string, any> };
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -171,17 +172,26 @@ async function fixture(onFrame?: (frame: Frame, socket: Duplex) => void, challen
   cleanups.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); });
   return { url: `ws://127.0.0.1:${address.port}`, frames, sockets };
 }
-function client(url?: string, sendEnabled = false, options?: { directory: string; deviceOnly: boolean; approvalsEnabled?: boolean }): ControlGateway {
+function client(url?: string, sendEnabled = false, options?: { directory?: string; deviceOnly?: boolean; approvalsEnabled?: boolean; attachmentsEnabled?: boolean }): ControlGateway {
   const dir = options?.directory ?? mkdtempSync(join(tmpdir(), 'pixel-gateway-')); cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const config = loadControlConfig(url ? { OPENCLAW_GATEWAY_URL: url, PIXEL_CONTROL_TOKEN: 'fixture-control-key', OPENCLAW_GATEWAY_TOKEN: 'fixture-bootstrap-token' } : {}, dir);
   config.sendEnabled = sendEnabled;
   config.approvalsEnabled = options?.approvalsEnabled ?? false;
+  config.attachmentsEnabled = options?.attachmentsEnabled ?? false;
   if (options?.deviceOnly) { config.token = undefined; config.password = undefined; }
   const gateway = createControlGateway(config); cleanups.push(() => gateway.close()); return gateway;
 }
 const ready = async (gateway: ControlGateway) => { gateway.start(); await vi.waitFor(() => expect(gateway.status().state).toBe('ready'), { timeout: 1500, interval: 10 }); };
 const existingGrant = 'fixture-existing-read-write-grant';
 const writableHello = (id: string) => hello(id, { auth: { role: 'operator', scopes: ['operator.read', 'operator.write'], deviceToken: existingGrant }, features: { methods: ['sessions.list', 'sessions.describe', 'chat.history', 'sessions.subscribe', 'chat.send', 'sessions.create'], events: [] } });
+const imageHello = (id: string, changes = {}) => ({ ...writableHello(id), payload: { ...writableHello(id).payload,
+  server: { version: '2026.11.2', connId: 'image-fixture' },
+  policy: { maxPayload: 6_291_456, maxBufferedBytes: 12_582_912, tickIntervalMs: 15000, attachments: { maxBytes: 4_194_304, maxImageBytes: 6_291_456 } }, ...changes,
+} });
+const imageInput = (): NativeImageFollowup => ({ agentId: 'main', sessionKey: 'agent:main:image-fixture', sessionId: 'image-session', expectedLeafEntryId: 'reviewed-leaf',
+  message: 'Inspect this synthetic image: 雪\n"\\', idempotencyKey: 'image-operation', queueMode: 'followup', deliver: false,
+  attachments: [{ mimeType: 'image/png', fileName: '雪.png', origin: 'file', content: 'AQID' }],
+});
 const startupRefusal = (id: string) => ({ type: 'res', id, ok: false, error: { code: 'UNAVAILABLE', retryable: true, retryAfterMs: 500, details: { reason: 'startup-sidecars' } } });
 function pairedClient(url: string) {
   const directory = mkdtempSync(join(tmpdir(), 'pixel-paired-restart-'));
@@ -192,6 +202,176 @@ function pairedClient(url: string) {
 }
 
 describe('scoped task Gateway client', () => {
+  it.each([
+    { server: {} }, { server: { version: 'fixture', connId: 'image-fixture' } },
+    { server: { version: '2026.11.1', connId: 'image-fixture' } }, { server: { version: '2027.1.0-beta.1', connId: 'image-fixture' } },
+    { policy: { maxPayload: 1000, maxBufferedBytes: 2000, tickIntervalMs: 15000 } },
+    { policy: { maxPayload: 1000, maxBufferedBytes: 2000, tickIntervalMs: 15000, attachments: { maxBytes: 0, maxImageBytes: 100 } } },
+  ])('image_policy_is_optional_to_text: %j', async changes => {
+    // Missing version still has the independently required connection identity.
+    const overrides = 'server' in changes ? { ...changes, server: { connId: 'image-fixture', ...changes.server } } : changes;
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? imageHello(frame.id, overrides) : { type: 'res', id: frame.id, ok: true, payload: {} })));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(gateway.status()).toMatchObject({ canRead: true, canSend: true });
+    expect(typeof gateway.attachmentCapabilities).toBe('function'); expect(gateway.attachmentCapabilities?.()).toBeNull();
+    await expect(gateway.request('chat.send', { message: 'ordinary text' })).resolves.toEqual({});
+  });
+  it('negotiates image capability with the same signed task authority and no new methods/caps', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? imageHello(frame.id) : { type: 'res', id: frame.id, ok: true, payload: { runId: 'image-operation' } })));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function');
+    const caps = gateway.attachmentCapabilities!(); expect(caps).toMatchObject({ epoch: expect.any(String), sourceKey: expect.any(String), maxBytes: 4_194_304, maxImageBytes: 6_291_456 });
+    expect(caps!.sourceKey).not.toContain(host.url);
+    const connect = host.frames[0].params;
+    expect(connect.scopes).toEqual(['operator.read', 'operator.write']); expect(connect.caps).toEqual(['model-selection-policy']);
+    const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(connect.device.publicKey, 'base64url')]), type: 'spki', format: 'der' });
+    const signed = ['v3', connect.device.id, 'cli', 'backend', 'operator', 'operator.read,operator.write', '123', connect.auth.token, 'fixture-nonce', process.platform, ''].join('|');
+    // Signature token is the synthetic bootstrap configured by client(), not an image-specific grant.
+    expect(verify(null, Buffer.from(signed), key, Buffer.from(connect.device.signature, 'base64url'))).toBe(true);
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(imageInput(), caps!.epoch, invoked)).resolves.toEqual({ runId: 'image-operation' });
+    expect(invoked).toHaveBeenCalledOnce();
+    expect(host.frames[1]).toEqual({ type: 'req', id: expect.any(String), method: 'chat.send', params: imageInput() });
+    expect(JSON.stringify(gateway.status())).not.toMatch(/sourceKey|epoch|image-fixture|device|token/i);
+    caps!.maxPayload = 1; expect(gateway.attachmentCapabilities!()!.maxPayload).toBe(6_291_456);
+  });
+  it('keeps image capability disabled without opt-in or ordinary send authority', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    for (const [send, attachments] of [[true, false], [false, true]]) {
+      const gateway = client(host.url, send, { attachmentsEnabled: attachments }); await ready(gateway);
+      expect(typeof gateway.attachmentCapabilities).toBe('function'); expect(gateway.attachmentCapabilities!()).toBeNull();
+    }
+    expect(host.frames).toHaveLength(2);
+  });
+  it('image_dispatch_checks_current_epoch_and_frame', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id, { policy: { maxPayload: 350, maxBufferedBytes: 700, tickIntervalMs: 15000, attachments: { maxBytes: 100, maxImageBytes: 100 } } }))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function'); const caps = gateway.attachmentCapabilities!()!;
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(imageInput(), 'stale-epoch', invoked)).rejects.toMatchObject({ code: 'attachment-changed' });
+    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-too-large' });
+    expect(invoked).not.toHaveBeenCalled();
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
+  });
+  it('reports a structurally invalid image frame as changed, not oversized', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    const input = imageInput(); input.attachments[0].content = 'AR==';
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(input, gateway.attachmentCapabilities!()!.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(invoked).not.toHaveBeenCalled();
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
+  });
+  it('admits an exact complete UTF-8 frame budget and rejects one escaped byte more', async () => {
+    const input = imageInput();
+    const exactBytes = Buffer.byteLength(JSON.stringify({ type: 'req', id: 'x'.repeat(36), method: 'chat.send', params: input }));
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect'
+      ? imageHello(frame.id, { policy: { tickIntervalMs: 15000, maxPayload: exactBytes, maxBufferedBytes: exactBytes, attachments: { maxBytes: 100, maxImageBytes: 100 } } })
+      : { type: 'res', id: frame.id, ok: true, payload: { runId: 'image-operation' } })));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    const epoch = gateway.attachmentCapabilities!()!.epoch;
+    await expect(gateway.sendImageFollowup!(input, epoch, vi.fn())).resolves.toEqual({ runId: 'image-operation' });
+    expect(Buffer.byteLength(JSON.stringify(host.frames[1]))).toBe(exactBytes);
+    await expect(gateway.sendImageFollowup!({ ...input, message: input.message + '"' }, epoch, vi.fn())).rejects.toMatchObject({ code: 'attachment-too-large' });
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(1);
+  });
+  it('keeps a throwing socket write uncertain because partial handoff cannot be ruled out', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    const send = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(() => { throw Error('private-socket-detail'); });
+    const invoked = vi.fn();
+    const result = await gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch, invoked).catch(error => error);
+    expect(result).toMatchObject({ code: 'attachment-outcome-unknown' }); expect((result as Error).message).not.toContain('private-socket-detail');
+    expect(invoked).toHaveBeenCalledOnce();
+    send.mockRestore(); await expect(gateway.request('sessions.list', {})).resolves.toBeDefined();
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
+  });
+  it('rejects a missing or throwing image invocation marker before any socket write', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    const epoch = gateway.attachmentCapabilities!()!.epoch;
+    await expect(gateway.sendImageFollowup!(imageInput(), epoch, undefined as unknown as () => void)).rejects.toMatchObject({ code: 'attachment-changed' });
+    await expect(gateway.sendImageFollowup!(imageInput(), epoch, () => { throw Error('marker failed'); })).rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0);
+  });
+  it('checks live outgoing buffer and final epoch immediately before dispatch', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(imageHello(frame.id))));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function'); const caps = gateway.attachmentCapabilities!()!;
+    const buffered = vi.spyOn(WebSocket.prototype, 'bufferedAmount', 'get').mockReturnValue(12_582_912);
+    const invoked = vi.fn();
+    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-too-large' });
+    buffered.mockImplementation(() => { gateway.close(); return 0; });
+    await expect(gateway.sendImageFollowup!(imageInput(), caps.epoch, invoked)).rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(invoked).not.toHaveBeenCalled();
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(0); expect(gateway.attachmentCapabilities!()).toBeNull();
+  });
+  it('blocks attachments from ordinary chat.send even when image capability is available', async () => {
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(imageHello(frame.id))); });
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    await expect(gateway.request('chat.send', imageInput() as unknown as Record<string, unknown>)).rejects.toMatchObject({ code: 'invalid-request' });
+    await expect(gateway.request('chat.send', { attachments: undefined })).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(host.frames).toHaveLength(1);
+  });
+  it('rejects a null ordinary request as a promise without bypassing the attachment guard', async () => {
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(imageHello(frame.id))); });
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    let pending: Promise<unknown> | undefined;
+    expect(() => { pending = gateway.request('chat.send', null as unknown as Record<string, unknown>); }).not.toThrow();
+    await expect(pending).rejects.toMatchObject({ code: 'invalid-request' });
+    expect(host.frames).toHaveLength(1);
+  });
+  it('uploads_disabled_does_not_lock_reader', async () => {
+    const host = await fixture((frame, socket) => socket.write(encode(frame.method === 'connect' ? imageHello(frame.id) : frame.params.attachments
+      ? { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN', message: 'private-source-detail', details: { code: 'UPLOADS_DISABLED' } } }
+      : { type: 'res', id: frame.id, ok: true, payload: { sessions: [] } })));
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function');
+    const error = await gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch, vi.fn()).catch(error => error);
+    expect(error).toMatchObject({ code: 'uploads-disabled' }); expect((error as Error).message).not.toContain('private-source-detail');
+    expect(gateway.status()).toMatchObject({ canRead: true, canSend: true });
+    await expect(gateway.request('sessions.list', {})).resolves.toEqual({ sessions: [] });
+  });
+  it('keeps ordinary deadlines at five seconds and image deadlines at thirty without replay', async () => {
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(imageHello(frame.id))); });
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function');
+    let ordinaryRequestSettled = false, imageRequestSettled = false;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const ordinary = gateway.request('sessions.list', {}).catch(error => { ordinaryRequestSettled = true; return error; });
+    const image = gateway.sendImageFollowup!(imageInput(), gateway.attachmentCapabilities!()!.epoch, vi.fn()).catch(error => { imageRequestSettled = true; return error; });
+    await vi.advanceTimersByTimeAsync(5_000); expect(ordinaryRequestSettled).toBe(true); expect(imageRequestSettled).toBe(false);
+    await vi.advanceTimersByTimeAsync(25_000); expect(imageRequestSettled).toBe(true);
+    expect(await image).toMatchObject({ code: 'attachment-outcome-unknown' }); await ordinary;
+    vi.useRealTimers(); await vi.waitFor(() => expect(host.frames).toHaveLength(3));
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(1);
+  });
+  it.each(['disconnect', 'malformed', 'denied'] as const)('does not replay after an image %s', async failure => {
+    const host = await fixture((frame, socket) => {
+      if (frame.method === 'connect') socket.write(encode(imageHello(frame.id)));
+      else if (failure === 'disconnect') socket.destroy();
+      else socket.write(encode(failure === 'malformed' ? { type: 'res', id: frame.id, ok: 'invalid' }
+        : { type: 'res', id: frame.id, ok: false, error: { code: 'FORBIDDEN', details: { code: 'OTHER' } } }));
+    });
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function'); const before = gateway.attachmentCapabilities!()!;
+    await expect(gateway.sendImageFollowup!(imageInput(), before.epoch, vi.fn())).rejects.toMatchObject({ code: 'attachment-outcome-unknown' });
+    if (failure === 'disconnect') {
+      await vi.waitFor(() => expect(gateway.attachmentCapabilities?.()?.epoch).toBeDefined());
+      expect(gateway.attachmentCapabilities!()!.epoch).not.toBe(before.epoch);
+      expect(gateway.attachmentCapabilities!()!.sourceKey).toBe(before.sourceKey);
+    }
+    expect(host.frames.filter(frame => frame.method === 'chat.send')).toHaveLength(1);
+  });
+  it('native config invalidation disables image authority but preserves text access', async () => {
+    const host = await fixture((frame, socket) => { if (frame.method === 'connect') socket.write(encode(imageHello(frame.id))); });
+    const gateway = client(host.url, true, { attachmentsEnabled: true }); await ready(gateway);
+    expect(typeof gateway.attachmentCapabilities).toBe('function'); const before = gateway.attachmentCapabilities!()!;
+    for (const socket of host.sockets) socket.write(encode({ type: 'event', event: 'config.changed', payload: {} }));
+    await vi.waitFor(() => expect(gateway.attachmentCapabilities!()).toBeNull());
+    await expect(gateway.sendImageFollowup!(imageInput(), before.epoch, vi.fn())).rejects.toMatchObject({ code: 'attachment-changed' });
+    expect(gateway.status()).toMatchObject({ canRead: true, canSend: true }); expect(host.frames).toHaveLength(1);
+  });
   it('ordinary_methods_unchanged_without_cron', async () => {
     const host = await fixture(); const gateway = client(host.url); await ready(gateway);
     expect(host.frames[0].params.scopes).toEqual(['operator.read']);

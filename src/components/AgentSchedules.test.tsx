@@ -3,11 +3,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ScheduleIntent, ScheduleSnapshot } from '../../shared/controlSchedules';
 import type { AgentState } from '../../shared/types';
+import type { AttachmentClientOperation } from '../control/ControlAccess';
 import { AgentDetailPanel } from './AgentDetailPanel';
 import { ControlApiError } from '../control/api';
 
-const access = vi.hoisted(() => ({ request: vi.fn(), state: 'unlocked', generation: 1 }));
-vi.mock('../control/ControlAccess', () => ({ useConversationDrafts: () => undefined, useControlAccess: () => ({ ...access,
+const access = vi.hoisted(() => ({ request: vi.fn(), state: 'unlocked', generation: 1, operations: new Map<string, AttachmentClientOperation>(),
+  isCurrentGeneration: (generation: number): boolean => access.state === 'unlocked' && generation === access.generation,
+  onInvalidate: (_listener: () => void) => () => {} }));
+vi.mock('../control/ControlAccess', () => ({ useConversationDrafts: () => undefined, useAttachmentOperations: () => access.operations, useControlAccess: () => ({ ...access,
   status: { configured: true, state: 'ready', canRead: true, canSend: false }, lock: vi.fn() }) }));
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'idle', model: 'fixture', sessionKey: 'agent:cylena:fixture', pixelEnabled: true, active: false, tags: [], lastActivity: 0 };
 const draft = { name: 'Synthetic check', message: 'Synthetic private prompt', schedule: { kind: 'every' as const, everyMs: 60000 } };
@@ -33,7 +36,7 @@ beforeEach(() => {
     return snapshot;
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); access.operations.clear(); vi.restoreAllMocks(); });
 async function open() {
   const result = render(<AgentDetailPanel agent={agent} onClose={vi.fn()} />);
   fireEvent.click(screen.getByRole('tab', { name: 'Schedules' }));

@@ -4,6 +4,11 @@ import { loadControlConfig } from './config';
 
 const key = 'fixture-control-access-key';
 describe('opt-in task Gateway configuration', () => {
+  it('requires an exact independent default-false attachment opt-in', () => {
+    for (const value of [undefined, '', 'false', 'TRUE', '1', ' true ', 'yes']) expect(loadControlConfig({ CONTROL_ATTACHMENTS_ENABLED: value }, '/tmp/fixture').attachmentsEnabled).toBe(false);
+    expect(loadControlConfig({ CONTROL_ATTACHMENTS_ENABLED: 'true' }, '/tmp/fixture')).toMatchObject({ attachmentsEnabled: true, enabled: false, sendEnabled: false });
+    expect(loadControlConfig({ CONTROL_SEND_ENABLED: 'true' }, '/tmp/fixture').attachmentsEnabled).toBe(false);
+  });
   it('requires an exact explicit approvals opt-in independent of sending', () => {
     for (const value of [undefined, 'false', 'TRUE', '1']) expect(loadControlConfig({ CONTROL_APPROVALS_ENABLED: value }, '/tmp/fixture').approvalsEnabled).toBe(false);
     expect(loadControlConfig({ CONTROL_APPROVALS_ENABLED: 'true' }, '/tmp/fixture')).toMatchObject({ approvalsEnabled: true, sendEnabled: false });

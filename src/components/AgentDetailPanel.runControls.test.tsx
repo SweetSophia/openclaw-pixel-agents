@@ -4,14 +4,19 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { AgentDetailPanel } from './AgentDetailPanel';
 import { parseControlTarget } from '../../shared/control';
 import type { AgentState } from '../../shared/types';
+import type { AttachmentClientOperation } from '../control/ControlAccess';
 
-const f = vi.hoisted(() => ({ request: vi.fn(), state: 'unlocked', generation: 1, drafts: new Map<string, unknown>() }));
-vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: 'ready', canRead: true, canSend: true, canStop: true }, lock: vi.fn() }), useConversationDrafts: () => f.drafts }));
+const f = vi.hoisted(() => ({ request: vi.fn(), state: 'unlocked', generation: 1, drafts: new Map<string, unknown>(), operations: new Map<string, AttachmentClientOperation>(),
+  isCurrentGeneration: (generation: number): boolean => f.state === 'unlocked' && generation === f.generation,
+  onInvalidate: (_listener: () => void) => () => {} }));
+vi.mock('../control/ControlAccess', () => ({ useControlAccess: () => ({ ...f, status: { configured: true, state: 'ready', canRead: true, canSend: true, canStop: true }, lock: vi.fn() }), useConversationDrafts: () => f.drafts, useAttachmentOperations: () => f.operations }));
 const agent: AgentState = { id: 'cylena', name: 'Cylena', activity: 'typing', model: 'fixture', sessionKey: 'agent:cylena:controls', pixelEnabled: true, active: true, tags: [], lastActivity: 0 };
 const selected = { agentId: 'cylena', sessionKey: agent.sessionKey, sessionId: 'session-1', activeLeafEntryId: 'leaf-1', name: 'Fixture conversation', isChild: false, hasActiveRun: true };
-afterEach(() => { cleanup(); f.request.mockReset(); f.drafts.clear(); });
+const attachmentStatus = { enabled: false, canPrepare: false, reason: 'disabled', epoch: null, maxBytes: null };
+afterEach(() => { cleanup(); f.request.mockReset(); f.drafts.clear(); f.operations.clear(); });
 it('keeps re-entry clicks inside local model confirmation under the real panel focus owner', async () => {
   f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/attachments/status')) return attachmentStatus;
     const source = { state: 'current', observedAt: Date.now() };
     if (path.endsWith('/sessions')) return { sessions: [{ ...selected, hasActiveRun: false }], source };
     const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input);
@@ -47,6 +52,7 @@ it('keeps re-entry clicks inside local model confirmation under the real panel f
 it('fences live model confirmation when refreshed selected-session activity becomes known busy', async () => {
   let busy = false;
   f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/attachments/status')) return attachmentStatus;
     const source = { state: 'current', observedAt: Date.now() };
     if (path.endsWith('/status')) return { configured: true, state: 'ready', canRead: true, canSend: true };
     if (path.endsWith('/sessions')) return { sessions: [{ ...selected, hasActiveRun: busy }], source };
@@ -67,6 +73,7 @@ it('fences live model confirmation when refreshed selected-session activity beco
 });
 it.each([false, true])('unmounts recorded-mode composer controls and restores live draft/intent (new conversation: %s)', async newConversation => {
   f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/attachments/status')) return attachmentStatus;
     if (path.endsWith('/sessions')) return { sessions: [{ ...selected, hasActiveRun: false }], source: { state: 'current', observedAt: Date.now() } };
     const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input); const runId = input.runId ?? 'run-current';
     const task = { target, source: { state: 'current', observedAt: Date.now() }, hasActiveRun: true, activeRunIds: [runId], runId, runState: 'running', request: { id: `request-${runId}`, role: 'user', text: `Request ${runId}`, truncated: false, runId }, requestAssociation: 'run', requestState: 'found', activity: [], children: [], childrenComplete: false, loadedRecords: 4 };
@@ -117,6 +124,7 @@ it.each([false, true])('keeps recorded mode selected and adopts late persisted c
   const created = { ...selected, sessionKey: 'agent:cylena:created', sessionId: 'created-1', name: 'Created conversation' };
   let createdVisible = false; let resolve!: (value: unknown) => void;
   f.request.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path.endsWith('/attachments/status')) return attachmentStatus;
     if (path.endsWith('/sessions')) return { sessions: createdVisible ? [selected, created] : [selected], source: { state: 'current', observedAt: Date.now() } };
     const input = JSON.parse(String(init?.body)); const target = parseControlTarget(input.target ?? input); const runId = input.runId ?? 'run-current';
     const task = { target, source: { state: 'current', observedAt: Date.now() }, hasActiveRun: true, activeRunIds: [runId], runId, runState: 'running', requestAssociation: 'unknown', requestState: 'unavailable', activity: [], children: [], childrenComplete: false, loadedRecords: 4 };

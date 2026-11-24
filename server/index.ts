@@ -58,6 +58,9 @@ import { createTaskService } from "./control/taskService";
 import { createSendService } from "./control/sendService";
 import { createConversationService, mountControlNamespace } from "./control/conversation";
 import { createControlRouter } from "./control/routes";
+import { isAttachmentPreparationRequest } from "./control/attachmentIngress";
+import { createAttachmentAdmission } from "./control/attachmentAdmission";
+import { createAttachmentService } from "./control/attachmentService";
 import { createArtifactService } from "./control/artifactService";
 import { createRunHistoryService } from "./control/runHistoryService";
 import { createRunControlService } from "./control/runControlService";
@@ -241,6 +244,8 @@ app.use((_req, res, next) => {
 
 app.use(correlationMiddleware);
 app.use(httpRequestLogMiddleware);
+// Private errors can exit at the Origin guard or ordinary parser before routing.
+app.use("/api/control", (_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
 // Reject and throttle mutating API traffic before express.json() performs
 // bounded-but-still-expensive body buffering/parsing. Ingest has its own
 // pre-auth budget; all other writes retain the existing Origin boundary and
@@ -251,7 +256,8 @@ app.use(httpRequestLogMiddleware);
 app.use("/api/ingest/agents", ingestPreAuthRateLimiter);
 // codeql[js/missing-rate-limiting]
 app.use("/api", apiMutationGuard);
-app.use(express.json({ limit: "100kb" }));
+const ordinaryJson = express.json({ limit: "100kb" });
+app.use((req, res, next) => isAttachmentPreparationRequest(req) ? next() : ordinaryJson(req, res, next));
 
 // Serve built frontend in production (Vite output is in dist/client, server is compiled to dist/server/index.js).
 // FRONTEND_DIR is env-overridable for HTTP-level tests (issue #125).
@@ -1835,6 +1841,9 @@ const scheduleGateway = createScheduleGateway(scheduleConfig);
 const controlSchedules = createScheduleService({ reader: controlGateway, manager: scheduleGateway, config: scheduleConfig,
   registeredAgents: () => new Set(AGENT_REGISTRY.keys()) });
 const controlTasks = createTaskService(controlGateway, () => new Set(AGENT_REGISTRY.keys()));
+const controlAttachments = createAttachmentService({ gateway: controlGateway, tasks: controlTasks,
+  admission: createAttachmentAdmission(), registeredAgentIds: () => new Set(AGENT_REGISTRY.keys()),
+  enabled: () => controlConfig.enabled && controlConfig.sendEnabled && controlConfig.attachmentsEnabled === true });
 const controlSends = createSendService(controlGateway, controlTasks);
 const controlRunControls = createRunControlService(controlGateway, controlTasks);
 const controlApprovals = createApprovalService(controlGateway, controlTasks);
@@ -1846,9 +1855,10 @@ const controlWorkspace = createWorkspaceService(controlGateway, () => new Set(AG
 const controlUsage = createUsageService(controlGateway, controlTasks);
 const closeControlNamespace = mountControlNamespace(io, { config: controlConfig, tasks: controlTasks, conversations: controlConversations,
   originAllowed: origin => isOriginAllowed(origin, corsConfig), trustProxy: app.get("trust proxy fn") });
-app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts, workspace: controlWorkspace, usage: controlUsage, runHistory: controlRunHistory, runControls: controlRunControls, approvals: controlApprovals, models: controlModels, schedules: controlSchedules, documents: controlDocuments }));
+app.use("/api/control", createControlRouter({ gateway: controlGateway, tasks: controlTasks, config: controlConfig, sends: controlSends, conversations: controlConversations, artifacts: controlArtifacts, workspace: controlWorkspace, usage: controlUsage, runHistory: controlRunHistory, runControls: controlRunControls, approvals: controlApprovals, models: controlModels, schedules: controlSchedules, documents: controlDocuments, attachments: controlAttachments }));
 server.on("listening", () => controlGateway.start());
 server.on("close", () => {
+  controlAttachments.close();
   controlDocuments.close();
   void controlSchedules.close().catch(() => logger.error({ subsystem: "control-schedules", code: "unavailable" }, "private scheduling disposal failed"));
   closeControlNamespace(); controlModels.close(); controlApprovals.close(); controlRunControls.close(); controlUsage.close(); controlWorkspace.close(); controlArtifacts.close(); controlRunHistory.close(); controlConversations.close(); controlSends.close(); controlTasks.close(); controlGateway.close();
